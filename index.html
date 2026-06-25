@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quoridor Playbook & Trainer</title>
+    <meta name="description" content="Improve your Quoridor performance with an interactive board, real-time pathfinding diagnostics, wall efficiency analyzer, and an openings playbook.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- HEADER -->
+        <header class="app-header"></header>
+
+        <!-- MAIN LAYOUT -->
+        <div class="main-content">
+            <!-- LEFT PANEL: PLAYBOOK & TRAINING -->
+            <section class="panel left-panel" aria-label="Playbook panel"></section>
+
+            <!-- CENTER PANEL: INTERACTIVE BOARD -->
+            <section class="board-container" aria-label="Game board"></section>
+
+            <!-- RIGHT PANEL: CONTROLS & DIAGNOSTICS -->
+            <section class="panel right-panel" aria-label="Game controls and diagnostics"></section>
+        </div>
+
+        <!-- FOOTER -->
+        <footer class="app-footer"></footer>
+    </div>
+
+    <!-- Alert Modal / Popup -->
+    <div id="modal-container" class="modal-overlay hidden"></div>
+
+    <!-- Script Entry -->
+    <script type="module" src="app.js"></script>
+</body>
+</html>

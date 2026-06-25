@@ -1,0 +1,14 @@
+{
+  "name": "quoridor-trainer",
+  "version": "1.0.0",
+  "description": "Quoridor Playbook & Trainer Web Application",
+  "main": "index.html",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}

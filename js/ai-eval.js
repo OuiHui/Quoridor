@@ -1,0 +1,184 @@
+import { state } from './state.js';
+import { findShortestPath, getValidPawnMoves, validateWallPlacement } from './engine.js';
+import { minimax } from './ai-search.js';
+
+// Evaluate board position for Minimax AI
+// Positive = P1 advantage, Negative = P2 advantage
+export function evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, isP1Turn) {
+    const p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls);
+    const p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls);
+
+    if (!p1Path) return -Infinity; // P1 is blocked – invalid
+    if (!p2Path) return Infinity;  // P2 is blocked – invalid
+
+    const p1Dist = p1Path.length - 1;
+    const p2Dist = p2Path.length - 1;
+
+    if (p1Dist === 0) return Infinity;
+    if (p2Dist === 0) return -Infinity;
+
+    // --- GUARANTEED WIN / COMPLETE DOMINANCE CHECK ---
+    // If a player has 0 walls, they cannot place obstacles to block the opponent.
+    // If their shortest path is also significantly longer (distance difference >= 2 
+    // to mathematically eliminate any edge cases where a pawn jump could steal the win), 
+    // they are guaranteed to lose the pure race.
+    if (p1Walls === 0 && (p1Dist - p2Dist) >= 2) {
+        return -500; // Complete dominance to P2
+    }
+    if (p2Walls === 0 && (p2Dist - p1Dist) >= 2) {
+        return 500;  // Complete dominance to P1
+    }
+
+    // Primary: path distance advantage (each step = 15 pts)
+    let score = (p2Dist - p1Dist) * 15;
+
+    // Urgency bonus: when a player is within 3 steps of winning, amplify the threat.
+    // This prevents the AI from ignoring imminent victories/defeats.
+    if (p1Dist <= 3) score += (4 - p1Dist) * 8;
+    if (p2Dist <= 3) score -= (4 - p2Dist) * 8;
+
+    // Wall reserve advantage (walls are powerful – worth ~3 pts each)
+    score += (p1Walls - p2Walls) * 3;
+
+    // Pawn advancement bonus (encourages forward progress)
+    score += p1Pos.y * 1.0;
+    score -= (8 - p2Pos.y) * 1.0;
+
+    // Tempo: the active player gets a slight bonus for having the next move.
+    // Eliminates ping-pong evaluation swings when turns alternate.
+    if (isP1Turn !== undefined) {
+        score += isP1Turn ? 7.5 : -7.5;
+    }
+
+    return score;
+}
+
+// Generate ordered candidate moves for AI search.
+// Moves are ordered best-first to maximise alpha-beta pruning efficiency.
+export function generateSmartMoves(playerNum, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls) {
+    const activePos = playerNum === 1 ? p1Pos : p2Pos;
+    const oppPos   = playerNum === 1 ? p2Pos : p1Pos;
+    const wallsLeft = playerNum === 1 ? p1Walls : p2Walls;
+    const activeGoalY = playerNum === 1 ? 8 : 0;
+    const oppGoalY    = playerNum === 1 ? 0 : 8;
+
+    // --- 1. PAWN MOVES (ordered: prefer on-path and forward moves) ---
+    const validPawnMoves = getValidPawnMoves(
+        activePos.x, activePos.y, oppPos.x, oppPos.y, hWalls, vWalls
+    );
+    const activePath = findShortestPath(activePos.x, activePos.y, activeGoalY, hWalls, vWalls);
+    const pathSet = activePath ? new Set(activePath.map(p => `${p.x},${p.y}`)) : new Set();
+
+    const pawnMoves = validPawnMoves.map(m => {
+        const onPath = pathSet.has(`${m.x},${m.y}`);
+        const yGain  = playerNum === 1 ? m.y - activePos.y : activePos.y - m.y;
+        return { type: 'move', to: m, _s: (onPath ? 6 : 0) + yGain * 3 };
+    });
+    pawnMoves.sort((a, b) => b._s - a._s);
+
+    if (wallsLeft <= 0) return pawnMoves.map(({ _s, ...m }) => m);
+
+    // --- 2. WALL CANDIDATES (scored by path-blocking importance) ---
+    const candidateMap = new Map(); // wallKey -> importance score
+    const oppPath = findShortestPath(oppPos.x, oppPos.y, oppGoalY, hWalls, vWalls);
+
+    // Walls that cross the opponent's shortest path (highest priority).
+    // Earlier cuts (closer to opponent) score higher since they block more remaining path.
+    if (oppPath) {
+        const n = oppPath.length;
+        for (let i = 0; i < n - 1; i++) {
+            const cur = oppPath[i], next = oppPath[i + 1];
+            const importance = (n - i) * 2;
+
+            if (cur.x === next.x) {
+                // Vertical step → horizontal wall blocks it
+                const yMin = Math.min(cur.y, next.y);
+                for (const wx of [cur.x, cur.x - 1]) {
+                    if (wx >= 0 && wx <= 7) {
+                        const k = `${wx},${yMin},h`;
+                        candidateMap.set(k, Math.max(candidateMap.get(k) || 0, importance));
+                    }
+                }
+            } else {
+                // Horizontal step → vertical wall blocks it
+                const xMin = Math.min(cur.x, next.x);
+                for (const wy of [cur.y, cur.y - 1]) {
+                    if (wy >= 0 && wy <= 7) {
+                        const k = `${xMin},${wy},v`;
+                        candidateMap.set(k, Math.max(candidateMap.get(k) || 0, importance));
+                    }
+                }
+            }
+        }
+    }
+
+    // Positional candidates in a radius around both pawns:
+    // - Around the opponent (offensive blocking)
+    // - Around the active player (defensive protection)
+    for (const [pos, base] of [[oppPos, 2], [activePos, 1]]) {
+        for (let x = Math.max(0, pos.x - 2); x <= Math.min(7, pos.x + 2); x++) {
+            for (let y = Math.max(0, pos.y - 2); y <= Math.min(7, pos.y + 2); y++) {
+                for (const t of ['h', 'v']) {
+                    const k = `${x},${y},${t}`;
+                    if (!candidateMap.has(k)) candidateMap.set(k, base);
+                }
+            }
+        }
+    }
+
+    // Validate candidates, sort by importance, cap at top 14 to control branching
+    const wallMoves = [];
+    for (const [wallStr, score] of candidateMap) {
+        const [wx, wy, type] = wallStr.split(',');
+        const x = parseInt(wx), y = parseInt(wy);
+        if (x >= 0 && x <= 7 && y >= 0 && y <= 7) {
+            if (validateWallPlacement(x, y, type, p1Pos, p2Pos, hWalls, vWalls)) {
+                wallMoves.push({ type: 'wall', x, y, wallType: type, _s: score });
+            }
+        }
+    }
+    wallMoves.sort((a, b) => b._s - a._s);
+
+    return [
+        ...pawnMoves.map(({ _s, ...m }) => m),
+        ...wallMoves.slice(0, 14).map(({ _s, ...m }) => m)
+    ];
+}
+
+// Get best moves for hint display.
+// Always runs at depth 3 (regardless of difficulty) for quality hints on demand.
+export function getBestMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls) {
+    const candidates = generateSmartMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls);
+    if (candidates.length === 0) return [];
+
+    const isP1 = player === 1;
+    const HINT_DEPTH = 3;
+
+    const scored = candidates.map(move => {
+        const tempHWalls = new Map(hWalls);
+        const tempVWalls = new Map(vWalls);
+        let nextP1Pos = { ...p1Pos }, nextP2Pos = { ...p2Pos };
+        let nextP1Walls = p1Walls, nextP2Walls = p2Walls;
+
+        if (move.type === 'move') {
+            if (isP1) nextP1Pos = move.to; else nextP2Pos = move.to;
+        } else {
+            const k = `${move.x},${move.y}`;
+            if (move.wallType === 'h') tempHWalls.set(k, player); else tempVWalls.set(k, player);
+            if (isP1) nextP1Walls--; else nextP2Walls--;
+        }
+
+        const result = minimax(
+            HINT_DEPTH - 1, -Infinity, Infinity, !isP1,
+            nextP1Pos, nextP2Pos, tempHWalls, tempVWalls, nextP1Walls, nextP2Walls
+        );
+        return { move, score: result.score };
+    });
+
+    const bestScore = scored.reduce(
+        (best, sm) => isP1 ? Math.max(best, sm.score) : Math.min(best, sm.score),
+        isP1 ? -Infinity : Infinity
+    );
+
+    return scored.filter(sm => sm.score === bestScore).map(sm => sm.move);
+}
