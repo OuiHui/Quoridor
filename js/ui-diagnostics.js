@@ -38,8 +38,9 @@ export function checkGameVictory(p1Len, p2Len) {
 
 // Render the evaluation bar
 export function updateEvalBar() {
-    // Evaluate the board assuming the player makes the current best move
-    const depth = 2; // Fixed depth for responsiveness; hints use deeper search
+    // Fixed depth of 5 for deterministic evaluation of who is winning, assuming optimal moves (best moves) are played onward.
+    // This is independent of the AI difficulty settings or player skill levels.
+    const depth = 5;
     const isP1 = state.turn === 1;
     const result = minimax(
         depth,

@@ -10,7 +10,8 @@ import { clearHints } from './ui-hints.js';
 
 // Analyse move quality compared to the optimal move
 export function analyzeMoveQuality(chosenMove, player) {
-    const depth = 2; // Matches eval bar depth for consistent move quality badges
+    // Fixed depth of 5 to match eval bar depth for consistent move quality badges
+    const depth = 5;
     
     const candidates = generateSmartMoves(
         player,
