@@ -1,8 +1,8 @@
 import { state } from './state.js';
 import { playSound } from './sfx.js';
 import { getWallNotation } from './notation.js';
-import { findShortestPath, getValidPawnMoves } from './engine.js';
-import { evaluateBoard, minimax, getBestMoves } from './ai.js';
+import { findShortestPath, getValidPawnMoves, findShortestPathLengthFast } from './engine.js';
+import { evaluateBoard, minimax, getBestMoves, generateSmartMoves } from './ai.js';
 import { renderHints, clearHints } from './ui-hints.js';
 
 // Log actions into match history
@@ -37,34 +37,36 @@ export function checkGameVictory(p1Len, p2Len) {
 }
 
 // Render the evaluation bar
-export function updateEvalBar() {
-    // Fixed depth of 5 for deterministic evaluation of who is winning, assuming optimal moves (best moves) are played onward.
-    // This is independent of the AI difficulty settings or player skill levels.
-    const depth = 5;
-    const isP1 = state.turn === 1;
-    const result = minimax(
-        depth,
-        -Infinity,
-        Infinity,
-        isP1,
-        state.p1Pos,
-        state.p2Pos,
-        state.hWalls,
-        state.vWalls,
-        state.p1Walls,
-        state.p2Walls
-    );
-    let score = result.score;
-    if (score === undefined || score === null) {
-        score = evaluateBoard(state.p1Pos, state.p2Pos, state.hWalls, state.vWalls, state.p1Walls, state.p2Walls, isP1);
-    }
+export function getBoardStateKey(state) {
+    const hKeys = Array.from(state.hWalls.keys()).sort().join(';');
+    const vKeys = Array.from(state.vWalls.keys()).sort().join(';');
+    return `${state.p1Pos.x},${state.p1Pos.y}|${state.p2Pos.x},${state.p2Pos.y}|${state.p1Walls}|${state.p2Walls}|${state.turn}|${hKeys}|${vKeys}`;
+}
 
+export function showEvalBarLoading() {
+    const valEl = document.getElementById('eval-score-value');
+    const bubbleEl = document.getElementById('eval-score-bubble');
+    if (valEl) {
+        valEl.textContent = '...';
+        valEl.style.color = 'var(--color-text-muted)';
+    }
+    if (bubbleEl) {
+        bubbleEl.classList.add('loading');
+    }
+}
+
+export function updateEvalBarUI(score) {
     const fillEl = document.getElementById('eval-bar-fill');
     const valEl = document.getElementById('eval-score-value');
+    const bubbleEl = document.getElementById('eval-score-bubble');
     const badgeEl = document.getElementById('eval-move-badge');
     const badgeTextEl = document.getElementById('eval-move-badge-text');
 
     if (!fillEl || !valEl) return;
+
+    if (bubbleEl) {
+        bubbleEl.classList.remove('loading');
+    }
 
     let percent;
     if (score === Infinity) {
@@ -102,6 +104,229 @@ export function updateEvalBar() {
     } else if (badgeEl) {
         badgeEl.classList.add('hidden');
     }
+}
+
+export function precomputeNextMoves() {
+    const key = getBoardStateKey(state);
+    
+    // Check if already computed or currently computing for this key
+    if (state.precomputedEvaluations && state.precomputedEvaluations.key === key) {
+        return;
+    }
+
+    const p1PosSnapshot = { ...state.p1Pos };
+    const p2PosSnapshot = { ...state.p2Pos };
+    const p1WallsSnapshot = state.p1Walls;
+    const p2WallsSnapshot = state.p2Walls;
+    const turnSnapshot = state.turn;
+    const hWallsSnapshot = new Map(state.hWalls);
+    const vWallsSnapshot = new Map(state.vWalls);
+
+    state.precomputedEvaluations = {
+        key: key,
+        status: 'computing',
+        scores: new Map(),
+        bestScore: null,
+        currentEval: null
+    };
+
+    const depth = 5;
+
+    // Yield control to main thread using setTimeout
+    setTimeout(() => {
+        if (getBoardStateKey(state) !== key) return; // state changed, abort
+
+        let score;
+        // If we already computed the score of this state in the previous turn, use it!
+        if (state.previousPrecomputedEvaluations) {
+            const lastMove = state.history[state.history.length - 1];
+            if (lastMove) {
+                const moveKey = lastMove.type === 'move' ? `move:${lastMove.to.x},${lastMove.to.y}` : `wall:${lastMove.x},${lastMove.y},${lastMove.wallType}`;
+                score = state.previousPrecomputedEvaluations.scores.get(moveKey);
+            }
+        }
+
+        if (score === undefined) {
+            const result = minimax(
+                depth,
+                -Infinity,
+                Infinity,
+                turnSnapshot === 1,
+                p1PosSnapshot,
+                p2PosSnapshot,
+                hWallsSnapshot,
+                vWallsSnapshot,
+                p1WallsSnapshot,
+                p2WallsSnapshot
+            );
+            score = result.score;
+            if (score === undefined || score === null) {
+                score = evaluateBoard(p1PosSnapshot, p2PosSnapshot, hWallsSnapshot, vWallsSnapshot, p1WallsSnapshot, p2WallsSnapshot, turnSnapshot === 1);
+            }
+        }
+
+        state.precomputedEvaluations.currentEval = score;
+        updateEvalBarUI(score);
+
+        // Convert Map walls to TypedArrays for fast minimax child updates
+        const hWallsArray = new Uint8Array(64);
+        const vWallsArray = new Uint8Array(64);
+        for (const k of hWallsSnapshot.keys()) {
+            const [wx, wy] = k.split(',').map(Number);
+            hWallsArray[wy * 8 + wx] = 1;
+        }
+        for (const k of vWallsSnapshot.keys()) {
+            const [wx, wy] = k.split(',').map(Number);
+            vWallsArray[wy * 8 + wx] = 1;
+        }
+
+        const candidates = generateSmartMoves(
+            turnSnapshot,
+            p1PosSnapshot,
+            p2PosSnapshot,
+            hWallsArray,
+            vWallsArray,
+            p1WallsSnapshot,
+            p2WallsSnapshot
+        );
+
+        if (candidates.length === 0) {
+            state.precomputedEvaluations.status = 'done';
+            return;
+        }
+
+        const isP1 = turnSnapshot === 1;
+
+        // Sort candidates so that moves resulting in the smallest active player path length are precomputed first!
+        const candDistances = candidates.map(move => {
+            let nextP1Pos = { ...p1PosSnapshot };
+            let nextP2Pos = { ...p2PosSnapshot };
+            
+            const idx = move.y * 8 + move.x;
+            if (move.type === 'move') {
+                if (isP1) nextP1Pos = move.to;
+                else nextP2Pos = move.to;
+            } else {
+                if (move.wallType === 'h') hWallsArray[idx] = 1;
+                else vWallsArray[idx] = 1;
+            }
+
+            const p1Len = findShortestPathLengthFast(nextP1Pos.x, nextP1Pos.y, 8, hWallsArray, vWallsArray);
+            const p2Len = findShortestPathLengthFast(nextP2Pos.x, nextP2Pos.y, 0, hWallsArray, vWallsArray);
+
+            if (move.type === 'wall') {
+                if (move.wallType === 'h') hWallsArray[idx] = 0;
+                else vWallsArray[idx] = 0;
+            }
+
+            const activeLen = isP1 ? p1Len : p2Len;
+            const oppLen = isP1 ? p2Len : p1Len;
+            
+            return {
+                move: move,
+                activeLen: activeLen < 0 ? Infinity : activeLen,
+                oppLen: oppLen < 0 ? -Infinity : oppLen
+            };
+        });
+
+        candDistances.sort((a, b) => {
+            if (a.activeLen !== b.activeLen) {
+                return a.activeLen - b.activeLen;
+            }
+            return b.oppLen - a.oppLen;
+        });
+
+        const sortedCandidates = candDistances.map(cd => cd.move);
+
+        let candIdx = 0;
+        let bestScore = isP1 ? -Infinity : Infinity;
+
+        function processNextCandidate() {
+            if (getBoardStateKey(state) !== key) return; // state changed, abort
+
+            const move = sortedCandidates[candIdx];
+            let nextP1Pos = { ...p1PosSnapshot };
+            let nextP2Pos = { ...p2PosSnapshot };
+            let nextP1Walls = p1WallsSnapshot;
+            let nextP2Walls = p2WallsSnapshot;
+            
+            const idx = move.y * 8 + move.x;
+            if (move.type === 'move') {
+                if (isP1) nextP1Pos = move.to;
+                else nextP2Pos = move.to;
+            } else {
+                if (move.wallType === 'h') hWallsArray[idx] = 1;
+                else vWallsArray[idx] = 1;
+                
+                if (isP1) nextP1Walls--;
+                else nextP2Walls--;
+            }
+
+            const result = minimax(
+                depth - 1,
+                -Infinity,
+                Infinity,
+                !isP1,
+                nextP1Pos,
+                nextP2Pos,
+                hWallsArray,
+                vWallsArray,
+                nextP1Walls,
+                nextP2Walls
+            );
+
+            if (move.type === 'wall') {
+                if (move.wallType === 'h') hWallsArray[idx] = 0;
+                else vWallsArray[idx] = 0;
+            }
+
+            const moveKey = move.type === 'move' ? `move:${move.to.x},${move.to.y}` : `wall:${move.x},${move.y},${move.wallType}`;
+            state.precomputedEvaluations.scores.set(moveKey, result.score);
+
+            if (isP1) {
+                if (result.score > bestScore) bestScore = result.score;
+            } else {
+                if (result.score < bestScore) bestScore = result.score;
+            }
+
+            candIdx++;
+            if (candIdx < candidates.length) {
+                // Yield to event loop to avoid freezing UI
+                setTimeout(processNextCandidate, 0);
+            } else {
+                state.precomputedEvaluations.bestScore = bestScore;
+                state.precomputedEvaluations.status = 'done';
+            }
+        }
+
+        processNextCandidate();
+    }, 0);
+}
+
+// Render the evaluation bar
+export function updateEvalBar() {
+    const key = getBoardStateKey(state);
+    
+    // Check if we already have a precomputed score for this state (from previous turn)
+    let scoreUpdated = false;
+    if (state.previousPrecomputedEvaluations) {
+        const lastMove = state.history[state.history.length - 1];
+        if (lastMove) {
+            const moveKey = lastMove.type === 'move' ? `move:${lastMove.to.x},${lastMove.to.y}` : `wall:${lastMove.x},${lastMove.y},${lastMove.wallType}`;
+            const cachedScore = state.previousPrecomputedEvaluations.scores.get(moveKey);
+            if (cachedScore !== undefined) {
+                updateEvalBarUI(cachedScore);
+                scoreUpdated = true;
+            }
+        }
+    }
+
+    if (!scoreUpdated) {
+        showEvalBarLoading();
+    }
+
+    // Run/continue the precomputation
+    precomputeNextMoves();
 }
 
 // UI update sequence for turn indicators, badges, diagnostic logs, and path highlights
@@ -185,8 +410,27 @@ export function updateUI() {
     updateEvalBar();
 
     if (state.hintOn && !isAITurn && !isPlaybookViewing) {
-        const bestMoves = getBestMoves(state.turn, state.p1Pos, state.p2Pos, state.hWalls, state.vWalls, state.p1Walls, state.p2Walls);
-        renderHints(bestMoves);
+        const turnSnapshot = state.turn;
+        const p1PosSnapshot = { ...state.p1Pos };
+        const p2PosSnapshot = { ...state.p2Pos };
+        const p1WallsSnapshot = state.p1Walls;
+        const p2WallsSnapshot = state.p2Walls;
+        const hWallsSnapshot = new Map(state.hWalls);
+        const vWallsSnapshot = new Map(state.vWalls);
+
+        setTimeout(() => {
+            if (state.turn !== turnSnapshot) return;
+            const bestMoves = getBestMoves(
+                turnSnapshot,
+                p1PosSnapshot,
+                p2PosSnapshot,
+                hWallsSnapshot,
+                vWallsSnapshot,
+                p1WallsSnapshot,
+                p2WallsSnapshot
+            );
+            renderHints(bestMoves);
+        }, 50);
     } else {
         clearHints();
     }

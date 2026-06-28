@@ -29,5 +29,9 @@ export const state = {
     // Path display state
     showPaths: true,
     soundEnabled: true,
-    hintOn: false
+    hintOn: false,
+
+    // Precomputed evaluations caching
+    precomputedEvaluations: null,
+    previousPrecomputedEvaluations: null
 };

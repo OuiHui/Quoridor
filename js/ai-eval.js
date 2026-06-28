@@ -1,18 +1,30 @@
 import { state } from './state.js';
-import { findShortestPath, getValidPawnMoves, validateWallPlacement } from './engine.js';
+import { findShortestPath, getValidPawnMoves, validateWallPlacement, findShortestPathLengthFast } from './engine.js';
 import { minimax } from './ai-search.js';
 
 // Evaluate board position for Minimax AI
 // Positive = P1 advantage, Negative = P2 advantage
 export function evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, isP1Turn) {
-    const p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls);
-    const p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls);
+    let p1Dist, p2Dist;
+    if (hWalls instanceof Map) {
+        const p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls);
+        const p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls);
 
-    if (!p1Path) return -Infinity; // P1 is blocked – invalid
-    if (!p2Path) return Infinity;  // P2 is blocked – invalid
+        if (!p1Path) return -Infinity; // P1 is blocked – invalid
+        if (!p2Path) return Infinity;  // P2 is blocked – invalid
 
-    const p1Dist = p1Path.length - 1;
-    const p2Dist = p2Path.length - 1;
+        p1Dist = p1Path.length - 1;
+        p2Dist = p2Path.length - 1;
+    } else {
+        const p1Len = findShortestPathLengthFast(p1Pos.x, p1Pos.y, 8, hWalls, vWalls);
+        const p2Len = findShortestPathLengthFast(p2Pos.x, p2Pos.y, 0, hWalls, vWalls);
+
+        if (p1Len < 0) return -Infinity;
+        if (p2Len < 0) return Infinity;
+
+        p1Dist = p1Len - 1;
+        p2Dist = p2Len - 1;
+    }
 
     if (p1Dist === 0) return Infinity;
     if (p2Dist === 0) return -Infinity;
@@ -148,30 +160,44 @@ export function generateSmartMoves(playerNum, p1Pos, p2Pos, hWalls, vWalls, p1Wa
 // Get best moves for hint display.
 // Always runs at depth 3 (regardless of difficulty) for quality hints on demand.
 export function getBestMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls) {
-    const candidates = generateSmartMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls);
+    const hWallsArray = new Uint8Array(64);
+    const vWallsArray = new Uint8Array(64);
+    for (const key of hWalls.keys()) {
+        const [x, y] = key.split(',').map(Number);
+        hWallsArray[y * 8 + x] = 1;
+    }
+    for (const key of vWalls.keys()) {
+        const [x, y] = key.split(',').map(Number);
+        vWallsArray[y * 8 + x] = 1;
+    }
+
+    const candidates = generateSmartMoves(player, p1Pos, p2Pos, hWallsArray, vWallsArray, p1Walls, p2Walls);
     if (candidates.length === 0) return [];
 
     const isP1 = player === 1;
     const HINT_DEPTH = 3;
 
     const scored = candidates.map(move => {
-        const tempHWalls = new Map(hWalls);
-        const tempVWalls = new Map(vWalls);
         let nextP1Pos = { ...p1Pos }, nextP2Pos = { ...p2Pos };
         let nextP1Walls = p1Walls, nextP2Walls = p2Walls;
 
+        const idx = move.y * 8 + move.x;
         if (move.type === 'move') {
             if (isP1) nextP1Pos = move.to; else nextP2Pos = move.to;
         } else {
-            const k = `${move.x},${move.y}`;
-            if (move.wallType === 'h') tempHWalls.set(k, player); else tempVWalls.set(k, player);
+            if (move.wallType === 'h') hWallsArray[idx] = 1; else vWallsArray[idx] = 1;
             if (isP1) nextP1Walls--; else nextP2Walls--;
         }
 
         const result = minimax(
             HINT_DEPTH - 1, -Infinity, Infinity, !isP1,
-            nextP1Pos, nextP2Pos, tempHWalls, tempVWalls, nextP1Walls, nextP2Walls
+            nextP1Pos, nextP2Pos, hWallsArray, vWallsArray, nextP1Walls, nextP2Walls
         );
+
+        if (move.type === 'wall') {
+            if (move.wallType === 'h') hWallsArray[idx] = 0; else vWallsArray[idx] = 0;
+        }
+
         return { move, score: result.score };
     });
 

@@ -440,6 +440,16 @@
     box-shadow: 0 4px 12px rgba(0,0,0,0.5);
 }
 
+.eval-score-bubble.loading {
+    animation: bubblePulse 1.5s infinite ease-in-out;
+}
+
+@keyframes bubblePulse {
+    0% { opacity: 0.6; transform: scale(0.98); }
+    50% { opacity: 1.0; transform: scale(1.02); }
+    100% { opacity: 0.6; transform: scale(0.98); }
+}
+
 .eval-score-value {
     font-family: var(--font-mono);
     font-size: 0.8rem;
@@ -486,6 +496,19 @@
     background: rgba(239, 68, 68, 0.12);
     border: 1px solid var(--color-error);
     color: var(--color-error);
+}
+
+.eval-move-badge.thinking {
+    background: rgba(148, 163, 184, 0.12);
+    border: 1px dashed var(--color-text-muted);
+    color: var(--color-text-muted);
+    animation: badgePulse 1.5s infinite ease-in-out;
+}
+
+@keyframes badgePulse {
+    0% { opacity: 0.6; }
+    50% { opacity: 1.0; }
+    100% { opacity: 0.6; }
 }
 
 @keyframes badgePop {

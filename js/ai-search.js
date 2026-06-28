@@ -4,42 +4,59 @@ import { evaluateBoard, generateSmartMoves } from './ai-eval.js';
 
 // Alpha-Beta Minimax Search
 export function minimax(depth, alpha, beta, maximizingPlayer, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls) {
-    const p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls);
-    const p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls);
+    let hWallsArray, vWallsArray;
+    if (hWalls instanceof Map) {
+        hWallsArray = new Uint8Array(64);
+        vWallsArray = new Uint8Array(64);
+        for (const key of hWalls.keys()) {
+            const [x, y] = key.split(',').map(Number);
+            hWallsArray[y * 8 + x] = 1;
+        }
+        for (const key of vWalls.keys()) {
+            const [x, y] = key.split(',').map(Number);
+            vWallsArray[y * 8 + x] = 1;
+        }
+    } else {
+        hWallsArray = hWalls;
+        vWallsArray = vWalls;
+    }
+
+    const p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWallsArray, vWallsArray);
+    const p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWallsArray, vWallsArray);
 
     if (!p1Path || p1Path.length === 1) return { score: Infinity };
     if (!p2Path || p2Path.length === 1) return { score: -Infinity };
     if (depth === 0) {
-        return { score: evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, maximizingPlayer) };
+        return { score: evaluateBoard(p1Pos, p2Pos, hWallsArray, vWallsArray, p1Walls, p2Walls, maximizingPlayer) };
     }
 
     if (maximizingPlayer) {
         let maxScore = -Infinity;
         let bestMove = null;
-        const moves = generateSmartMoves(1, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls);
+        const moves = generateSmartMoves(1, p1Pos, p2Pos, hWallsArray, vWallsArray, p1Walls, p2Walls);
 
         if (moves.length === 0) {
-            return { score: evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, true) };
+            return { score: evaluateBoard(p1Pos, p2Pos, hWallsArray, vWallsArray, p1Walls, p2Walls, true) };
         }
 
         for (const move of moves) {
             let nextP1Pos = { ...p1Pos };
             let nextP1Walls = p1Walls;
-            const wallKey = `${move.x},${move.y}`;
+            const wallIdx = move.y * 8 + move.x;
 
             if (move.type === 'move') {
                 nextP1Pos = move.to;
             } else {
-                if (move.wallType === 'h') hWalls.set(wallKey, true);
-                else vWalls.set(wallKey, true);
+                if (move.wallType === 'h') hWallsArray[wallIdx] = 1;
+                else vWallsArray[wallIdx] = 1;
                 nextP1Walls--;
             }
 
-            const result = minimax(depth - 1, alpha, beta, false, nextP1Pos, p2Pos, hWalls, vWalls, nextP1Walls, p2Walls);
+            const result = minimax(depth - 1, alpha, beta, false, nextP1Pos, p2Pos, hWallsArray, vWallsArray, nextP1Walls, p2Walls);
 
             if (move.type === 'wall') {
-                if (move.wallType === 'h') hWalls.delete(wallKey);
-                else vWalls.delete(wallKey);
+                if (move.wallType === 'h') hWallsArray[wallIdx] = 0;
+                else vWallsArray[wallIdx] = 0;
             }
 
             if (result.score > maxScore) {
@@ -53,30 +70,30 @@ export function minimax(depth, alpha, beta, maximizingPlayer, p1Pos, p2Pos, hWal
     } else {
         let minScore = Infinity;
         let bestMove = null;
-        const moves = generateSmartMoves(2, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls);
+        const moves = generateSmartMoves(2, p1Pos, p2Pos, hWallsArray, vWallsArray, p1Walls, p2Walls);
 
         if (moves.length === 0) {
-            return { score: evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, false) };
+            return { score: evaluateBoard(p1Pos, p2Pos, hWallsArray, vWallsArray, p1Walls, p2Walls, false) };
         }
 
         for (const move of moves) {
             let nextP2Pos = { ...p2Pos };
             let nextP2Walls = p2Walls;
-            const wallKey = `${move.x},${move.y}`;
+            const wallIdx = move.y * 8 + move.x;
 
             if (move.type === 'move') {
                 nextP2Pos = move.to;
             } else {
-                if (move.wallType === 'h') hWalls.set(wallKey, true);
-                else vWalls.set(wallKey, true);
+                if (move.wallType === 'h') hWallsArray[wallIdx] = 1;
+                else vWallsArray[wallIdx] = 1;
                 nextP2Walls--;
             }
 
-            const result = minimax(depth - 1, alpha, beta, true, p1Pos, nextP2Pos, hWalls, vWalls, p1Walls, nextP2Walls);
+            const result = minimax(depth - 1, alpha, beta, true, p1Pos, nextP2Pos, hWallsArray, vWallsArray, p1Walls, nextP2Walls);
 
             if (move.type === 'wall') {
-                if (move.wallType === 'h') hWalls.delete(wallKey);
-                else vWalls.delete(wallKey);
+                if (move.wallType === 'h') hWallsArray[wallIdx] = 0;
+                else vWallsArray[wallIdx] = 0;
             }
 
             if (result.score < minScore) {

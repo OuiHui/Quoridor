@@ -183,8 +183,29 @@ function init() {
             hintBtn.textContent = 'Hint: On';
             hintBtn.classList.remove('btn-secondary');
             hintBtn.classList.add('btn-accent');
-            const bestMoves = getBestMoves(state.turn, state.p1Pos, state.p2Pos, state.hWalls, state.vWalls, state.p1Walls, state.p2Walls);
-            renderHints(bestMoves);
+            
+            const turnSnapshot = state.turn;
+            const p1PosSnapshot = { ...state.p1Pos };
+            const p2PosSnapshot = { ...state.p2Pos };
+            const hWallsSnapshot = new Map(state.hWalls);
+            const vWallsSnapshot = new Map(state.vWalls);
+            const p1WallsSnapshot = state.p1Walls;
+            const p2WallsSnapshot = state.p2Walls;
+
+            setTimeout(() => {
+                if (state.turn !== turnSnapshot) return;
+                const bestMoves = getBestMoves(
+                    turnSnapshot, 
+                    p1PosSnapshot, 
+                    p2PosSnapshot, 
+                    hWallsSnapshot, 
+                    vWallsSnapshot, 
+                    p1WallsSnapshot, 
+                    p2WallsSnapshot
+                );
+                renderHints(bestMoves);
+            }, 50);
+            
             logAction('Auto hints enabled.', 'system');
         } else {
             hintBtn.textContent = 'Hint: Off';
