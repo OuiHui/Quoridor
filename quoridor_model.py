@@ -44,10 +44,10 @@ class QuoridorNet(nn.Module):
         self.value_fc1 = nn.Linear(4 * 9 * 9, 64)
         self.value_fc2 = nn.Linear(64, 1)
         
-        # Policy Head: (128, 9, 9) -> Conv(128, 4, 1) -> BN -> ReLU -> Flatten -> Linear(4*9*9, 133)
+        # Policy Head: (128, 9, 9) -> Conv(128, 4, 1) -> BN -> ReLU -> Flatten -> Linear(4*9*9, 140)
         self.policy_conv = nn.Conv2d(channels, 4, kernel_size=1, bias=False)
         self.policy_bn = nn.BatchNorm2d(4)
-        self.policy_fc = nn.Linear(4 * 9 * 9, 133)
+        self.policy_fc = nn.Linear(4 * 9 * 9, 140)
 
     def forward(self, x):
         # Trunk
@@ -136,76 +136,58 @@ def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_le
     # 9. Opponent walls remaining / 10.0
     tensor[9, :, :] = min(opp_walls / 10.0, 1.0)
     
-    # 10. Turn indicator (all 0s since active player's turn relative to active player perspective)
-    # Stays 0.0 by default.
-    
+    # 10. Absolute player identity: 1.0 if the active player is P1, 0.0 if P2.
+    # Useful because P1 and P2 have asymmetric goals (opposite sides of the board).
+    tensor[10, :, :] = 1.0 if is_p1_turn else 0.0
+
     return tensor
 
+# Action space: 140 total
+#   0-3:   Regular moves (N, S, E, W)
+#   4-7:   Straight jumps (N, S, E, W)
+#   8-11:  Diagonal jumps (NE, NW, SE, SW)
+#   12-75: Horizontal walls (wx=0..7, wy=0..7)  -> 12 + wy*8 + wx
+#   76-139: Vertical walls (wx=0..7, wy=0..7)   -> 76 + wy*8 + wx
+NUM_ACTIONS = 140
+
+_MOVE_DIR_TO_IDX = {'N': 0, 'S': 1, 'E': 2, 'W': 3,
+                    'jump_N': 4, 'jump_S': 5, 'jump_E': 6, 'jump_W': 7,
+                    'jump_NE': 8, 'jump_NW': 9, 'jump_SE': 10, 'jump_SW': 11}
+_IDX_TO_MOVE_DIR = {v: k for k, v in _MOVE_DIR_TO_IDX.items()}
+
 def map_action_to_index(action):
-    """
-    Maps an action dictionary to an index in [0, 132].
-    
-    Pawn moves (5 total):
-        N: 0, S: 1, E: 2, W: 3, jump-over: 4
-        
-    Horizontal walls (64 total):
-        (wx, wy) -> 5 + wy * 8 + wx
-        
-    Vertical walls (64 total):
-        (wx, wy) -> 69 + wy * 8 + wx
-    """
     action_type = action.get('type')
     if action_type == 'move':
-        move_dir = action.get('dir')
-        if move_dir == 'N': return 0
-        if move_dir == 'S': return 1
-        if move_dir == 'E': return 2
-        if move_dir == 'W': return 3
-        if move_dir == 'jump': return 4
+        return _MOVE_DIR_TO_IDX[action['dir']]
     elif action_type == 'wall':
-        wall_type = action.get('wallType')
-        wx = action.get('x')
-        wy = action.get('y')
-        if wall_type == 'h':
-            return 5 + wy * 8 + wx
-        elif wall_type == 'v':
-            return 69 + wy * 8 + wx
+        wx, wy = action['x'], action['y']
+        if action['wallType'] == 'h':
+            return 12 + wy * 8 + wx
+        else:
+            return 76 + wy * 8 + wx
     raise ValueError(f"Unknown action format: {action}")
 
-def map_index_to_action(index, px, py, ox, oy):
+def map_index_to_action(index, px, py, ox=None, oy=None):
     """
-    Maps an index in [0, 132] to an action dictionary.
-    Inputs px, py, ox, oy are needed to compute the target coordinates for pawn moves.
+    Maps an index in [0, 139] to an action dictionary.
+    px, py: active player position. ox, oy: opponent position (unused, kept for compatibility).
     """
-    if index < 5:
-        if index == 0: return {'type': 'move', 'dir': 'N', 'to': (px, py + 1)}
-        if index == 1: return {'type': 'move', 'dir': 'S', 'to': (px, py - 1)}
-        if index == 2: return {'type': 'move', 'dir': 'E', 'to': (px + 1, py)}
-        if index == 3: return {'type': 'move', 'dir': 'W', 'to': (px - 1, py)}
-        if index == 4:
-            # Resolving jump target based on opponent relative position
-            dx, dy = ox - px, oy - py
-            if abs(dx) == 1 and dy == 0:
-                return {'type': 'move', 'dir': 'jump', 'to': (ox + dx, oy)}
-            elif dx == 0 and abs(dy) == 1:
-                return {'type': 'move', 'dir': 'jump', 'to': (ox, oy + dy)}
-            # If diagonal jump is needed, it must be validated from the game rules.
-            return {'type': 'move', 'dir': 'jump', 'to': (ox, oy)}
-    elif index < 69:
-        wall_idx = index - 5
-        wy = wall_idx // 8
-        wx = wall_idx % 8
-        return {'type': 'wall', 'wallType': 'h', 'x': wx, 'y': wy}
+    if index < 12:
+        move_dir = _IDX_TO_MOVE_DIR[index]
+        delta = {
+            'N': (0, 1), 'S': (0, -1), 'E': (1, 0), 'W': (-1, 0),
+            'jump_N': (0, 2), 'jump_S': (0, -2), 'jump_E': (2, 0), 'jump_W': (-2, 0),
+            'jump_NE': (1, 1), 'jump_NW': (-1, 1), 'jump_SE': (1, -1), 'jump_SW': (-1, -1),
+        }[move_dir]
+        return {'type': 'move', 'dir': move_dir, 'to': (px + delta[0], py + delta[1])}
+    elif index < 76:
+        wall_idx = index - 12
+        return {'type': 'wall', 'wallType': 'h', 'x': wall_idx % 8, 'y': wall_idx // 8}
     else:
-        wall_idx = index - 69
-        wy = wall_idx // 8
-        wx = wall_idx % 8
-        return {'type': 'wall', 'wallType': 'v', 'x': wx, 'y': wy}
+        wall_idx = index - 76
+        return {'type': 'wall', 'wallType': 'v', 'x': wall_idx % 8, 'y': wall_idx // 8}
 
 def export_to_onnx(model, filepath="quoridor_model.onnx"):
-    """
-    Exports the PyTorch model to ONNX format.
-    """
     model.eval()
     dummy_input = torch.randn(1, 11, 9, 9, dtype=torch.float32)
     torch.onnx.export(

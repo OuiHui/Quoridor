@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from collections import deque
-from quoridor_model import QuoridorNet, encode_state, map_action_to_index, export_to_onnx
+from quoridor_model import QuoridorNet, encode_state, map_action_to_index, export_to_onnx, NUM_ACTIONS
 
 # --- LIGHTWEIGHT PYTHON QUORIDOR SIMULATOR ---
 
@@ -170,12 +170,18 @@ class QuoridorGame:
         for _, dest in self.get_valid_pawn_moves(is_p1):
             px, py = self.p1_pos if is_p1 else self.p2_pos
             dx, dy = dest[0] - px, dest[1] - py
-            if abs(dx) == 2 or abs(dy) == 2 or (abs(dx) == 1 and abs(dy) == 1):
-                move_dir = 'jump'
-            elif dy == 1: move_dir = 'N'
-            elif dy == -1: move_dir = 'S'
-            elif dx == 1: move_dir = 'E'
-            else: move_dir = 'W'
+            if dx == 0 and dy == 1:   move_dir = 'N'
+            elif dx == 0 and dy == -1: move_dir = 'S'
+            elif dx == 1 and dy == 0:  move_dir = 'E'
+            elif dx == -1 and dy == 0: move_dir = 'W'
+            elif dx == 0 and dy == 2:  move_dir = 'jump_N'
+            elif dx == 0 and dy == -2: move_dir = 'jump_S'
+            elif dx == 2 and dy == 0:  move_dir = 'jump_E'
+            elif dx == -2 and dy == 0: move_dir = 'jump_W'
+            elif dx == 1 and dy == 1:  move_dir = 'jump_NE'
+            elif dx == -1 and dy == 1: move_dir = 'jump_NW'
+            elif dx == 1 and dy == -1: move_dir = 'jump_SE'
+            else:                      move_dir = 'jump_SW'
             actions.append({'type': 'move', 'dir': move_dir, 'to': dest})
             
         # 2. Wall placements
@@ -232,9 +238,11 @@ class MCTSNode:
         return len(self.children) == 0
 
 class MCTS:
-    def __init__(self, model, c_puct=1.4):
+    def __init__(self, model, c_puct=1.4, dirichlet_alpha=0.3, dirichlet_eps=0.25):
         self.model = model
         self.c_puct = c_puct
+        self.dirichlet_alpha = dirichlet_alpha
+        self.dirichlet_eps = dirichlet_eps
 
     def run_search(self, game_state, num_simulations=40):
         root = MCTSNode(game_state.clone())
@@ -305,6 +313,13 @@ class MCTS:
                     next_game, parent=node, action_idx=idx, prior=masked_policy[idx]
                 )
 
+            # Add Dirichlet noise at root for exploration
+            if node is root and len(root.children) > 0:
+                child_list = list(root.children.values())
+                noise = np.random.dirichlet([self.dirichlet_alpha] * len(child_list))
+                for child, n in zip(child_list, noise):
+                    child.prior = (1 - self.dirichlet_eps) * child.prior + self.dirichlet_eps * n
+
             # 3. Backpropagation
             self.backpropagate(node, value)
 
@@ -319,29 +334,37 @@ class MCTS:
 
 # --- TRAINING LOOP PIPELINE ---
 
+# Temperature schedule: τ=1 for first TEMP_THRESHOLD moves (exploration), then τ→0 (exploitation)
+TEMP_THRESHOLD = 30
+
 def self_play_game(model, num_simulations=40):
     game = QuoridorGame()
     mcts = MCTS(model)
     trajectory = [] # items of (tensor, policy_probs, current_player_turn)
-    
+    move_count = 0
+
     while game.is_game_over() == 0 and len(trajectory) < 150: # Avoid infinite loop
         root = mcts.run_search(game, num_simulations=num_simulations)
         
-        # Policy probability distribution over 133 actions
-        policy_probs = np.zeros(133, dtype=np.float32)
+        # Policy probability distribution over NUM_ACTIONS actions
+        visit_counts = np.zeros(NUM_ACTIONS, dtype=np.float32)
         for act_idx, child in root.children.items():
-            policy_probs[act_idx] = child.N / root.N
-            
-        # Normalize to ensure sum is exactly 1.0 for np.random.choice
-        sum_probs = np.sum(policy_probs)
-        if sum_probs > 0:
-            policy_probs /= sum_probs
+            visit_counts[act_idx] = child.N
+
+        # Temperature schedule: proportional sampling early, greedy later
+        if move_count < TEMP_THRESHOLD:
+            policy_probs = visit_counts / (visit_counts.sum() or 1.0)
         else:
+            # τ→0: concentrate all mass on best action
+            policy_probs = np.zeros(NUM_ACTIONS, dtype=np.float32)
+            best_idx = int(np.argmax(visit_counts))
+            policy_probs[best_idx] = 1.0
+
+        if policy_probs.sum() == 0:
             valid_actions = game.get_valid_actions()
             valid_indices = [map_action_to_index(act) for act in valid_actions]
             policy_probs[valid_indices] = 1.0 / len(valid_indices)
 
-            
         # Get board state tensor
         p1_path = game.get_shortest_path(game.p1_pos, 8)
         p2_path = game.get_shortest_path(game.p2_pos, 0)
@@ -352,11 +375,12 @@ def self_play_game(model, num_simulations=40):
             game.p1_walls_left, game.p2_walls_left,
             game.is_p1_turn
         )
-        
-        trajectory.append((state_tensor, policy_probs, game.is_p1_turn))
-        
-        # Always sample action based on MCTS visit counts to prevent deterministic infinite loops
-        action_idx = np.random.choice(133, p=policy_probs)
+
+        # Store visit counts (not temperature-adjusted) as training target per AlphaZero
+        train_probs = visit_counts / (visit_counts.sum() or 1.0)
+        trajectory.append((state_tensor, train_probs, game.is_p1_turn))
+
+        action_idx = np.random.choice(NUM_ACTIONS, p=policy_probs)
 
         # Apply move in the game simulator
         valid_actions = game.get_valid_actions()
@@ -367,10 +391,10 @@ def self_play_game(model, num_simulations=40):
                 break
                 
         if action_obj is None:
-            # Fallback
             action_obj = random.choice(valid_actions)
-            
+
         game.step(action_obj)
+        move_count += 1
 
     winner = game.is_game_over()
     
@@ -390,9 +414,10 @@ def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
     import os
     model = QuoridorNet(num_residual_blocks=6, channels=128)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    # LR halved every 15 epochs
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
     loss_val_fn = nn.MSELoss()
-    loss_policy_fn = nn.CrossEntropyLoss()
-    
+
     checkpoint_path = "quoridor_checkpoint.pth"
     start_epoch = 0
     dataset = []
@@ -402,6 +427,8 @@ def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
             checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=False)
             model.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            if 'scheduler_state_dict' in checkpoint:
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             start_epoch = checkpoint.get('epoch', 0)
             dataset = checkpoint.get('dataset', [])
             print(f"Loaded checkpoint from {checkpoint_path}. Resuming from epoch {start_epoch+1}")
@@ -422,8 +449,8 @@ def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
             
         dataset.extend(epoch_examples)
         # Keep dataset limited to recent experiences
-        if len(dataset) > 500:
-            dataset = dataset[-500:]
+        if len(dataset) > 5000:
+            dataset = dataset[-5000:]
             
         # Training step
         model.train()
@@ -443,11 +470,13 @@ def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
             
             optimizer.zero_grad()
             logits, values = model(states)
-            
-            loss_p = loss_policy_fn(logits, target_policies)
+
+            # Manual cross-entropy: works correctly with soft MCTS targets on all PyTorch versions
+            log_probs = torch.log_softmax(logits, dim=1)
+            loss_p = -torch.sum(target_policies * log_probs) / logits.size(0)
             loss_v = loss_val_fn(values, target_values)
             loss = loss_p + loss_v
-            
+
             loss.backward()
             optimizer.step()
             
@@ -460,7 +489,9 @@ def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
                 entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=-1).mean()
                 epoch_entropy += entropy.item()
             
-        print(f"  Training Summary: Policy Loss = {epoch_p_loss/num_batches:.4f}, Value Loss = {epoch_v_loss/num_batches:.4f}, Policy Entropy = {epoch_entropy/num_batches:.4f}")
+        scheduler.step()
+        current_lr = scheduler.get_last_lr()[0]
+        print(f"  Training Summary: Policy Loss = {epoch_p_loss/num_batches:.4f}, Value Loss = {epoch_v_loss/num_batches:.4f}, Policy Entropy = {epoch_entropy/num_batches:.4f}, LR = {current_lr:.6f}")
         
         # Save checkpoint after each epoch to allow pausing and resuming
         try:
@@ -468,6 +499,7 @@ def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
                 'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
                 'dataset': dataset
             }, checkpoint_path)
             print(f"  Checkpoint saved to {checkpoint_path}")

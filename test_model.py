@@ -1,6 +1,6 @@
 import os
 import torch
-from quoridor_model import QuoridorNet, encode_state, map_action_to_index, map_index_to_action, export_to_onnx
+from quoridor_model import QuoridorNet, encode_state, map_action_to_index, map_index_to_action, export_to_onnx, NUM_ACTIONS
 
 def run_tests():
     print("Running Quoridor Bot Verification Tests...")
@@ -46,7 +46,7 @@ def run_tests():
     
     policy, value = model(batch_input)
     
-    assert policy.shape == (1, 133), f"Incorrect policy output shape: {policy.shape}"
+    assert policy.shape == (1, NUM_ACTIONS), f"Incorrect policy output shape: {policy.shape}"
     assert value.shape == (1, 1), f"Incorrect value output shape: {value.shape}"
     print("✓ Model forward pass outputs validated:")
     print(f"  Policy Head: {policy.shape}")
@@ -54,7 +54,7 @@ def run_tests():
 
     # 3. Test action mapping index boundaries
     action_move_N = {'type': 'move', 'dir': 'N', 'to': (4, 1)}
-    action_move_jump = {'type': 'move', 'dir': 'jump', 'to': (4, 2)}
+    action_move_jump = {'type': 'move', 'dir': 'jump_N', 'to': (4, 2)}
     action_wall_h = {'type': 'wall', 'wallType': 'h', 'x': 0, 'y': 0}
     action_wall_v = {'type': 'wall', 'wallType': 'v', 'x': 7, 'y': 7}
     
@@ -64,12 +64,12 @@ def run_tests():
     idx_wall_v = map_action_to_index(action_wall_v)
     
     assert idx_N == 0, f"N move should map to 0, got {idx_N}"
-    assert idx_jump == 4, f"jump move should map to 4, got {idx_jump}"
-    assert idx_wall_h == 5, f"first h-wall should map to 5, got {idx_wall_h}"
-    assert idx_wall_v == 132, f"last v-wall should map to 132, got {idx_wall_v}"
+    assert idx_jump == 4, f"jump_N move should map to 4, got {idx_jump}"
+    assert idx_wall_h == 12, f"first h-wall should map to 12, got {idx_wall_h}"
+    assert idx_wall_v == 139, f"last v-wall should map to 139, got {idx_wall_v}"
     
     # Round-trip check
-    action_v_reconstructed = map_index_to_action(132, 4, 0, 4, 1)
+    action_v_reconstructed = map_index_to_action(139, 4, 0)
     assert action_v_reconstructed['wallType'] == 'v' and action_v_reconstructed['x'] == 7 and action_v_reconstructed['y'] == 7, "Reconstructed wall action mismatch"
     print("✓ Action-to-index mapping round trips verified")
 
