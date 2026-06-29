@@ -1,6 +1,7 @@
 import { state } from './state.js';
 import { findShortestPath, getValidPawnMoves } from './engine.js';
 import { evaluateBoard, generateSmartMoves } from './ai-eval.js';
+import { runMCTS } from './ai-mcts.js';
 
 // Alpha-Beta Minimax Search
 export function minimax(depth, alpha, beta, maximizingPlayer, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls) {
@@ -118,7 +119,7 @@ export function makeAIMove(executePawnMove, executeWallPlacement) {
         hudTurnEl.textContent = `Thinking... (AI)`;
     }
 
-    setTimeout(() => {
+    setTimeout(async () => {
         let bestMove = null;
 
         if (state.aiSettings.difficulty === 'easy') {
@@ -138,6 +139,19 @@ export function makeAIMove(executePawnMove, executeWallPlacement) {
             if (!bestMove && moves.length > 0) {
                 bestMove = { type: 'move', to: moves[Math.floor(Math.random() * moves.length)] };
             }
+        } else if (state.aiSettings.difficulty === 'alphazero') {
+            // AlphaZero MCTS search (fallback to heuristic-based PUCT if ONNX not loaded)
+            bestMove = await runMCTS(
+                state.p1Pos,
+                state.p2Pos,
+                state.hWalls,
+                state.vWalls,
+                state.p1Walls,
+                state.p2Walls,
+                state.turn,
+                80, // Number of MCTS simulations
+                window.quoridorONNXSession || null
+            );
         } else {
             const searchDepth = state.aiSettings.difficulty === 'medium' ? 3 : 4;
             const isMaximizing = isP1;
@@ -173,3 +187,4 @@ export function makeAIMove(executePawnMove, executeWallPlacement) {
         }
     }, 250);
 }
+

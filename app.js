@@ -316,4 +316,25 @@ function init() {
     setGameMode('sandbox');
 }
 
-window.addEventListener('DOMContentLoaded', init);
+window.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const modelRes = await fetch('./quoridor_model.onnx');
+        const modelBuffer = await modelRes.arrayBuffer();
+
+        const dataRes = await fetch('./quoridor_model.onnx.data');
+        const dataBuffer = await dataRes.arrayBuffer();
+
+        window.quoridorONNXSession = await ort.InferenceSession.create(new Uint8Array(modelBuffer), {
+            externalData: [
+                {
+                    data: new Uint8Array(dataBuffer),
+                    path: 'quoridor_model.onnx.data'
+                }
+            ]
+        });
+        console.log("AlphaZero ONNX model loaded successfully!");
+    } catch (e) {
+        console.warn("Could not load ONNX model, running on heuristic MCTS fallback:", e);
+    }
+    init();
+});

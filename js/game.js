@@ -8,208 +8,172 @@ import { updatePawnPositions, renderPlacedWalls } from './ui-board.js';
 import { updateUI, logAction, analyzePlacedWallEfficiency, hideWallAnalyzer, clearLogs, getBoardStateKey } from './ui-diagnostics.js';
 import { clearHints } from './ui-hints.js';
 
+function updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextEl) {
+    let loss = 0;
+    if (player === 1) {
+        if (bestScore === Infinity) {
+            loss = chosenScore === Infinity ? 0 : Infinity;
+        } else {
+            loss = bestScore - chosenScore;
+        }
+    } else {
+        if (bestScore === -Infinity) {
+            loss = chosenScore === -Infinity ? 0 : Infinity;
+        } else {
+            loss = chosenScore - bestScore;
+        }
+    }
+
+    let classification = 'optimal';
+    let text = 'Optimal';
+    
+    if (loss === 0) {
+        classification = 'optimal';
+        text = 'Optimal';
+    } else if (loss <= 4) {
+        classification = 'good';
+        text = 'Good Move';
+    } else if (loss <= 15) {
+        classification = 'inaccuracy';
+        text = 'Inaccuracy';
+    } else {
+        classification = 'blunder';
+        text = 'Blunder';
+    }
+
+    state.lastMoveQuality = {
+        classification,
+        text,
+        player,
+        score: chosenScore
+    };
+
+    if (badgeEl && badgeTextEl) {
+        badgeEl.className = `eval-move-badge ${classification}`;
+        badgeTextEl.textContent = text;
+        badgeEl.classList.remove('hidden');
+    }
+}
+
 // Analyse move quality compared to the optimal move
 export function analyzeMoveQuality(chosenMove, player) {
     const key = getBoardStateKey(state);
     
+    const badgeEl = document.getElementById('eval-move-badge');
+    const badgeTextEl = document.getElementById('eval-move-badge-text');
+
     // 1. Check if cache has already completed for this state key
-    if (state.precomputedEvaluations && state.precomputedEvaluations.key === key && state.precomputedEvaluations.status === 'done') {
+    if (state.precomputedEvaluations && state.precomputedEvaluations.key === key) {
         const moveKey = chosenMove.type === 'move' ? `move:${chosenMove.to.x},${chosenMove.to.y}` : `wall:${chosenMove.x},${chosenMove.y},${chosenMove.wallType}`;
         const chosenScore = state.precomputedEvaluations.scores.get(moveKey);
-        const bestScore = state.precomputedEvaluations.bestScore;
+        
+        let bestScore = state.precomputedEvaluations.bestScore;
+        if (bestScore === null) {
+            bestScore = state.precomputedEvaluations.currentEval;
+        }
 
         if (chosenScore !== undefined && bestScore !== null) {
-            let loss = 0;
-            if (player === 1) {
-                if (bestScore === Infinity) {
-                    loss = chosenScore === Infinity ? 0 : Infinity;
-                } else {
-                    loss = bestScore - chosenScore;
-                }
-            } else {
-                if (bestScore === -Infinity) {
-                    loss = chosenScore === -Infinity ? 0 : Infinity;
-                } else {
-                    loss = chosenScore - bestScore;
-                }
-            }
-
-            let classification = 'optimal';
-            let text = 'Optimal';
-            if (loss === 0) {
-                classification = 'optimal';
-                text = 'Optimal';
-            } else if (loss <= 4) {
-                classification = 'good';
-                text = 'Good Move';
-            } else if (loss <= 15) {
-                classification = 'inaccuracy';
-                text = 'Inaccuracy';
-            } else {
-                classification = 'blunder';
-                text = 'Blunder';
-            }
-
-            state.lastMoveQuality = {
-                classification,
-                text,
-                player,
-                score: chosenScore
-            };
-
-            const badgeEl = document.getElementById('eval-move-badge');
-            const badgeTextEl = document.getElementById('eval-move-badge-text');
-            if (badgeEl && badgeTextEl) {
-                badgeEl.className = `eval-move-badge ${classification}`;
-                badgeTextEl.textContent = text;
-                badgeEl.classList.remove('hidden');
-            }
+            updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextEl);
             return; // Cache hit: exit instantly!
         }
     }
 
-    // Fixed depth of 5 to match eval bar depth for consistent move quality badges
+    // 2. Fallback: calculate ONLY the chosen move score and best score (if missing) deferred
     const depth = 5;
-    
-    // Capture snapshot of state synchronously
     const p1PosSnapshot = { ...state.p1Pos };
     const p2PosSnapshot = { ...state.p2Pos };
     const p1WallsSnapshot = state.p1Walls;
     const p2WallsSnapshot = state.p2Walls;
-    
-    // Convert to typed arrays once
-    const hWallsArray = new Uint8Array(64);
-    const vWallsArray = new Uint8Array(64);
-    for (const key of state.hWalls.keys()) {
-        const [x, y] = key.split(',').map(Number);
-        hWallsArray[y * 8 + x] = 1;
-    }
-    for (const key of state.vWalls.keys()) {
-        const [x, y] = key.split(',').map(Number);
-        vWallsArray[y * 8 + x] = 1;
-    }
+    const isP1 = player === 1;
 
-    const badgeEl = document.getElementById('eval-move-badge');
-    const badgeTextEl = document.getElementById('eval-move-badge-text');
+    // Snapshot of maps
+    const hWallsSnapshot = new Map(state.hWalls);
+    const vWallsSnapshot = new Map(state.vWalls);
+
     if (badgeEl && badgeTextEl) {
         badgeEl.className = 'eval-move-badge thinking';
         badgeTextEl.textContent = 'Analyzing...';
         badgeEl.classList.remove('hidden');
     }
 
+    const historyLenSnapshot = state.history.length;
+
     setTimeout(() => {
-        const candidates = generateSmartMoves(
-            player,
-            p1PosSnapshot,
-            p2PosSnapshot,
+        if (state.history.length !== historyLenSnapshot) return; // state changed, abort
+
+        // Find bestScore (current state evaluation)
+        let bestScore = null;
+        if (state.precomputedEvaluations && state.precomputedEvaluations.key === key) {
+            bestScore = state.precomputedEvaluations.bestScore !== null ? 
+                state.precomputedEvaluations.bestScore : 
+                state.precomputedEvaluations.currentEval;
+        }
+
+        if (bestScore === null) {
+            // Compute current board evaluation (depth 5)
+            const result = minimax(
+                depth,
+                -Infinity,
+                Infinity,
+                isP1,
+                p1PosSnapshot,
+                p2PosSnapshot,
+                hWallsSnapshot,
+                vWallsSnapshot,
+                p1WallsSnapshot,
+                p2WallsSnapshot
+            );
+            bestScore = result.score;
+            if (bestScore === undefined || bestScore === null) {
+                bestScore = evaluateBoard(p1PosSnapshot, p2PosSnapshot, hWallsSnapshot, vWallsSnapshot, p1WallsSnapshot, p2WallsSnapshot, isP1);
+            }
+        }
+
+        // Convert maps to TypedArrays for the chosen move score calculation
+        const hWallsArray = new Uint8Array(64);
+        const vWallsArray = new Uint8Array(64);
+        for (const k of hWallsSnapshot.keys()) {
+            const [x, y] = k.split(',').map(Number);
+            hWallsArray[y * 8 + x] = 1;
+        }
+        for (const k of vWallsSnapshot.keys()) {
+            const [x, y] = k.split(',').map(Number);
+            vWallsArray[y * 8 + x] = 1;
+        }
+
+        let nextP1Pos = { ...p1PosSnapshot };
+        let nextP2Pos = { ...p2PosSnapshot };
+        let nextP1Walls = p1WallsSnapshot;
+        let nextP2Walls = p2WallsSnapshot;
+        
+        const idx = chosenMove.y * 8 + chosenMove.x;
+        if (chosenMove.type === 'move') {
+            if (isP1) nextP1Pos = chosenMove.to;
+            else nextP2Pos = chosenMove.to;
+        } else {
+            if (chosenMove.wallType === 'h') hWallsArray[idx] = 1;
+            else vWallsArray[idx] = 1;
+            
+            if (isP1) nextP1Walls--;
+            else nextP2Walls--;
+        }
+
+        // Compute chosen move score (depth 4)
+        const result = minimax(
+            depth - 1,
+            -Infinity,
+            Infinity,
+            !isP1,
+            nextP1Pos,
+            nextP2Pos,
             hWallsArray,
             vWallsArray,
-            p1WallsSnapshot,
-            p2WallsSnapshot
+            nextP1Walls,
+            nextP2Walls
         );
-        
-        if (candidates.length === 0) return;
-        
-        const isP1 = player === 1;
-        
-        const getMoveScore = (move) => {
-            let nextP1Pos = { ...p1PosSnapshot };
-            let nextP2Pos = { ...p2PosSnapshot };
-            let nextP1Walls = p1WallsSnapshot;
-            let nextP2Walls = p2WallsSnapshot;
-            
-            const idx = move.y * 8 + move.x;
-            if (move.type === 'move') {
-                if (isP1) nextP1Pos = move.to;
-                else nextP2Pos = move.to;
-            } else {
-                if (move.wallType === 'h') hWallsArray[idx] = 1;
-                else vWallsArray[idx] = 1;
-                
-                if (isP1) nextP1Walls--;
-                else nextP2Walls--;
-            }
-            
-            // Use minimax to evaluate the resulting state accurately
-            const result = minimax(
-                depth - 1, 
-                -Infinity, 
-                Infinity, 
-                !isP1, 
-                nextP1Pos, 
-                nextP2Pos, 
-                hWallsArray, 
-                vWallsArray, 
-                nextP1Walls, 
-                nextP2Walls
-            );
-            
-            // Undo move/wall
-            if (move.type === 'wall') {
-                if (move.wallType === 'h') hWallsArray[idx] = 0;
-                else vWallsArray[idx] = 0;
-            }
-            
-            // If depth-1 is 0, minimax returns a static score, otherwise it searches
-            return result.score;
-        };
-        
-        let bestScore = isP1 ? -Infinity : Infinity;
-        for (const cand of candidates) {
-            const score = getMoveScore(cand);
-            if (isP1) {
-                if (score > bestScore) bestScore = score;
-            } else {
-                if (score < bestScore) bestScore = score;
-            }
-        }
-        
-        const chosenScore = getMoveScore(chosenMove);
-        
-        let loss = 0;
-        if (player === 1) {
-            if (bestScore === Infinity) {
-                loss = chosenScore === Infinity ? 0 : Infinity;
-            } else {
-                loss = bestScore - chosenScore;
-            }
-        } else {
-            if (bestScore === -Infinity) {
-                loss = chosenScore === -Infinity ? 0 : Infinity;
-            } else {
-                loss = chosenScore - bestScore;
-            }
-        }
-        
-        let classification = 'optimal';
-        let text = 'Optimal';
-        
-        if (loss === 0) {
-            classification = 'optimal';
-            text = 'Optimal';
-        } else if (loss <= 4) {
-            classification = 'good';
-            text = 'Good Move';
-        } else if (loss <= 15) {
-            classification = 'inaccuracy';
-            text = 'Inaccuracy';
-        } else {
-            classification = 'blunder';
-            text = 'Blunder';
-        }
-        
-        state.lastMoveQuality = {
-            classification,
-            text,
-            player,
-            score: chosenScore
-        };
+        const chosenScore = result.score;
 
-        if (badgeEl && badgeTextEl) {
-            badgeEl.className = `eval-move-badge ${classification}`;
-            badgeTextEl.textContent = text;
-            badgeEl.classList.remove('hidden');
-        }
+        updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextEl);
     }, 50);
 }
 
