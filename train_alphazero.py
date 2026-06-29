@@ -1,5 +1,8 @@
+import json
 import math
+import os
 import random
+import time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -7,6 +10,44 @@ import torch.optim as optim
 from collections import deque
 from quoridor_model import QuoridorNet, encode_state, map_action_to_index, export_to_onnx, NUM_ACTIONS
 
+# Path to JSON state file served by Vite dev server
+_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'training_state.json')
+
+_METRICS = {
+    'epoch': 0,
+    'total_epochs': 50,
+    'game_idx': 0,
+    'total_games': 20,
+    'p1_wins': 0,
+    'p2_wins': 0,
+    'draws': 0,
+    'policy_loss': 0.0,
+    'value_loss': 0.0,
+    'entropy': 0.0,
+    'lr': 0.001
+}
+
+def write_training_state(game, move_count, active_player, status, last_move=''):
+    """Serialize current game state for the browser overlay to poll."""
+    payload = {
+        'status': status,
+        'p1_pos': list(game.p1_pos),
+        'p2_pos': list(game.p2_pos),
+        'h_walls': [list(w) for w in game.h_walls],
+        'v_walls': [list(w) for w in game.v_walls],
+        'h_wall_owners': game.h_wall_owners,
+        'v_wall_owners': game.v_wall_owners,
+        'p1_walls': game.p1_walls_left,
+        'p2_walls': game.p2_walls_left,
+        'move_count': move_count,
+        'current_player': active_player,
+        'last_move': last_move,
+        'timestamp': time.time(),
+        'metrics': _METRICS,
+    }
+    os.makedirs(os.path.dirname(_STATE_FILE), exist_ok=True)
+    with open(_STATE_FILE, 'w') as f:
+        json.dump(payload, f)
 # --- LIGHTWEIGHT PYTHON QUORIDOR SIMULATOR ---
 
 class QuoridorGame:
@@ -16,6 +57,8 @@ class QuoridorGame:
         self.p2_pos = (4, 8)
         self.h_walls = set() # set of (wx, wy) in 0..7
         self.v_walls = set() # set of (wx, wy) in 0..7
+        self.h_wall_owners = {} # dict of "wx,wy" -> owner (1 or 2)
+        self.v_wall_owners = {} # dict of "wx,wy" -> owner (1 or 2)
         self.p1_walls_left = 10
         self.p2_walls_left = 10
         self.is_p1_turn = True
@@ -26,10 +69,37 @@ class QuoridorGame:
         game.p2_pos = self.p2_pos
         game.h_walls = set(self.h_walls)
         game.v_walls = set(self.v_walls)
+        game.h_wall_owners = dict(self.h_wall_owners)
+        game.v_wall_owners = dict(self.v_wall_owners)
         game.p1_walls_left = self.p1_walls_left
         game.p2_walls_left = self.p2_walls_left
         game.is_p1_turn = self.is_p1_turn
         return game
+
+    def print_board(self):
+        grid = []
+        for y in range(8, -1, -1):
+            row_str = ""
+            for x in range(9):
+                if (x, y) == self.p1_pos:
+                    row_str += " P1 "
+                elif (x, y) == self.p2_pos:
+                    row_str += " P2 "
+                else:
+                    row_str += "  . "
+                if x < 8:
+                    row_str += "|" if (x, y) in self.v_walls or (x, y - 1) in self.v_walls else " "
+            grid.append(row_str)
+            if y > 0:
+                row_gap = ""
+                for x in range(9):
+                    row_gap += "====" if (x, y - 1) in self.h_walls or (x - 1, y - 1) in self.h_walls else "    "
+                    if x < 8:
+                        row_gap += " "
+                grid.append(row_gap)
+        print("\n".join(grid))
+        print(f"P1 Walls Left: {self.p1_walls_left} | P2 Walls Left: {self.p2_walls_left}")
+        print("-" * 45)
 
     def get_shortest_path(self, start, target_y):
         # Simple BFS pathfinding
@@ -203,10 +273,13 @@ class QuoridorGame:
                 self.p2_pos = action['to']
         elif action['type'] == 'wall':
             wx, wy = action['x'], action['y']
+            owner = 1 if is_p1 else 2
             if action['wallType'] == 'h':
                 self.h_walls.add((wx, wy))
+                self.h_wall_owners[f"{wx},{wy}"] = owner
             else:
                 self.v_walls.add((wx, wy))
+                self.v_wall_owners[f"{wx},{wy}"] = owner
             if is_p1:
                 self.p1_walls_left -= 1
             else:
@@ -336,10 +409,9 @@ class MCTS:
 
 # --- TRAINING LOOP PIPELINE ---
 
-# Temperature schedule: τ=1 for first TEMP_THRESHOLD moves (exploration), then τ→0 (exploitation)
 TEMP_THRESHOLD = 30
 
-def self_play_game(model, num_simulations=40):
+def self_play_game(model, num_simulations=40, visualize=False):
     game = QuoridorGame()
     mcts = MCTS(model)
     trajectory = [] # items of (tensor, policy_probs, current_player_turn)
@@ -347,7 +419,13 @@ def self_play_game(model, num_simulations=40):
     state_history = {}
     is_draw = False
 
-    while game.is_game_over() == 0 and len(trajectory) < 150: # Avoid infinite loop
+    if visualize:
+        import os
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print("Starting Game...")
+        game.print_board()
+
+    while game.is_game_over() == 0 and len(trajectory) < 300: # Avoid infinite loop
         # Check for draw by threefold repetition
         state_key = (
             game.p1_pos,
@@ -412,11 +490,30 @@ def self_play_game(model, num_simulations=40):
         if action_obj is None:
             action_obj = random.choice(valid_actions)
 
+        # Record active player name before turn transitions
+        active_player = "P1" if game.is_p1_turn else "P2"
+
         game.step(action_obj)
         move_count += 1
 
+        if visualize:
+            if action_obj['type'] == 'move':
+                last_move_str = f"{active_player} → {action_obj['dir']}"
+            else:
+                last_move_str = f"{active_player} → wall {action_obj['wallType'].upper()} @ {chr(65 + action_obj['x'])}{action_obj['y'] + 1}"
+            write_training_state(game, move_count, 'P1' if game.is_p1_turn else 'P2', 'playing', last_move_str)
+            print(f"Move {move_count} | Played: {active_player} -> {action_obj}")
+
     winner = 0 if is_draw else game.is_game_over()
     
+    if visualize:
+        if winner == 0:
+            result_msg = 'Draw (Repetition or step limit)'
+        else:
+            result_msg = f"Player {'1' if winner == 1 else '2'} Wins!"
+        write_training_state(game, move_count, '-', 'game_over', f'Game Over: {result_msg}')
+        print(f"Game Over! Result: {result_msg}")
+
     # Generate training examples (state, target_policy, target_value)
     training_examples = []
     for state_tensor, policy_probs, is_p1 in trajectory:
@@ -427,9 +524,9 @@ def self_play_game(model, num_simulations=40):
             target_value = 1.0 if (winner == 1 and is_p1) or (winner == -1 and not is_p1) else -1.0
         training_examples.append((state_tensor, policy_probs, target_value))
         
-    return training_examples
+    return training_examples, winner
 
-def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
+def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, visualize=False):
     import os
     model = QuoridorNet(num_residual_blocks=6, channels=128)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -455,15 +552,28 @@ def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
             print(f"Failed to load checkpoint ({e}). Starting from scratch.")
             
     print("Starting AlphaZero-style self-play training loop...")
+    _METRICS['total_epochs'] = epochs
+    _METRICS['total_games'] = games_per_epoch
     for epoch in range(start_epoch, epochs):
         print(f"\n--- Epoch {epoch+1}/{epochs} ---")
+        _METRICS['epoch'] = epoch + 1
         model.eval()
         
         # Self-play step
         epoch_examples = []
         for g in range(games_per_epoch):
-            game_data = self_play_game(model, num_simulations=20)
+            _METRICS['game_idx'] = g + 1
+            game_data, winner = self_play_game(model, num_simulations=20, visualize=visualize)
             epoch_examples.extend(game_data)
+            
+            # Increment outcome metrics
+            if winner == 1:
+                _METRICS['p1_wins'] += 1
+            elif winner == -1:
+                _METRICS['p2_wins'] += 1
+            else:
+                _METRICS['draws'] += 1
+                
             print(f"  Self-play Game {g+1}/{games_per_epoch} finished ({len(game_data)} steps)")
             
         dataset.extend(epoch_examples)
@@ -489,13 +599,13 @@ def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
             
             optimizer.zero_grad()
             logits, values = model(states)
-
+ 
             # Manual cross-entropy: works correctly with soft MCTS targets on all PyTorch versions
             log_probs = torch.log_softmax(logits, dim=1)
             loss_p = -torch.sum(target_policies * log_probs) / logits.size(0)
             loss_v = loss_val_fn(values, target_values)
             loss = loss_p + loss_v
-
+ 
             loss.backward()
             optimizer.step()
             
@@ -510,7 +620,14 @@ def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
             
         scheduler.step()
         current_lr = scheduler.get_last_lr()[0]
-        print(f"  Training Summary: Policy Loss = {epoch_p_loss/num_batches:.4f}, Value Loss = {epoch_v_loss/num_batches:.4f}, Policy Entropy = {epoch_entropy/num_batches:.4f}, LR = {current_lr:.6f}")
+        
+        # Update metrics for browser live panel
+        _METRICS['policy_loss'] = epoch_p_loss / max(1, num_batches)
+        _METRICS['value_loss'] = epoch_v_loss / max(1, num_batches)
+        _METRICS['entropy'] = epoch_entropy / max(1, num_batches)
+        _METRICS['lr'] = current_lr
+        
+        print(f"  Training Summary: Policy Loss = {_METRICS['policy_loss']:.4f}, Value Loss = {_METRICS['value_loss']:.4f}, Policy Entropy = {_METRICS['entropy']:.4f}, LR = {_METRICS['lr']:.6f}")
         
         # Save checkpoint after each epoch to allow pausing and resuming
         try:
@@ -530,5 +647,19 @@ def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
     print("Model successfully saved as quoridor_model.onnx!")
     
 if __name__ == "__main__":
-    # Run a full training session
-    train_alphazero(epochs=50, games_per_epoch=20, batch_size=32)
+    import argparse
+    parser = argparse.ArgumentParser(description="AlphaZero-style training loop for Quoridor.")
+    parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
+    parser.add_argument("--games_per_epoch", type=int, default=20, help="Number of self-play games per epoch")
+    parser.add_argument("--batch_size", type=int, default=32, help="Mini-batch size for model training")
+    parser.add_argument("--lr", type=float, default=0.001, help="Initial learning rate")
+    parser.add_argument("--visualize", "-v", action="store_true", help="Visualize self-play games in terminal")
+    args = parser.parse_args()
+
+    train_alphazero(
+        epochs=args.epochs,
+        games_per_epoch=args.games_per_epoch,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        visualize=args.visualize
+    )

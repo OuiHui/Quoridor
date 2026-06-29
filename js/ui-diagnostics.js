@@ -29,6 +29,7 @@ export function triggerGameOver(title, message) {
 
 // Check Victory Conditions
 export function checkGameVictory(p1Len, p2Len) {
+    if (state.trainingWatchActive) return; // Do not show popup modals during live training watch
     if (p1Len === 0) {
         triggerGameOver("Player 1 Wins!", "Player 1 (Blue) successfully navigated to the baseline row.");
     } else if (p2Len === 0) {
@@ -305,6 +306,20 @@ export function precomputeNextMoves() {
 
 // Render the evaluation bar
 export function updateEvalBar() {
+    if (state.trainingWatchActive) {
+        const fillEl = document.getElementById('eval-bar-fill');
+        const valEl = document.getElementById('eval-score-value');
+        const bubbleEl = document.getElementById('eval-score-bubble');
+        if (fillEl) fillEl.style.height = '50%';
+        if (valEl) {
+            valEl.textContent = 'Live';
+            valEl.style.color = 'var(--color-text-muted)';
+        }
+        if (bubbleEl) {
+            bubbleEl.classList.remove('loading');
+        }
+        return;
+    }
     const key = getBoardStateKey(state);
     
     // Check if we already have a precomputed score for this state (from previous turn)

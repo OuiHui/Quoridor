@@ -1,0 +1,73 @@
+<div class="panel-header">
+    <h2>AI Training Monitor</h2>
+    <div class="mode-indicator" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">Active</div>
+</div>
+<div class="panel-body">
+    <!-- TALLY CARD -->
+    <div class="control-group">
+        <h3>Self-Play Outcomes</h3>
+        <div class="tally-box">
+            <div class="tally-item">
+                <span class="tally-label">P1 Wins</span>
+                <span class="tally-value cyan-text" id="tally-p1">0</span>
+            </div>
+            <div class="tally-item">
+                <span class="tally-label">P2 Wins</span>
+                <span class="tally-value amber-text" id="tally-p2">0</span>
+            </div>
+            <div class="tally-item">
+                <span class="tally-label">Draws</span>
+                <span class="tally-value" id="tally-draws" style="color: var(--color-text-muted);">0</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- METRICS CARD -->
+    <div class="control-group">
+        <h3>Neural Network Metrics</h3>
+        <div class="metrics-grid">
+            <div class="metric-row">
+                <span class="metric-label">Epoch</span>
+                <span class="metric-value" id="metric-epoch">0 / 0</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Policy Loss</span>
+                <span class="metric-value" id="metric-p-loss">0.0000</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Value Loss</span>
+                <span class="metric-value" id="metric-v-loss">0.0000</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Policy Entropy</span>
+                <span class="metric-value" id="metric-entropy">0.0000</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Learning Rate</span>
+                <span class="metric-value" id="metric-lr">0.000000</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- CURRENT GAME STATS -->
+    <div class="control-group diagnostics-panel">
+        <h3>Active Game Info</h3>
+        <div class="diagnostics-row">
+            <div class="diag-metric">
+                <span class="diag-label">P1 Dist</span>
+                <span class="diag-val cyan-text" id="watch-p1-dist">8</span>
+            </div>
+            <div class="diag-metric">
+                <span class="diag-label">P2 Dist</span>
+                <span class="diag-val amber-text" id="watch-p2-dist">8</span>
+            </div>
+            <div class="diag-metric">
+                <span class="diag-label">Move</span>
+                <span class="diag-val" id="watch-move-count">0</span>
+            </div>
+        </div>
+        <div class="last-move-desc" id="watch-last-move">
+            Waiting for game...
+        </div>
+    </div>
+</div>

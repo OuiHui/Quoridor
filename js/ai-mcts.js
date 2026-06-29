@@ -2,28 +2,49 @@ import { findShortestPath, getValidPawnMoves, validateWallPlacement } from './en
 import { evaluateBoard, generateSmartMoves } from './ai-eval.js';
 
 // ACTION SPACE CONSTANTS
-const PAWN_ACTIONS_COUNT = 5;      // N, S, E, W, jump-over
+const PAWN_ACTIONS_COUNT = 12;     // 4 orthogonal moves + 4 straight jumps + 4 diagonal jumps
 const WALL_GRID_SIZE = 8;
-const HORIZONTAL_WALLS_START = 5;
-const VERTICAL_WALLS_START = 69;
-const TOTAL_ACTIONS = 133;
+const HORIZONTAL_WALLS_START = 12;
+const VERTICAL_WALLS_START = 76;
+const TOTAL_ACTIONS = 140;
+
+const MOVE_DIR_TO_IDX = {
+    'N': 0, 'S': 1, 'E': 2, 'W': 3,
+    'jump_N': 4, 'jump_S': 5, 'jump_E': 6, 'jump_W': 7,
+    'jump_NE': 8, 'jump_NW': 9, 'jump_SE': 10, 'jump_SW': 11
+};
+
+const IDX_TO_MOVE_DIR = {
+    0: 'N', 1: 'S', 2: 'E', 3: 'W',
+    4: 'jump_N', 5: 'jump_S', 6: 'jump_E', 7: 'jump_W',
+    8: 'jump_NE', 9: 'jump_NW', 10: 'jump_SE', 11: 'jump_SW'
+};
 
 /**
- * Maps an action object to an index in [0..132]
+ * Maps an action object to an index in [0..139]
  */
 export function mapActionToIndex(action, px, py) {
     if (action.type === 'move') {
         const tx = action.to.x;
         const ty = action.to.y;
+        const dx = tx - px;
+        const dy = ty - py;
         
-        // Orthogonal moves
-        if (tx === px && ty === py + 1) return 0; // N
-        if (tx === px && ty === py - 1) return 1; // S
-        if (tx === px + 1 && ty === py) return 2; // E
-        if (tx === px - 1 && ty === py) return 3; // W
+        let moveDir;
+        if (dx === 0 && dy === 1) moveDir = 'N';
+        else if (dx === 0 && dy === -1) moveDir = 'S';
+        else if (dx === 1 && dy === 0) moveDir = 'E';
+        else if (dx === -1 && dy === 0) moveDir = 'W';
+        else if (dx === 0 && dy === 2) moveDir = 'jump_N';
+        else if (dx === 0 && dy === -2) moveDir = 'jump_S';
+        else if (dx === 2 && dy === 0) moveDir = 'jump_E';
+        else if (dx === -2 && dy === 0) moveDir = 'jump_W';
+        else if (dx === 1 && dy === 1) moveDir = 'jump_NE';
+        else if (dx === -1 && dy === 1) moveDir = 'jump_NW';
+        else if (dx === 1 && dy === -1) moveDir = 'jump_SE';
+        else moveDir = 'jump_SW';
         
-        // Jumps (straight or diagonal)
-        return 4; // Jump-over
+        return MOVE_DIR_TO_IDX[moveDir];
     } else if (action.type === 'wall') {
         const wx = action.x;
         const wy = action.y;
@@ -37,27 +58,18 @@ export function mapActionToIndex(action, px, py) {
 }
 
 /**
- * Maps an index in [0..132] to an action object
+ * Maps an index in [0..139] to an action object
  */
 export function mapIndexToAction(index, px, py, ox, oy) {
-    if (index < 5) {
-        if (index === 0) return { type: 'move', to: { x: px, y: py + 1 } };
-        if (index === 1) return { type: 'move', to: { x: px, y: py - 1 } };
-        if (index === 2) return { type: 'move', to: { x: px + 1, y: py } };
-        if (index === 3) return { type: 'move', to: { x: px - 1, y: py } };
-        if (index === 4) {
-            // Jump move. Resolve straight jump target
-            const dx = ox - px;
-            const dy = oy - py;
-            if (Math.abs(dx) === 1 && dy === 0) {
-                return { type: 'move', to: { x: ox + dx, y: oy } };
-            } else if (dx === 0 && Math.abs(dy) === 1) {
-                return { type: 'move', to: { x: ox, y: oy + dy } };
-            }
-            // For diagonal jumps, return the opponent cell; the game controller will resolve it
-            return { type: 'move', to: { x: ox, y: oy } };
-        }
-    } else if (index < 69) {
+    if (index < 12) {
+        const moveDir = IDX_TO_MOVE_DIR[index];
+        const delta = {
+            'N': [0, 1], 'S': [0, -1], 'E': [1, 0], 'W': [-1, 0],
+            'jump_N': [0, 2], 'jump_S': [0, -2], 'jump_E': [2, 0], 'jump_W': [-2, 0],
+            'jump_NE': [1, 1], 'jump_NW': [-1, 1], 'jump_SE': [1, -1], 'jump_SW': [-1, -1]
+        }[moveDir];
+        return { type: 'move', to: { x: px + delta[0], y: py + delta[1] } };
+    } else if (index < 76) {
         const wIdx = index - HORIZONTAL_WALLS_START;
         const wy = Math.floor(wIdx / WALL_GRID_SIZE);
         const wx = wIdx % WALL_GRID_SIZE;
@@ -188,8 +200,13 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
         }
     }
     
-    // Channel 10: Turn indicator (all 0s since it is your turn relative to active player)
-    // Stays 0.0 by default.
+    // Channel 10: Absolute player identity: 1.0 if active player is P1, 0.0 if P2.
+    const identityVal = isP1Turn ? 1.0 : 0.0;
+    for (let x = 0; x < 9; x++) {
+        for (let y = 0; y < 9; y++) {
+            write(10, x, y, identityVal);
+        }
+    }
     
     return data;
 }

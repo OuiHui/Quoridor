@@ -10,6 +10,8 @@ import boardHtml from './components/board-container.html?raw';
 import diagnosticsHtml from './components/diagnostics-panel.html?raw';
 import footerHtml from './components/footer.html?raw';
 import modalHtml from './components/modal.html?raw';
+import trainingWatchHtml from './components/training-watch.html?raw';
+import trainingStatsPanelHtml from './components/training-stats-panel.html?raw';
 
 // Import State and Engines
 import { state } from './js/state.js';
@@ -22,6 +24,7 @@ import { initPlaybook } from './js/playbook.js';
 import { renderBoard, updatePawnPositions, renderPlacedWalls } from './js/ui-board.js';
 import { updateUI, logAction } from './js/ui-diagnostics.js';
 import { renderHints, clearHints } from './js/ui-hints.js';
+import { initTrainingWatch, showTrainingWatch, hideTrainingWatch } from './js/training-watch.js';
 
 // Import Game State Controllers
 import {
@@ -65,6 +68,7 @@ function getWallFromEdge(e, x, y, edgeType) {
 // VIEW EVENT CALLBACKS wired by Mediator
 
 function handleCellClick(x, y) {
+    if (state.trainingWatchActive) return;
     if (state.activePlaybook !== null && !state.playbookPracticeMode) return;
     const cell = document.querySelector(`.board-cell[data-x="${x}"][data-y="${y}"]`);
     if (!cell || !cell.classList.contains('valid-move')) return;
@@ -72,6 +76,7 @@ function handleCellClick(x, y) {
 }
 
 function handleEdgeMouseMove(e, x, y, edgeType) {
+    if (state.trainingWatchActive) return;
     if (state.activePlaybook !== null && !state.playbookPracticeMode) return;
     let isAITurn = state.gameMode === 'ai' &&
         ((state.turn === 1 && state.aiSettings.color === 'p1') ||
@@ -105,6 +110,7 @@ function handleEdgeMouseLeave(e, x, y, edgeType) {
 }
 
 function handleEdgeClick(e, x, y, edgeType) {
+    if (state.trainingWatchActive) return;
     if (state.activePlaybook !== null && !state.playbookPracticeMode) return;
     let isAITurn = state.gameMode === 'ai' &&
         ((state.turn === 1 && state.aiSettings.color === 'p1') ||
@@ -150,6 +156,23 @@ function init() {
     const modalEl = document.getElementById('modal-container');
     if (modalEl) modalEl.innerHTML = modalHtml;
 
+    // Inject training watch overlay into body
+    const twMount = document.createElement('div');
+    twMount.innerHTML = trainingWatchHtml;
+    document.body.appendChild(twMount.firstElementChild);
+    initTrainingWatch(trainingStatsPanelHtml);
+
+    // Add Watch Training button to header
+    const headerRight = document.querySelector('.header-right');
+    if (headerRight) {
+        const watchBtn = document.createElement('button');
+        watchBtn.id = 'btn-watch-training';
+        watchBtn.className = 'btn-watch-training';
+        watchBtn.innerHTML = '⬡ Watch Training';
+        watchBtn.addEventListener('click', () => showTrainingWatch());
+        headerRight.prepend(watchBtn);
+    }
+
     // 2. Render Board View passing Mediator callbacks
     renderBoard({
         onCellClick: handleCellClick,
@@ -172,12 +195,19 @@ function init() {
     });
 
     // 4. Quick Board control binds
-    document.getElementById('btn-undo').addEventListener('click', undoMove);
-    document.getElementById('btn-reset-board').addEventListener('click', resetGame);
+    document.getElementById('btn-undo').addEventListener('click', () => {
+        if (state.trainingWatchActive) return;
+        undoMove();
+    });
+    document.getElementById('btn-reset-board').addEventListener('click', () => {
+        if (state.trainingWatchActive) return;
+        resetGame();
+    });
 
     // Wire up auto-hint toggle trigger
     const hintBtn = document.getElementById('btn-hint');
     hintBtn.addEventListener('click', () => {
+        if (state.trainingWatchActive) return;
         state.hintOn = !state.hintOn;
         if (state.hintOn) {
             hintBtn.textContent = 'Hint: On';
@@ -219,6 +249,7 @@ function init() {
     // Hint Wall hover/click delegation
     const boardEl = document.getElementById('board');
     boardEl.addEventListener('mousemove', (e) => {
+        if (state.trainingWatchActive) return;
         if (e.target.classList.contains('hint-wall')) {
             if (state.activePlaybook !== null && !state.playbookPracticeMode) return;
             const x = parseInt(e.target.dataset.x);
@@ -256,6 +287,7 @@ function init() {
     });
 
     boardEl.addEventListener('click', (e) => {
+        if (state.trainingWatchActive) return;
         if (e.target.classList.contains('hint-wall')) {
             if (state.activePlaybook !== null && !state.playbookPracticeMode) return;
             const x = parseInt(e.target.dataset.x);

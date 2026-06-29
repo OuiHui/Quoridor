@@ -31,6 +31,9 @@ export const state = {
     soundEnabled: true,
     hintOn: false,
 
+    // Training Live Watch State
+    trainingWatchActive: false,
+
     // Precomputed evaluations caching
     precomputedEvaluations: null,
     previousPrecomputedEvaluations: null

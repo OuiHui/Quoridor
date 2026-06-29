@@ -11,3 +11,5 @@ __pycache__/
 dist/
 public/quoridor_model.onnx
 public/quoridor_model.onnx.data
+
+quoridor_model_test.onnx.data

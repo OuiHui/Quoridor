@@ -1,0 +1,222 @@
+/* TRAINING WATCH FLOATING BANNER */
+
+.tw-banner {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(139, 92, 246, 0.35);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(139, 92, 246, 0.15);
+    border-radius: 12px;
+    padding: 12px 20px;
+    width: 90%;
+    max-width: 680px;
+    animation: twSlideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.tw-banner.hidden {
+    display: none;
+}
+
+@keyframes twSlideDown {
+    from {
+        transform: translate(-50%, -40px);
+        opacity: 0;
+    }
+    to {
+        transform: translate(-50%, 0);
+        opacity: 1;
+    }
+}
+
+.tw-banner-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.tw-banner-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.tw-live-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #4b5563;
+    transition: all 0.3s ease;
+}
+
+.tw-live-dot.active {
+    background: #10b981;
+    box-shadow: 0 0 10px #10b981;
+    animation: twPulse 1.4s infinite;
+}
+
+.tw-live-dot.ended {
+    background: var(--color-p2);
+    box-shadow: 0 0 10px var(--color-p2-glow);
+}
+
+@keyframes twPulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+}
+
+.tw-banner-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--color-text);
+}
+
+.tw-status-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--color-text-muted);
+}
+
+.tw-status-badge.playing {
+    background: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+}
+
+.tw-status-badge.ended {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--color-p2);
+}
+
+.tw-banner-stats {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.tw-banner-stat {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+.tw-banner-stat strong {
+    color: var(--color-text);
+    font-family: var(--font-mono);
+}
+
+/* WATCH TRAINING HEADER BUTTON */
+.btn-watch-training {
+    background: rgba(139, 92, 246, 0.1);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    color: var(--color-accent);
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 0.8rem;
+    padding: 6px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.btn-watch-training:hover {
+    background: rgba(139, 92, 246, 0.2);
+    border-color: rgba(139, 92, 246, 0.5);
+}
+
+.btn-watch-training.live {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.4);
+    color: #10b981;
+}
+
+/* TRAINING MONITOR LEFT PANEL STYLES */
+.tally-box {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.tally-item {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    padding: 8px 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.tally-label {
+    font-size: 0.65rem;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.tally-value {
+    font-size: 1.2rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+}
+
+.metrics-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+    padding: 12px;
+}
+
+.metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    padding-bottom: 6px;
+}
+
+.metric-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.metric-label {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+}
+
+.metric-value {
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    color: var(--color-text);
+    font-weight: 600;
+}
+
+.last-move-desc {
+    margin-top: 10px;
+    text-align: center;
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
+    color: var(--color-text-muted);
+    background: rgba(0, 0, 0, 0.2);
+    padding: 6px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
