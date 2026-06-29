@@ -387,15 +387,29 @@ def self_play_game(model, num_simulations=40):
     return training_examples
 
 def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
+    import os
     model = QuoridorNet(num_residual_blocks=6, channels=128)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     loss_val_fn = nn.MSELoss()
     loss_policy_fn = nn.CrossEntropyLoss()
     
+    checkpoint_path = "quoridor_checkpoint.pth"
+    start_epoch = 0
     dataset = []
     
+    if os.path.exists(checkpoint_path):
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=False)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            start_epoch = checkpoint.get('epoch', 0)
+            dataset = checkpoint.get('dataset', [])
+            print(f"Loaded checkpoint from {checkpoint_path}. Resuming from epoch {start_epoch+1}")
+        except Exception as e:
+            print(f"Failed to load checkpoint ({e}). Starting from scratch.")
+            
     print("Starting AlphaZero-style self-play training loop...")
-    for epoch in range(epochs):
+    for epoch in range(start_epoch, epochs):
         print(f"\n--- Epoch {epoch+1}/{epochs} ---")
         model.eval()
         
@@ -417,6 +431,7 @@ def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
         num_batches = max(1, len(dataset) // batch_size)
         epoch_p_loss = 0.0
         epoch_v_loss = 0.0
+        epoch_entropy = 0.0
         
         for b in range(num_batches):
             batch = dataset[b*batch_size : (b+1)*batch_size]
@@ -439,7 +454,25 @@ def train_alphazero(epochs=5, games_per_epoch=4, batch_size=8, lr=0.001):
             epoch_p_loss += loss_p.item()
             epoch_v_loss += loss_v.item()
             
-        print(f"  Training Summary: Policy Loss = {epoch_p_loss/num_batches:.4f}, Value Loss = {epoch_v_loss/num_batches:.4f}")
+            # Track policy entropy
+            with torch.no_grad():
+                probs = torch.softmax(logits, dim=-1)
+                entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=-1).mean()
+                epoch_entropy += entropy.item()
+            
+        print(f"  Training Summary: Policy Loss = {epoch_p_loss/num_batches:.4f}, Value Loss = {epoch_v_loss/num_batches:.4f}, Policy Entropy = {epoch_entropy/num_batches:.4f}")
+        
+        # Save checkpoint after each epoch to allow pausing and resuming
+        try:
+            torch.save({
+                'epoch': epoch + 1,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'dataset': dataset
+            }, checkpoint_path)
+            print(f"  Checkpoint saved to {checkpoint_path}")
+        except Exception as e:
+            print(f"  Failed to save checkpoint: {e}")
         
     print("\nTraining completed. Exporting model to ONNX...")
     export_to_onnx(model, "quoridor_model.onnx")

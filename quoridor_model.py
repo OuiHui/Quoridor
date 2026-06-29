@@ -88,11 +88,19 @@ def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_le
     """
     tensor = torch.zeros(11, 9, 9, dtype=torch.float32)
     
-    # 0. Your pawn position
-    tensor[0, p1_pos[0], p1_pos[1]] = 1.0
+    # Active vs Inactive player perspective
+    active_pos = p1_pos if is_p1_turn else p2_pos
+    opp_pos = p2_pos if is_p1_turn else p1_pos
+    active_path = p1_path if is_p1_turn else p2_path
+    opp_path = p2_path if is_p1_turn else p1_path
+    active_walls = p1_walls_left if is_p1_turn else p2_walls_left
+    opp_walls = p2_walls_left if is_p1_turn else p1_walls_left
+    
+    # 0. Your pawn position (active player)
+    tensor[0, active_pos[0], active_pos[1]] = 1.0
     
     # 1. Opponent pawn position
-    tensor[1, p2_pos[0], p2_pos[1]] = 1.0
+    tensor[1, opp_pos[0], opp_pos[1]] = 1.0
     
     # 2. Horizontal walls (8x8 padded to 9x9 by leaving row/col 8 as 0)
     for wx, wy in h_walls:
@@ -105,34 +113,32 @@ def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_le
             tensor[3, wx, wy] = 1.0
             
     # 4. Your shortest path length / 20.0
-    p1_dist = len(p1_path) if p1_path else 20
-    tensor[4, :, :] = min(p1_dist / 20.0, 1.0)
+    active_dist = len(active_path) if active_path else 20
+    tensor[4, :, :] = min(active_dist / 20.0, 1.0)
     
     # 5. Opponent shortest path length / 20.0
-    p2_dist = len(p2_path) if p2_path else 20
-    tensor[5, :, :] = min(p2_dist / 20.0, 1.0)
+    opp_dist = len(opp_path) if opp_path else 20
+    tensor[5, :, :] = min(opp_dist / 20.0, 1.0)
     
     # 6. Your path cells (binary 9x9)
-    if p1_path:
-        for px, py in p1_path:
+    if active_path:
+        for px, py in active_path:
             tensor[6, px, py] = 1.0
             
     # 7. Opponent path cells (binary 9x9)
-    if p2_path:
-        for px, py in p2_path:
+    if opp_path:
+        for px, py in opp_path:
             tensor[7, px, py] = 1.0
             
     # 8. Your walls remaining / 10.0
-    tensor[8, :, :] = min(p1_walls_left / 10.0, 1.0)
+    tensor[8, :, :] = min(active_walls / 10.0, 1.0)
     
     # 9. Opponent walls remaining / 10.0
-    tensor[9, :, :] = min(p2_walls_left / 10.0, 1.0)
+    tensor[9, :, :] = min(opp_walls / 10.0, 1.0)
     
-    # 10. Turn indicator (all 0s if your turn, all 1s if opponent's turn)
-    # Turn indicator from the active player's perspective:
-    if not is_p1_turn:
-        tensor[10, :, :] = 1.0
-        
+    # 10. Turn indicator (all 0s since active player's turn relative to active player perspective)
+    # Stays 0.0 by default.
+    
     return tensor
 
 def map_action_to_index(action):

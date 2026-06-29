@@ -318,10 +318,11 @@ function init() {
 
 window.addEventListener('DOMContentLoaded', async () => {
     try {
-        const modelRes = await fetch('./quoridor_model.onnx');
+        const timestamp = Date.now();
+        const modelRes = await fetch(`./quoridor_model.onnx?t=${timestamp}`);
         const modelBuffer = await modelRes.arrayBuffer();
 
-        const dataRes = await fetch('./quoridor_model.onnx.data');
+        const dataRes = await fetch(`./quoridor_model.onnx.data?t=${timestamp}`);
         const dataBuffer = await dataRes.arrayBuffer();
 
         window.quoridorONNXSession = await ort.InferenceSession.create(new Uint8Array(modelBuffer), {
