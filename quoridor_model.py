@@ -195,7 +195,7 @@ def export_to_onnx(model, filepath="quoridor_model.onnx"):
         dummy_input,
         filepath,
         export_params=True,
-        opset_version=12,
+        opset_version=18,
         do_constant_folding=True,
         input_names=['input'],
         output_names=['policy', 'value'],

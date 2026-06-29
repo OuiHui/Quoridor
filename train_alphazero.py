@@ -256,10 +256,9 @@ class MCTS:
                 
                 # Calculate PUCT score for all children
                 for act_idx, child in node.children.items():
-                    # Flip sign if it's the other player's turn relative to the parent
-                    q_val = child.Q
-                    if not node.game_state.is_p1_turn:
-                        q_val = -q_val
+                    # child's Q is from the child's perspective (opponent).
+                    # So to the parent, the value is -child.Q.
+                    q_val = -child.Q
                     u = q_val + self.c_puct * child.prior * (math.sqrt(node.N) / (1 + child.N))
                     if u > best_score:
                         best_score = u
@@ -270,7 +269,9 @@ class MCTS:
             game_over_result = node.game_state.is_game_over()
             if game_over_result != 0:
                 # Terminal node, propagate reward directly
-                self.backpropagate(node, float(game_over_result))
+                # If game_over_result is 1 (P1 won) and the current perspective is P2's turn, leaf gets -1.
+                leaf_value = game_over_result if node.game_state.is_p1_turn else -game_over_result
+                self.backpropagate(node, float(leaf_value))
                 continue
 
             # 2. Expansion & Neural Net Evaluation
@@ -330,6 +331,7 @@ class MCTS:
             node.N += 1
             node.W += value
             node.Q = node.W / node.N
+            value = -value  # Parent has the opposite perspective
             node = node.parent
 
 # --- TRAINING LOOP PIPELINE ---
@@ -342,8 +344,25 @@ def self_play_game(model, num_simulations=40):
     mcts = MCTS(model)
     trajectory = [] # items of (tensor, policy_probs, current_player_turn)
     move_count = 0
+    state_history = {}
+    is_draw = False
 
     while game.is_game_over() == 0 and len(trajectory) < 150: # Avoid infinite loop
+        # Check for draw by threefold repetition
+        state_key = (
+            game.p1_pos,
+            game.p2_pos,
+            frozenset(game.h_walls),
+            frozenset(game.v_walls),
+            game.p1_walls_left,
+            game.p2_walls_left,
+            game.is_p1_turn
+        )
+        state_history[state_key] = state_history.get(state_key, 0) + 1
+        if state_history[state_key] >= 3:
+            is_draw = True
+            break
+
         root = mcts.run_search(game, num_simulations=num_simulations)
         
         # Policy probability distribution over NUM_ACTIONS actions
@@ -396,7 +415,7 @@ def self_play_game(model, num_simulations=40):
         game.step(action_obj)
         move_count += 1
 
-    winner = game.is_game_over()
+    winner = 0 if is_draw else game.is_game_over()
     
     # Generate training examples (state, target_policy, target_value)
     training_examples = []

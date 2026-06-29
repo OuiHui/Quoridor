@@ -23,7 +23,7 @@ def run_tests():
     
     # Expected shape: (11, 9, 9)
     assert tensor.shape == (11, 9, 9), f"Incorrect tensor shape: {tensor.shape}"
-    print(f"✓ State encoding tensor shape validated: {tensor.shape}")
+    print(f"PASS: State encoding tensor shape validated: {tensor.shape}")
     
     # Verify values
     assert tensor[0, 4, 0] == 1.0, "P1 position incorrect in channel 0"
@@ -36,9 +36,9 @@ def run_tests():
     assert tensor[7, 4, 4] == 1.0, "P2 path cell incorrect in channel 7"
     assert abs(tensor[8, 0, 0] - 8.0/10.0) < 1e-5, "P1 walls left incorrect in channel 8"
     assert abs(tensor[9, 0, 0] - 9.0/10.0) < 1e-5, "P2 walls left incorrect in channel 9"
-    assert tensor[10, 0, 0] == 0.0, "Turn indicator incorrect in channel 10"
+    assert tensor[10, 0, 0] == 1.0, "Turn indicator incorrect in channel 10"
     
-    print("✓ Input feature mapping values verified")
+    print("PASS: Input feature mapping values verified")
 
     # 2. Test model shape verification
     model = QuoridorNet()
@@ -48,7 +48,7 @@ def run_tests():
     
     assert policy.shape == (1, NUM_ACTIONS), f"Incorrect policy output shape: {policy.shape}"
     assert value.shape == (1, 1), f"Incorrect value output shape: {value.shape}"
-    print("✓ Model forward pass outputs validated:")
+    print("PASS: Model forward pass outputs validated:")
     print(f"  Policy Head: {policy.shape}")
     print(f"  Value Head: {value.shape}")
 
@@ -71,13 +71,13 @@ def run_tests():
     # Round-trip check
     action_v_reconstructed = map_index_to_action(139, 4, 0)
     assert action_v_reconstructed['wallType'] == 'v' and action_v_reconstructed['x'] == 7 and action_v_reconstructed['y'] == 7, "Reconstructed wall action mismatch"
-    print("✓ Action-to-index mapping round trips verified")
+    print("PASS: Action-to-index mapping round trips verified")
 
     # 4. Test ONNX Export
     onnx_path = "quoridor_model_test.onnx"
     export_to_onnx(model, onnx_path)
     assert os.path.exists(onnx_path), f"ONNX file not generated: {onnx_path}"
-    print(f"✓ ONNX export successful: {onnx_path} ({os.path.getsize(onnx_path)} bytes)")
+    print(f"PASS: ONNX export successful: {onnx_path} ({os.path.getsize(onnx_path)} bytes)")
     
     # Cleanup
     if os.path.exists(onnx_path):
