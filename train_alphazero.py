@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from collections import deque
-from quoridor_model import QuoridorNet, encode_state, map_action_to_index, export_to_onnx, NUM_ACTIONS
+from quoridor_model import QuoridorNet, encode_state, map_action_to_index, map_action_to_index_perspective, map_index_to_action_perspective, export_to_onnx, NUM_ACTIONS
 
 # Path to JSON state file served by Vite dev server
 _STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'training_state.json')
@@ -294,6 +294,22 @@ class QuoridorGame:
             return -1 # P2 wins
         return 0 # Still playing
 
+    def evaluate_heuristic(self):
+        """Evaluate state from P1 perspective: positive means P1 advantage, negative P2."""
+        p1_path = self.get_shortest_path(self.p1_pos, 8)
+        p2_path = self.get_shortest_path(self.p2_pos, 0)
+        p1_len = len(p1_path) - 1 if p1_path else 20
+        p2_len = len(p2_path) - 1 if p2_path else 20
+        
+        # Path length difference (positive is good for P1)
+        diff = p2_len - p1_len
+        # Wall count advantage (positive is good for P1)
+        wall_diff = self.p1_walls_left - self.p2_walls_left
+        
+        # Blend and normalize to [-1.0, 1.0]
+        score = diff + 0.1 * wall_diff
+        return max(-1.0, min(1.0, score / 10.0))
+
 # --- MCTS ENGINE FOR TRAINING ---
 
 class MCTSNode:
@@ -317,7 +333,7 @@ class MCTS:
         self.dirichlet_alpha = dirichlet_alpha
         self.dirichlet_eps = dirichlet_eps
 
-    def run_search(self, game_state, num_simulations=40):
+    def run_search(self, game_state, num_simulations=40, epoch=None):
         root = MCTSNode(game_state.clone())
         
         for _ in range(num_simulations):
@@ -362,10 +378,20 @@ class MCTS:
             with torch.no_grad():
                 logits, value_tensor = self.model(state_tensor)
                 policy = torch.softmax(logits, dim=1).squeeze(0).cpu().numpy()
-                value = value_tensor.item()
+                net_value = value_tensor.item()
+
+            if epoch is not None:
+                # alpha ranges from 0.5 (heavy heuristic guidance) to 1.0 (pure network) over 20 epochs
+                alpha = min(1.0, 0.5 + 0.5 * (epoch / 20.0))
+                h_val = node.game_state.evaluate_heuristic()
+                if not node.game_state.is_p1_turn:
+                    h_val = -h_val
+                value = alpha * net_value + (1.0 - alpha) * h_val
+            else:
+                value = net_value
 
             valid_actions = node.game_state.get_valid_actions()
-            valid_action_indices = [map_action_to_index(act) for act in valid_actions]
+            valid_action_indices = [map_action_to_index_perspective(act, node.game_state.is_p1_turn) for act in valid_actions]
 
             # Mask invalid actions
             masked_policy = np.zeros_like(policy)
@@ -411,7 +437,7 @@ class MCTS:
 
 TEMP_THRESHOLD = 30
 
-def self_play_game(model, num_simulations=40, visualize=False):
+def self_play_game(model, epoch, num_simulations=40, visualize=False):
     game = QuoridorGame()
     mcts = MCTS(model)
     trajectory = [] # items of (tensor, policy_probs, current_player_turn)
@@ -441,7 +467,7 @@ def self_play_game(model, num_simulations=40, visualize=False):
             is_draw = True
             break
 
-        root = mcts.run_search(game, num_simulations=num_simulations)
+        root = mcts.run_search(game, num_simulations=num_simulations, epoch=epoch)
         
         # Policy probability distribution over NUM_ACTIONS actions
         visit_counts = np.zeros(NUM_ACTIONS, dtype=np.float32)
@@ -459,7 +485,7 @@ def self_play_game(model, num_simulations=40, visualize=False):
 
         if policy_probs.sum() == 0:
             valid_actions = game.get_valid_actions()
-            valid_indices = [map_action_to_index(act) for act in valid_actions]
+            valid_indices = [map_action_to_index_perspective(act, game.is_p1_turn) for act in valid_actions]
             policy_probs[valid_indices] = 1.0 / len(valid_indices)
 
         # Get board state tensor
@@ -483,7 +509,7 @@ def self_play_game(model, num_simulations=40, visualize=False):
         valid_actions = game.get_valid_actions()
         action_obj = None
         for act in valid_actions:
-            if map_action_to_index(act) == action_idx:
+            if map_action_to_index_perspective(act, game.is_p1_turn) == action_idx:
                 action_obj = act
                 break
                 
@@ -526,7 +552,7 @@ def self_play_game(model, num_simulations=40, visualize=False):
         
     return training_examples, winner
 
-def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, visualize=False):
+def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_simulations=100, visualize=False):
     import os
     model = QuoridorNet(num_residual_blocks=6, channels=128)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -563,7 +589,7 @@ def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, visu
         epoch_examples = []
         for g in range(games_per_epoch):
             _METRICS['game_idx'] = g + 1
-            game_data, winner = self_play_game(model, num_simulations=20, visualize=visualize)
+            game_data, winner = self_play_game(model, epoch, num_simulations=num_simulations, visualize=visualize)
             epoch_examples.extend(game_data)
             
             # Increment outcome metrics
@@ -653,6 +679,7 @@ if __name__ == "__main__":
     parser.add_argument("--games_per_epoch", type=int, default=20, help="Number of self-play games per epoch")
     parser.add_argument("--batch_size", type=int, default=32, help="Mini-batch size for model training")
     parser.add_argument("--lr", type=float, default=0.001, help="Initial learning rate")
+    parser.add_argument("--simulations", type=int, default=100, help="Number of MCTS simulations per turn")
     parser.add_argument("--visualize", "-v", action="store_true", help="Visualize self-play games in terminal")
     args = parser.parse_args()
 
@@ -661,5 +688,6 @@ if __name__ == "__main__":
         games_per_epoch=args.games_per_epoch,
         batch_size=args.batch_size,
         lr=args.lr,
+        num_simulations=args.simulations,
         visualize=args.visualize
     )

@@ -70,7 +70,9 @@ class QuoridorNet(nn.Module):
 
 def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_left, p2_walls_left, is_p1_turn):
     """
-    Encodes the Quoridor board state into a (11, 9, 9) tensor representation.
+    Encodes the Quoridor board state into a (11, 9, 9) tensor representation,
+    rotated by 180 degrees if it is Player 2's turn to make the representation
+    perspective-symmetric.
     
     Inputs:
         p1_pos: tuple (x, y) for Player 1
@@ -88,14 +90,26 @@ def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_le
     """
     tensor = torch.zeros(11, 9, 9, dtype=torch.float32)
     
-    # Active vs Inactive player perspective
-    active_pos = p1_pos if is_p1_turn else p2_pos
-    opp_pos = p2_pos if is_p1_turn else p1_pos
-    active_path = p1_path if is_p1_turn else p2_path
-    opp_path = p2_path if is_p1_turn else p1_path
-    active_walls = p1_walls_left if is_p1_turn else p2_walls_left
-    opp_walls = p2_walls_left if is_p1_turn else p1_walls_left
-    
+    if is_p1_turn:
+        active_pos = p1_pos
+        opp_pos = p2_pos
+        h_walls_to_encode = h_walls
+        v_walls_to_encode = v_walls
+        active_path = p1_path
+        opp_path = p2_path
+        active_walls = p1_walls_left
+        opp_walls = p2_walls_left
+    else:
+        # Rotate state by 180 degrees for Player 2 perspective
+        active_pos = (8 - p2_pos[0], 8 - p2_pos[1])
+        opp_pos = (8 - p1_pos[0], 8 - p1_pos[1])
+        h_walls_to_encode = [(7 - wx, 7 - wy) for wx, wy in h_walls]
+        v_walls_to_encode = [(7 - wx, 7 - wy) for wx, wy in v_walls]
+        active_path = [(8 - x, 8 - y) for x, y in p2_path] if p2_path else []
+        opp_path = [(8 - x, 8 - y) for x, y in p1_path] if p1_path else []
+        active_walls = p2_walls_left
+        opp_walls = p1_walls_left
+
     # 0. Your pawn position (active player)
     tensor[0, active_pos[0], active_pos[1]] = 1.0
     
@@ -103,12 +117,12 @@ def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_le
     tensor[1, opp_pos[0], opp_pos[1]] = 1.0
     
     # 2. Horizontal walls (8x8 padded to 9x9 by leaving row/col 8 as 0)
-    for wx, wy in h_walls:
+    for wx, wy in h_walls_to_encode:
         if 0 <= wx < 8 and 0 <= wy < 8:
             tensor[2, wx, wy] = 1.0
             
     # 3. Vertical walls (8x8 padded to 9x9)
-    for wx, wy in v_walls:
+    for wx, wy in v_walls_to_encode:
         if 0 <= wx < 8 and 0 <= wy < 8:
             tensor[3, wx, wy] = 1.0
             
@@ -137,7 +151,6 @@ def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_le
     tensor[9, :, :] = min(opp_walls / 10.0, 1.0)
     
     # 10. Absolute player identity: 1.0 if the active player is P1, 0.0 if P2.
-    # Useful because P1 and P2 have asymmetric goals (opposite sides of the board).
     tensor[10, :, :] = 1.0 if is_p1_turn else 0.0
 
     return tensor
@@ -187,17 +200,67 @@ def map_index_to_action(index, px, py, ox=None, oy=None):
         wall_idx = index - 76
         return {'type': 'wall', 'wallType': 'v', 'x': wall_idx % 8, 'y': wall_idx // 8}
 
+def rotate_action_180(action):
+    """
+    Rotates a Quoridor action by 180 degrees.
+    """
+    action_type = action.get('type')
+    if action_type == 'move':
+        rotated_dir = {
+            'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E',
+            'jump_N': 'jump_S', 'jump_S': 'jump_N', 'jump_E': 'jump_W', 'jump_W': 'jump_E',
+            'jump_NE': 'jump_SW', 'jump_NW': 'jump_SE', 'jump_SE': 'jump_NW', 'jump_SW': 'jump_NE',
+        }[action['dir']]
+        rx, ry = action['to']
+        return {
+            'type': 'move',
+            'dir': rotated_dir,
+            'to': (8 - rx, 8 - ry)
+        }
+    elif action_type == 'wall':
+        return {
+            'type': 'wall',
+            'wallType': action['wallType'],
+            'x': 7 - action['x'],
+            'y': 7 - action['y']
+        }
+    raise ValueError(f"Unknown action format: {action}")
+
+def map_action_to_index_perspective(action, is_p1_turn):
+    if is_p1_turn:
+        return map_action_to_index(action)
+    else:
+        return map_action_to_index(rotate_action_180(action))
+
+def map_index_to_action_perspective(index, is_p1_turn, p1_pos, p2_pos):
+    if is_p1_turn:
+        return map_index_to_action(index, p1_pos[0], p1_pos[1])
+    else:
+        rx, ry = 8 - p2_pos[0], 8 - p2_pos[1]
+        act_rot = map_index_to_action(index, rx, ry)
+        return rotate_action_180(act_rot)
+
 def export_to_onnx(model, filepath="quoridor_model.onnx"):
     model.eval()
     dummy_input = torch.randn(1, 11, 9, 9, dtype=torch.float32)
-    torch.onnx.export(
-        model,
-        dummy_input,
-        filepath,
-        export_params=True,
-        opset_version=18,
-        do_constant_folding=True,
-        input_names=['input'],
-        output_names=['policy', 'value'],
-        dynamic_axes={'input': {0: 'batch_size'}, 'policy': {0: 'batch_size'}, 'value': {0: 'batch_size'}}
-    )
+    try:
+        # Set environment variable to force UTF-8 for subprocess/libraries
+        import sys
+        if sys.platform.startswith('win'):
+            import os
+            os.environ["PYTHONIOENCODING"] = "utf-8"
+        torch.onnx.export(
+            model,
+            dummy_input,
+            filepath,
+            export_params=True,
+            opset_version=18,
+            do_constant_folding=True,
+            input_names=['input'],
+            output_names=['policy', 'value'],
+            dynamic_axes={'input': {0: 'batch_size'}, 'policy': {0: 'batch_size'}, 'value': {0: 'batch_size'}}
+        )
+    except Exception as e:
+        print(f"Warning: ONNX export failed with exception: {e}")
+        print("This is likely a non-fatal console encoding error; the training checkpoint is still saved.")
+

@@ -13,3 +13,6 @@ public/quoridor_model.onnx
 public/quoridor_model.onnx.data
 
 quoridor_model_test.onnx.data
+quoridor_checkpoint_backup.pth
+quoridor_model_backup.onnx
+quoridor_model_backup.onnx.data

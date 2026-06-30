@@ -83,6 +83,56 @@ export function mapIndexToAction(index, px, py, ox, oy) {
 }
 
 /**
+ * Rotates an action by 180 degrees.
+ */
+export function rotateAction180(action) {
+    if (action.type === 'move') {
+        return {
+            type: 'move',
+            to: { x: 8 - action.to.x, y: 8 - action.to.y }
+        };
+    } else if (action.type === 'wall') {
+        return {
+            type: 'wall',
+            wallType: action.wallType,
+            x: 7 - action.x,
+            y: 7 - action.y
+        };
+    }
+    return action;
+}
+
+/**
+ * Perspective-aware mapping of an action to an index [0..139]
+ */
+export function mapActionToIndexPerspective(action, turn, p1Pos, p2Pos) {
+    if (turn === 1) {
+        return mapActionToIndex(action, p1Pos.x, p1Pos.y);
+    } else {
+        const rotatedAction = rotateAction180(action);
+        const rx = 8 - p2Pos.x;
+        const ry = 8 - p2Pos.y;
+        return mapActionToIndex(rotatedAction, rx, ry);
+    }
+}
+
+/**
+ * Perspective-aware mapping of an index [0..139] to an action
+ */
+export function mapIndexToActionPerspective(index, turn, p1Pos, p2Pos) {
+    if (turn === 1) {
+        return mapIndexToAction(index, p1Pos.x, p1Pos.y, p2Pos.x, p2Pos.y);
+    } else {
+        const rx = 8 - p2Pos.x;
+        const ry = 8 - p2Pos.y;
+        const ox = 8 - p1Pos.x;
+        const oy = 8 - p1Pos.y;
+        const actRot = mapIndexToAction(index, rx, ry, ox, oy);
+        return rotateAction180(actRot);
+    }
+}
+
+/**
  * Converts the JavaScript board state into the (11, 9, 9) input tensor.
  * Returns a Float32Array of length 891 (11 * 9 * 9).
  */
@@ -104,37 +154,66 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
     // Turn is 1 (P1) or 2 (P2)
     const isP1Turn = turn === 1;
     
-    // Determine active vs inactive player positions
-    const activePos = isP1Turn ? p1Pos : p2Pos;
-    const oppPos = isP1Turn ? p2Pos : p1Pos;
-    const activePath = isP1Turn ? p1Path : p2Path;
-    const oppPath = isP1Turn ? p2Path : p1Path;
-    const activeDist = isP1Turn ? p1Dist : p2Dist;
-    const oppDist = isP1Turn ? p2Dist : p1Dist;
-    const activeWallsLeft = isP1Turn ? p1Walls : p2Walls;
-    const oppWallsLeft = isP1Turn ? p2Walls : p1Walls;
+    // Determine active vs inactive player positions and paths with perspective rotation
+    let activeX, activeY, oppX, oppY;
+    let activePathCells = [], oppPathCells = [];
+    let activeDist, oppDist;
+    let activeWallsLeft, oppWallsLeft;
+    
+    if (isP1Turn) {
+        activeX = p1Pos.x; activeY = p1Pos.y;
+        oppX = p2Pos.x; oppY = p2Pos.y;
+        activePathCells = p1Path;
+        oppPathCells = p2Path;
+        activeDist = p1Dist;
+        oppDist = p2Dist;
+        activeWallsLeft = p1Walls;
+        oppWallsLeft = p2Walls;
+    } else {
+        // Rotate 180 degrees
+        activeX = 8 - p2Pos.x; activeY = 8 - p2Pos.y;
+        oppX = 8 - p1Pos.x; oppY = 8 - p1Pos.y;
+        activePathCells = p2Path.map(cell => ({ x: 8 - cell.x, y: 8 - cell.y }));
+        oppPathCells = p1Path.map(cell => ({ x: 8 - cell.x, y: 8 - cell.y }));
+        activeDist = p2Dist;
+        oppDist = p1Dist;
+        activeWallsLeft = p2Walls;
+        oppWallsLeft = p1Walls;
+    }
     
     // Fill channels 0-10
     // Channel 0: Your pawn position (active player)
-    write(0, activePos.x, activePos.y, 1.0);
+    write(0, activeX, activeY, 1.0);
     
     // Channel 1: Opponent pawn position
-    write(1, oppPos.x, oppPos.y, 1.0);
+    write(1, oppX, oppY, 1.0);
     
     // Channel 2: Horizontal walls (8x8 grid mapped to 9x9 by padding last row/col)
     // Supports hWalls as either Map or Array representation
     if (hWalls instanceof Map) {
         for (const key of hWalls.keys()) {
             const [wx, wy] = key.split(',').map(Number);
-            if (wx >= 0 && wx < 8 && wy >= 0 && wy < 8) {
-                write(2, wx, wy, 1.0);
+            if (isP1Turn) {
+                if (wx >= 0 && wx < 8 && wy >= 0 && wy < 8) {
+                    write(2, wx, wy, 1.0);
+                }
+            } else {
+                const rx = 7 - wx;
+                const ry = 7 - wy;
+                if (rx >= 0 && rx < 8 && ry >= 0 && ry < 8) {
+                    write(2, rx, ry, 1.0);
+                }
             }
         }
     } else {
         for (let wy = 0; wy < 8; wy++) {
             for (let wx = 0; wx < 8; wx++) {
                 if (hWalls[wy * 8 + wx]) {
-                    write(2, wx, wy, 1.0);
+                    if (isP1Turn) {
+                        write(2, wx, wy, 1.0);
+                    } else {
+                        write(2, 7 - wx, 7 - wy, 1.0);
+                    }
                 }
             }
         }
@@ -144,15 +223,27 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
     if (vWalls instanceof Map) {
         for (const key of vWalls.keys()) {
             const [wx, wy] = key.split(',').map(Number);
-            if (wx >= 0 && wx < 8 && wy >= 0 && wy < 8) {
-                write(3, wx, wy, 1.0);
+            if (isP1Turn) {
+                if (wx >= 0 && wx < 8 && wy >= 0 && wy < 8) {
+                    write(3, wx, wy, 1.0);
+                }
+            } else {
+                const rx = 7 - wx;
+                const ry = 7 - wy;
+                if (rx >= 0 && rx < 8 && ry >= 0 && ry < 8) {
+                    write(3, rx, ry, 1.0);
+                }
             }
         }
     } else {
         for (let wy = 0; wy < 8; wy++) {
             for (let wx = 0; wx < 8; wx++) {
                 if (vWalls[wy * 8 + wx]) {
-                    write(3, wx, wy, 1.0);
+                    if (isP1Turn) {
+                        write(3, wx, wy, 1.0);
+                    } else {
+                        write(3, 7 - wx, 7 - wy, 1.0);
+                    }
                 }
             }
         }
@@ -175,12 +266,12 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
     }
     
     // Channel 6: Your path cells
-    for (const cell of activePath) {
+    for (const cell of activePathCells) {
         write(6, cell.x, cell.y, 1.0);
     }
     
     // Channel 7: Opponent path cells
-    for (const cell of oppPath) {
+    for (const cell of oppPathCells) {
         write(7, cell.x, cell.y, 1.0);
     }
     
@@ -388,7 +479,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         
         // Expand node children
         for (const action of validActions) {
-            const idx = mapActionToIndex(action, isP1Turn(node.state) ? node.state.p1Pos.x : node.state.p2Pos.x, isP1Turn(node.state) ? node.state.p1Pos.y : node.state.p2Pos.y);
+            const idx = mapActionToIndexPerspective(action, node.state.turn, node.state.p1Pos, node.state.p2Pos);
             const nextState = transitionState(node.state, action);
             const priorProb = policy[idx] || 0.0;
             node.children.set(idx, new MCTSNode(nextState, node, idx, priorProb));
@@ -414,10 +505,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         return actions[0] || null;
     }
     
-    const isP1 = rootState.turn === 1;
-    const myPos = isP1 ? rootState.p1Pos : rootState.p2Pos;
-    const oppPos = isP1 ? rootState.p2Pos : rootState.p1Pos;
-    return mapIndexToAction(bestActionIdx, myPos.x, myPos.y, oppPos.x, oppPos.y);
+    return mapIndexToActionPerspective(bestActionIdx, turn, p1Pos, p2Pos);
 }
 
 function isP1Turn(state) {
@@ -479,7 +567,7 @@ function fallbackEvaluate(state, validActions) {
     let sumExp = 0.0;
     
     for (const action of validActions) {
-        const idx = mapActionToIndex(action, myPos.x, myPos.y);
+        const idx = mapActionToIndexPerspective(action, state.turn, state.p1Pos, state.p2Pos);
         
         // Baseline action score
         let actionScore = 1.0;
