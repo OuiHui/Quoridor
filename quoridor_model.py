@@ -156,11 +156,12 @@ def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_le
     return tensor
 
 # Action space: 140 total
-#   0-3:   Regular moves (N, S, E, W)
-#   4-7:   Straight jumps (N, S, E, W)
-#   8-11:  Diagonal jumps (NE, NW, SE, SW)
-#   12-75: Horizontal walls (wx=0..7, wy=0..7)  -> 12 + wy*8 + wx
-#   76-139: Vertical walls (wx=0..7, wy=0..7)   -> 76 + wy*8 + wx
+#   0-3:    Regular moves  (N, S, E, W)
+#   4-7:    Straight jumps (N, S, E, W)
+#   8-11:   Diagonal jumps (NE, NW, SE, SW)
+#   12-75:  Horizontal walls (wx=0..7, wy=0..7)  -> 12 + wy*8 + wx  (64 placements)
+#   76-139: Vertical walls  (wx=0..7, wy=0..7)   -> 76 + wy*8 + wx  (64 placements)
+# Total: 12 move/jump + 64 h-wall + 64 v-wall = 140
 NUM_ACTIONS = 140
 
 _MOVE_DIR_TO_IDX = {'N': 0, 'S': 1, 'E': 2, 'W': 3,

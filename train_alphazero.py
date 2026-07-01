@@ -101,8 +101,8 @@ class QuoridorGame:
         print(f"P1 Walls Left: {self.p1_walls_left} | P2 Walls Left: {self.p2_walls_left}")
         print("-" * 45)
 
-    def get_shortest_path(self, start, target_y):
-        # Simple BFS pathfinding
+    def get_shortest_path(self, start, target_y, opp_pos=None):
+        """BFS shortest path. Pass opp_pos to account for jump moves over opponent."""
         queue = deque([[start]])
         visited = {start}
         while queue:
@@ -110,14 +110,29 @@ class QuoridorGame:
             x, y = path[-1]
             if y == target_y:
                 return path
-            # Orthogonal directions
             for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                 nx, ny = x + dx, y + dy
-                if 0 <= nx < 9 and 0 <= ny < 9:
-                    if (nx, ny) not in visited:
-                        if not self.is_move_blocked(x, y, nx, ny):
-                            visited.add((nx, ny))
-                            queue.append(path + [(nx, ny)])
+                if 0 <= nx < 9 and 0 <= ny < 9 and not self.is_move_blocked(x, y, nx, ny):
+                    if opp_pos and (nx, ny) == opp_pos:
+                        # Cell occupied by opponent — resolve jump destinations
+                        jx, jy = nx + dx, ny + dy
+                        straight_ok = 0 <= jx < 9 and 0 <= jy < 9 and not self.is_move_blocked(nx, ny, jx, jy)
+                        if straight_ok:
+                            if (jx, jy) not in visited:
+                                visited.add((jx, jy))
+                                queue.append(path + [(jx, jy)])
+                        else:
+                            # Diagonal jumps when straight is blocked
+                            sides = [(-1, 0), (1, 0)] if dx == 0 else [(0, -1), (0, 1)]
+                            for sdx, sdy in sides:
+                                dix, diy = nx + sdx, ny + sdy
+                                if 0 <= dix < 9 and 0 <= diy < 9 and not self.is_move_blocked(nx, ny, dix, diy):
+                                    if (dix, diy) not in visited:
+                                        visited.add((dix, diy))
+                                        queue.append(path + [(dix, diy)])
+                    elif (nx, ny) not in visited:
+                        visited.add((nx, ny))
+                        queue.append(path + [(nx, ny)])
         return None
 
     def is_move_blocked(self, x1, y1, x2, y2):
@@ -203,17 +218,17 @@ class QuoridorGame:
     def get_candidate_walls(self):
         candidates = set()
         
-        # 1. Add walls around both players (radius of 2)
+        # 1. Add walls around both players (radius of 3 to reduce strategic blind spots)
         for pos in [self.p1_pos, self.p2_pos]:
             px, py = pos
-            for wx in range(max(0, px - 2), min(8, px + 3)):
-                for wy in range(max(0, py - 2), min(8, py + 3)):
+            for wx in range(max(0, px - 3), min(8, px + 4)):
+                for wy in range(max(0, py - 3), min(8, py + 4)):
                     candidates.add((wx, wy, 'h'))
                     candidates.add((wx, wy, 'v'))
                     
         # 2. Add walls that intersect the shortest paths of both players
-        p1_path = self.get_shortest_path(self.p1_pos, 8)
-        p2_path = self.get_shortest_path(self.p2_pos, 0)
+        p1_path = self.get_shortest_path(self.p1_pos, 8, opp_pos=self.p2_pos)
+        p2_path = self.get_shortest_path(self.p2_pos, 0, opp_pos=self.p1_pos)
         
         for path in [p1_path, p2_path]:
             if not path:
@@ -296,8 +311,8 @@ class QuoridorGame:
 
     def evaluate_heuristic(self):
         """Evaluate state from P1 perspective: positive means P1 advantage, negative P2."""
-        p1_path = self.get_shortest_path(self.p1_pos, 8)
-        p2_path = self.get_shortest_path(self.p2_pos, 0)
+        p1_path = self.get_shortest_path(self.p1_pos, 8, opp_pos=self.p2_pos)
+        p2_path = self.get_shortest_path(self.p2_pos, 0, opp_pos=self.p1_pos)
         p1_len = len(p1_path) - 1 if p1_path else 20
         p2_len = len(p2_path) - 1 if p2_path else 20
         
@@ -365,8 +380,8 @@ class MCTS:
 
             # 2. Expansion & Neural Net Evaluation
             # Tensorize board state
-            p1_path = node.game_state.get_shortest_path(node.game_state.p1_pos, 8)
-            p2_path = node.game_state.get_shortest_path(node.game_state.p2_pos, 0)
+            p1_path = node.game_state.get_shortest_path(node.game_state.p1_pos, 8, opp_pos=node.game_state.p2_pos)
+            p2_path = node.game_state.get_shortest_path(node.game_state.p2_pos, 0, opp_pos=node.game_state.p1_pos)
             state_tensor = encode_state(
                 node.game_state.p1_pos, node.game_state.p2_pos,
                 node.game_state.h_walls, node.game_state.v_walls,
@@ -489,8 +504,8 @@ def self_play_game(model, epoch, num_simulations=40, visualize=False):
             policy_probs[valid_indices] = 1.0 / len(valid_indices)
 
         # Get board state tensor
-        p1_path = game.get_shortest_path(game.p1_pos, 8)
-        p2_path = game.get_shortest_path(game.p2_pos, 0)
+        p1_path = game.get_shortest_path(game.p1_pos, 8, opp_pos=game.p2_pos)
+        p2_path = game.get_shortest_path(game.p2_pos, 0, opp_pos=game.p1_pos)
         state_tensor = encode_state(
             game.p1_pos, game.p2_pos,
             game.h_walls, game.v_walls,
@@ -552,7 +567,7 @@ def self_play_game(model, epoch, num_simulations=40, visualize=False):
         
     return training_examples, winner
 
-def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_simulations=100, visualize=False):
+def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_simulations=100, dataset_size=20000, visualize=False):
     import os
     model = QuoridorNet(num_residual_blocks=6, channels=128)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -603,9 +618,9 @@ def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_
             print(f"  Self-play Game {g+1}/{games_per_epoch} finished ({len(game_data)} steps)")
             
         dataset.extend(epoch_examples)
-        # Keep dataset limited to recent experiences
-        if len(dataset) > 5000:
-            dataset = dataset[-5000:]
+        # Keep dataset capped to recent experiences
+        if len(dataset) > dataset_size:
+            dataset = dataset[-dataset_size:]
             
         # Training step
         model.train()
@@ -680,6 +695,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=32, help="Mini-batch size for model training")
     parser.add_argument("--lr", type=float, default=0.001, help="Initial learning rate")
     parser.add_argument("--simulations", type=int, default=100, help="Number of MCTS simulations per turn")
+    parser.add_argument("--dataset_size", type=int, default=20000, help="Max replay buffer size (recent positions kept)")
     parser.add_argument("--visualize", "-v", action="store_true", help="Visualize self-play games in terminal")
     args = parser.parse_args()
 
@@ -689,5 +705,6 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         lr=args.lr,
         num_simulations=args.simulations,
+        dataset_size=args.dataset_size,
         visualize=args.visualize
     )
