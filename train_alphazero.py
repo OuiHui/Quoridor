@@ -567,7 +567,37 @@ def self_play_game(model, epoch, num_simulations=40, visualize=False):
         
     return training_examples, winner
 
-def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_simulations=100, dataset_size=20000, visualize=False):
+def load_dataset_from_disk(data_dir="data", max_positions=20000):
+    if not os.path.exists(data_dir):
+        return []
+    
+    # Find all .pt files recursively
+    pt_files = []
+    for root_dir, _, files in os.walk(data_dir):
+        for f in files:
+            if f.endswith('.pt'):
+                pt_files.append(os.path.join(root_dir, f))
+                
+    # Sort files by filename to ensure they are processed chronologically
+    pt_files.sort()
+    
+    dataset = []
+    # Load from newest to oldest to satisfy max_positions efficiently
+    for filepath in reversed(pt_files):
+        try:
+            game_data = torch.load(filepath, map_location=torch.device('cpu'), weights_only=False)
+            dataset.extend(game_data)
+            if len(dataset) >= max_positions:
+                dataset = dataset[:max_positions]
+                break
+        except Exception as e:
+            print(f"Warning: Failed to load training data file {filepath}: {e}")
+            
+    # Reverse dataset to maintain chronological order
+    dataset.reverse()
+    return dataset
+
+def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_simulations=100, dataset_size=20000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False):
     import os
     model = QuoridorNet(num_residual_blocks=6, channels=128)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -575,9 +605,7 @@ def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
     loss_val_fn = nn.MSELoss()
 
-    checkpoint_path = "quoridor_checkpoint.pth"
     start_epoch = 0
-    dataset = []
     
     if os.path.exists(checkpoint_path):
         try:
@@ -587,11 +615,21 @@ def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_
             if 'scheduler_state_dict' in checkpoint:
                 scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             start_epoch = checkpoint.get('epoch', 0)
-            dataset = checkpoint.get('dataset', [])
             print(f"Loaded checkpoint from {checkpoint_path}. Resuming from epoch {start_epoch+1}")
         except Exception as e:
             print(f"Failed to load checkpoint ({e}). Starting from scratch.")
             
+    # Load dataset from data directory, falling back to checkpoint if folder is empty/missing
+    dataset = load_dataset_from_disk(data_dir, dataset_size)
+    if not dataset and os.path.exists(checkpoint_path):
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=False)
+            dataset = checkpoint.get('dataset', [])
+            if dataset:
+                print(f"Loaded dataset fallback of {len(dataset)} positions from checkpoint.")
+        except Exception:
+            pass
+
     print("Starting AlphaZero-style self-play training loop...")
     _METRICS['total_epochs'] = epochs
     _METRICS['total_games'] = games_per_epoch
@@ -617,6 +655,15 @@ def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_
                 
             print(f"  Self-play Game {g+1}/{games_per_epoch} finished ({len(game_data)} steps)")
             
+            # Save game data to disk for organization
+            game_epoch_dir = os.path.join(data_dir, f"epoch_{epoch+1:03d}")
+            os.makedirs(game_epoch_dir, exist_ok=True)
+            game_file = os.path.join(game_epoch_dir, f"game_{g+1:03d}.pt")
+            try:
+                torch.save(game_data, game_file)
+            except Exception as e:
+                print(f"  Warning: Failed to save game data to {game_file}: {e}")
+            
         dataset.extend(epoch_examples)
         # Keep dataset capped to recent experiences
         if len(dataset) > dataset_size:
@@ -640,13 +687,13 @@ def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_
             
             optimizer.zero_grad()
             logits, values = model(states)
- 
+            
             # Manual cross-entropy: works correctly with soft MCTS targets on all PyTorch versions
             log_probs = torch.log_softmax(logits, dim=1)
             loss_p = -torch.sum(target_policies * log_probs) / logits.size(0)
             loss_v = loss_val_fn(values, target_values)
             loss = loss_p + loss_v
- 
+            
             loss.backward()
             optimizer.step()
             
@@ -677,7 +724,6 @@ def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
-                'dataset': dataset
             }, checkpoint_path)
             print(f"  Checkpoint saved to {checkpoint_path}")
         except Exception as e:
@@ -696,6 +742,8 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=0.001, help="Initial learning rate")
     parser.add_argument("--simulations", type=int, default=100, help="Number of MCTS simulations per turn")
     parser.add_argument("--dataset_size", type=int, default=20000, help="Max replay buffer size (recent positions kept)")
+    parser.add_argument("--data_dir", type=str, default="data", help="Directory to save/load training games")
+    parser.add_argument("--checkpoint_path", type=str, default="quoridor_checkpoint.pth", help="Path to checkpoint file")
     parser.add_argument("--visualize", "-v", action="store_true", help="Visualize self-play games in terminal")
     args = parser.parse_args()
 
@@ -706,5 +754,7 @@ if __name__ == "__main__":
         lr=args.lr,
         num_simulations=args.simulations,
         dataset_size=args.dataset_size,
+        data_dir=args.data_dir,
+        checkpoint_path=args.checkpoint_path,
         visualize=args.visualize
     )

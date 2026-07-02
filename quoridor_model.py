@@ -245,11 +245,21 @@ def export_to_onnx(model, filepath="quoridor_model.onnx"):
     model.eval()
     dummy_input = torch.randn(1, 11, 9, 9, dtype=torch.float32)
     try:
-        # Set environment variable to force UTF-8 for subprocess/libraries
+        # Set environment variable and reconfigure streams to force UTF-8 on Windows
         import sys
         if sys.platform.startswith('win'):
             import os
             os.environ["PYTHONIOENCODING"] = "utf-8"
+            if hasattr(sys.stdout, 'reconfigure'):
+                try:
+                    sys.stdout.reconfigure(encoding='utf-8')
+                except Exception:
+                    pass
+            if hasattr(sys.stderr, 'reconfigure'):
+                try:
+                    sys.stderr.reconfigure(encoding='utf-8')
+                except Exception:
+                    pass
         torch.onnx.export(
             model,
             dummy_input,
