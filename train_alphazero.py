@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from collections import deque
-from quoridor_model import QuoridorNet, encode_state, map_action_to_index, map_action_to_index_perspective, map_index_to_action_perspective, export_to_onnx, NUM_ACTIONS
+from quoridor_model import QuoridorNet, encode_state, flip_horizontal_state, flip_horizontal_policy, map_action_to_index, map_action_to_index_perspective, map_index_to_action_perspective, export_to_onnx, NUM_ACTIONS
 
 # Path to JSON state file served by Vite dev server
 _STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'training_state.json')
@@ -75,6 +75,11 @@ class QuoridorGame:
         game.p2_walls_left = self.p2_walls_left
         game.is_p1_turn = self.is_p1_turn
         return game
+
+    def clone_and_step(self, action):
+        g = self.clone()
+        g.step(action)
+        return g
 
     def print_board(self):
         grid = []
@@ -564,7 +569,13 @@ def self_play_game(model, epoch, num_simulations=40, visualize=False):
         else:
             target_value = 1.0 if (winner == 1 and is_p1) or (winner == -1 and not is_p1) else -1.0
         training_examples.append((state_tensor, policy_probs, target_value))
-        
+
+    # Augment with horizontal flip — free data via left-right board symmetry
+    training_examples += [
+        (flip_horizontal_state(s), flip_horizontal_policy(p), v)
+        for s, p, v in training_examples
+    ]
+
     return training_examples, winner
 
 def load_dataset_from_disk(data_dir="data", max_positions=20000):

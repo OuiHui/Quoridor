@@ -155,6 +155,40 @@ def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_le
 
     return tensor
 
+def flip_horizontal_state(tensor):
+    """
+    Horizontally mirror a (11, 9, 9) state tensor.
+    Pawn/path channels: x -> 8-x.  Wall channels: wx -> 7-wx
+    (walls span 0-7 inside the 9-wide dimension, so a plain flip
+    of only the first 8 entries is used).
+    Scalar channels (4,5,8,9,10) are unchanged by a left-right flip.
+    """
+    flipped = tensor.clone()
+    # Pawn positions and path cell masks
+    for ch in [0, 1, 6, 7]:
+        flipped[ch] = torch.flip(tensor[ch], dims=[0])
+    # Wall placements: only the first 8 x-positions are used
+    for ch in [2, 3]:
+        flipped[ch, :8, :] = torch.flip(tensor[ch, :8, :], dims=[0])
+    return flipped
+
+def flip_horizontal_policy(policy):
+    """
+    Horizontally mirror a 140-element policy vector.
+    E <-> W, jump_E <-> jump_W, NE <-> NW, SE <-> SW.
+    Wall columns are reversed within each row: wx -> 7-wx.
+    """
+    p = policy.copy()
+    # Directional moves
+    p[2],  p[3]  = policy[3],  policy[2]   # E <-> W
+    p[6],  p[7]  = policy[7],  policy[6]   # jump_E <-> jump_W
+    p[8],  p[9]  = policy[9],  policy[8]   # jump_NE <-> jump_NW
+    p[10], p[11] = policy[11], policy[10]  # jump_SE <-> jump_SW
+    # Wall placements: reshape to (wy, wx), reverse wx, flatten
+    p[12:76]  = policy[12:76].reshape(8, 8)[:, ::-1].ravel()
+    p[76:140] = policy[76:140].reshape(8, 8)[:, ::-1].ravel()
+    return p
+
 # Action space: 140 total
 #   0-3:    Regular moves  (N, S, E, W)
 #   4-7:    Straight jumps (N, S, E, W)
@@ -274,4 +308,3 @@ def export_to_onnx(model, filepath="quoridor_model.onnx"):
     except Exception as e:
         print(f"Warning: ONNX export failed with exception: {e}")
         print("This is likely a non-fatal console encoding error; the training checkpoint is still saved.")
-
