@@ -223,11 +223,11 @@ class QuoridorGame:
     def get_candidate_walls(self):
         candidates = set()
         
-        # 1. Add walls around both players (radius of 3 to reduce strategic blind spots)
+        # 1. Add walls around both players (radius of 5 for broader strategic coverage)
         for pos in [self.p1_pos, self.p2_pos]:
             px, py = pos
-            for wx in range(max(0, px - 3), min(8, px + 4)):
-                for wy in range(max(0, py - 3), min(8, py + 4)):
+            for wx in range(max(0, px - 5), min(8, px + 6)):
+                for wy in range(max(0, py - 5), min(8, py + 6)):
                     candidates.add((wx, wy, 'h'))
                     candidates.add((wx, wy, 'v'))
                     
@@ -608,9 +608,9 @@ def load_dataset_from_disk(data_dir="data", max_positions=20000):
     dataset.reverse()
     return dataset
 
-def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_simulations=100, dataset_size=20000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False):
+def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num_simulations=400, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False):
     import os
-    model = QuoridorNet(num_residual_blocks=6, channels=128)
+    model = QuoridorNet(num_residual_blocks=10, channels=128)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     # LR halved every 15 epochs
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
@@ -622,11 +622,13 @@ def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_
         try:
             checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=False)
             model.load_state_dict(checkpoint['model_state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            if 'scheduler_state_dict' in checkpoint:
-                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            if not reset_lr:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                if 'scheduler_state_dict' in checkpoint:
+                    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             start_epoch = checkpoint.get('epoch', 0)
-            print(f"Loaded checkpoint from {checkpoint_path}. Resuming from epoch {start_epoch+1}")
+            lr_note = ' (LR reset to initial)' if reset_lr else ''
+            print(f"Loaded checkpoint from {checkpoint_path}. Resuming from epoch {start_epoch+1}{lr_note}")
         except Exception as e:
             print(f"Failed to load checkpoint ({e}). Starting from scratch.")
             
@@ -747,15 +749,16 @@ def train_alphazero(epochs=50, games_per_epoch=20, batch_size=32, lr=0.001, num_
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="AlphaZero-style training loop for Quoridor.")
-    parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
-    parser.add_argument("--games_per_epoch", type=int, default=20, help="Number of self-play games per epoch")
-    parser.add_argument("--batch_size", type=int, default=32, help="Mini-batch size for model training")
+    parser.add_argument("--epochs", type=int, default=200, help="Total epochs to train (continues from checkpoint)")
+    parser.add_argument("--games_per_epoch", type=int, default=50, help="Number of self-play games per epoch")
+    parser.add_argument("--batch_size", type=int, default=64, help="Mini-batch size for model training")
     parser.add_argument("--lr", type=float, default=0.001, help="Initial learning rate")
-    parser.add_argument("--simulations", type=int, default=100, help="Number of MCTS simulations per turn")
-    parser.add_argument("--dataset_size", type=int, default=20000, help="Max replay buffer size (recent positions kept)")
+    parser.add_argument("--simulations", type=int, default=400, help="Number of MCTS simulations per turn")
+    parser.add_argument("--dataset_size", type=int, default=50000, help="Max replay buffer size (recent positions kept)")
     parser.add_argument("--data_dir", type=str, default="data", help="Directory to save/load training games")
     parser.add_argument("--checkpoint_path", type=str, default="quoridor_checkpoint.pth", help="Path to checkpoint file")
     parser.add_argument("--visualize", "-v", action="store_true", help="Visualize self-play games in terminal")
+    parser.add_argument("--reset_lr", action="store_true", help="Reset LR and scheduler instead of loading from checkpoint")
     args = parser.parse_args()
 
     train_alphazero(
@@ -767,5 +770,6 @@ if __name__ == "__main__":
         dataset_size=args.dataset_size,
         data_dir=args.data_dir,
         checkpoint_path=args.checkpoint_path,
-        visualize=args.visualize
+        visualize=args.visualize,
+        reset_lr=args.reset_lr,
     )

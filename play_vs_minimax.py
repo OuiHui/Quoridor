@@ -101,7 +101,7 @@ def run_battle(checkpoint_path, depth=2, simulations=100, num_games=10, visualiz
     print(f"       AlphaZero MCTS ({simulations} sims) vs Minimax (depth {depth})")
     print("=" * 60)
 
-    model = QuoridorNet(num_residual_blocks=6, channels=128)
+    model = QuoridorNet(num_residual_blocks=10, channels=128)
     if os.path.exists(checkpoint_path):
         try:
             checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=False)

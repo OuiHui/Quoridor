@@ -25,11 +25,11 @@ class QuoridorNet(nn.Module):
     """
     AlphaZero-style network for Quoridor.
     Input shape: (Batch, 11, 9, 9)
-    Trunk: 6 ResidualBlocks with 128 channels.
+    Trunk: 10 ResidualBlocks with 128 channels.
     Value Head: outputs scalar in [-1, 1].
-    Policy Head: outputs 133 action logits.
+    Policy Head: outputs 140 action logits.
     """
-    def __init__(self, num_residual_blocks=6, channels=128):
+    def __init__(self, num_residual_blocks=10, channels=128):
         super(QuoridorNet, self).__init__()
         self.conv_init = nn.Conv2d(11, channels, kernel_size=3, padding=1, bias=False)
         self.bn_init = nn.BatchNorm2d(channels)
