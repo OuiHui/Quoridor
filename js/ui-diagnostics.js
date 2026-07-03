@@ -344,8 +344,52 @@ export function updateEvalBar() {
     precomputeNextMoves();
 }
 
+export function updateActionBarUI() {
+    const actionBar = document.getElementById('action-selection-bar');
+    if (!actionBar) return;
+
+    actionBar.className = `action-selection-bar p${state.turn}-turn`;
+
+    const btnMove = document.getElementById('btn-mode-move');
+    const btnWallH = document.getElementById('btn-mode-wall-h');
+    const btnWallV = document.getElementById('btn-mode-wall-v');
+
+    if (!btnMove || !btnWallH || !btnWallV) return;
+
+    btnMove.classList.remove('active');
+    btnWallH.classList.remove('active');
+    btnWallV.classList.remove('active');
+
+    if (state.interactionMode === 'move') {
+        btnMove.classList.add('active');
+    } else if (state.interactionMode === 'wall-h') {
+        btnWallH.classList.add('active');
+    } else if (state.interactionMode === 'wall-v') {
+        btnWallV.classList.add('active');
+    }
+
+    const isAITurn = state.gameMode === 'ai' &&
+        ((state.turn === 1 && state.aiSettings.color === 'p1') ||
+            (state.turn === 2 && state.aiSettings.color === 'p2'));
+    const isPlaybookViewing = state.activePlaybook !== null && !state.playbookPracticeMode;
+    const isLocked = isAITurn || isPlaybookViewing || state.trainingWatchActive;
+
+    const wallsLeft = state.turn === 1 ? state.p1Walls : state.p2Walls;
+
+    btnMove.disabled = isLocked;
+    btnWallH.disabled = isLocked || (wallsLeft <= 0);
+    btnWallV.disabled = isLocked || (wallsLeft <= 0);
+}
+
 // UI update sequence for turn indicators, badges, diagnostic logs, and path highlights
 export function updateUI() {
+    updateActionBarUI();
+    const boardEl = document.getElementById('board');
+    if (boardEl) {
+        boardEl.classList.remove('mode-move', 'mode-wall-h', 'mode-wall-v');
+        boardEl.classList.add(`mode-${state.interactionMode}`);
+    }
+
     const turnHud = document.getElementById('hud-turn');
     const p1Card = document.getElementById('p1-card');
     const p2Card = document.getElementById('p2-card');
@@ -410,7 +454,7 @@ export function updateUI() {
 
     const isPlaybookViewing = state.activePlaybook !== null && !state.playbookPracticeMode;
 
-    if (!isAITurn && !isPlaybookViewing) {
+    if (!isAITurn && !isPlaybookViewing && state.interactionMode === 'move') {
         const active = state.turn === 1 ? state.p1Pos : state.p2Pos;
         const passive = state.turn === 1 ? state.p2Pos : state.p1Pos;
 

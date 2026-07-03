@@ -591,5 +591,137 @@
 .quoridor-board.playbook-locked .hint-wall {
     cursor: not-allowed !important;
 }
+.quoridor-board.playbook-locked .board-joint::after {
+    pointer-events: none !important;
+}
+
+/* ACTION SELECTION BAR */
+.action-selection-bar {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    width: 100%;
+    max-width: var(--board-size);
+    margin: 8px 0;
+}
+
+.action-btn {
+    flex: 1;
+    background: rgba(22, 28, 45, 0.4);
+    border: 1px solid var(--border-color);
+    color: var(--color-text-muted);
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-family: var(--font-sans);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.action-btn:hover:not(:disabled) {
+    background: rgba(30, 41, 59, 0.6);
+    color: var(--color-text);
+}
+
+.action-btn:disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
+}
+
+/* Active styles depending on active player's turn */
+.action-selection-bar.p1-turn .action-btn.active {
+    background: rgba(6, 182, 212, 0.12);
+    border-color: var(--color-p1);
+    color: var(--color-p1);
+    box-shadow: 0 0 12px var(--color-p1-glow);
+}
+
+.action-selection-bar.p2-turn .action-btn.active {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: var(--color-p2);
+    color: var(--color-p2);
+    box-shadow: 0 0 12px var(--color-p2-glow);
+}
+
+.action-icon {
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.action-icon.icon-wall-h {
+    display: inline-block;
+    width: 14px;
+    height: 2px;
+    background-color: currentColor;
+    border-radius: 1px;
+}
+
+.action-icon.icon-wall-v {
+    display: inline-block;
+    width: 2px;
+    height: 14px;
+    background-color: currentColor;
+    border-radius: 1px;
+}
+
+/* INTERACTION MODES: Board dynamic state styling */
+
+/* Move Mode (Pawn highlights enabled, Edges & Joints non-interactive) */
+.quoridor-board.mode-move .board-edge,
+.quoridor-board.mode-move .board-joint {
+    cursor: default;
+}
+.quoridor-board.mode-move .board-edge::after,
+.quoridor-board.mode-move .board-joint::after {
+    pointer-events: none;
+}
+
+/* Wall-H Mode (Horizontal edge hover enabled, Cells and Vertical edges non-interactive) */
+.quoridor-board.mode-wall-h .board-cell {
+    cursor: default;
+}
+.quoridor-board.mode-wall-h .board-cell:hover {
+    background: #1a2333;
+    box-shadow: none;
+}
+.quoridor-board.mode-wall-h .board-cell.valid-move {
+    background: #1a2333;
+    border: 1px solid rgba(255, 255, 255, 0.02);
+    cursor: default;
+}
+.quoridor-board.mode-wall-h .board-edge.vertical {
+    cursor: default;
+}
+.quoridor-board.mode-wall-h .board-edge.vertical::after {
+    pointer-events: none;
+}
+
+/* Wall-V Mode (Vertical edge hover enabled, Cells and Horizontal edges non-interactive) */
+.quoridor-board.mode-wall-v .board-cell {
+    cursor: default;
+}
+.quoridor-board.mode-wall-v .board-cell:hover {
+    background: #1a2333;
+    box-shadow: none;
+}
+.quoridor-board.mode-wall-v .board-cell.valid-move {
+    background: #1a2333;
+    border: 1px solid rgba(255, 255, 255, 0.02);
+    cursor: default;
+}
+.quoridor-board.mode-wall-v .board-edge.horizontal {
+    cursor: default;
+}
+.quoridor-board.mode-wall-v .board-edge.horizontal::after {
+    pointer-events: none;
+}
+
 
 

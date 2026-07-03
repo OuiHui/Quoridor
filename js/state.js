@@ -31,6 +31,9 @@ export const state = {
     soundEnabled: true,
     hintOn: false,
 
+    // Interaction selection mode
+    interactionMode: 'move', // 'move', 'wall-h', or 'wall-v'
+
     // Training Live Watch State
     trainingWatchActive: false,
 

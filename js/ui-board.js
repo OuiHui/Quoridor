@@ -49,7 +49,7 @@ export function renderPlacedWalls() {
 }
 
 // Initial Board Generator
-export function renderBoard({ onCellClick, onEdgeMouseMove, onEdgeMouseLeave, onEdgeClick }) {
+export function renderBoard({ onCellClick, onEdgeMouseMove, onEdgeMouseLeave, onEdgeClick, onJointMouseMove, onJointMouseLeave, onJointClick }) {
     const boardEl = document.getElementById('board');
     boardEl.innerHTML = '';
     
@@ -69,7 +69,7 @@ export function renderBoard({ onCellClick, onEdgeMouseMove, onEdgeMouseLeave, on
         }
     }
     
-    // 2. Create Wall Joint Intersections (64 total, no event listeners)
+    // 2. Create Wall Joint Intersections (64 total, clickable in wall placement modes)
     for (let y = 7; y >= 0; y--) {
         for (let x = 0; x < 8; x++) {
             const joint = document.createElement('div');
@@ -78,7 +78,10 @@ export function renderBoard({ onCellClick, onEdgeMouseMove, onEdgeMouseLeave, on
             joint.dataset.y = y;
             joint.style.gridColumn = `${2 * x + 2}`;
             joint.style.gridRow = `${16 - 2 * y}`;
-            joint.style.pointerEvents = 'none'; // Ensure joints don't block clicks on edges
+            
+            joint.addEventListener('mousemove', (e) => onJointMouseMove(e, x, y));
+            joint.addEventListener('mouseleave', (e) => onJointMouseLeave(e, x, y));
+            joint.addEventListener('click', (e) => onJointClick(e, x, y));
             
             boardEl.appendChild(joint);
         }
