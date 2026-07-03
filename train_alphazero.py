@@ -1,4 +1,5 @@
 import json
+import copy
 import math
 import os
 import random
@@ -24,7 +25,10 @@ _METRICS = {
     'policy_loss': 0.0,
     'value_loss': 0.0,
     'entropy': 0.0,
-    'lr': 0.001
+    'lr': 0.001,
+    'win_rate_vs_prev': 0.0,
+    'avg_mcts_eval': 0.0,
+    'avg_abs_mcts_eval': 0.0
 }
 
 def write_training_state(game, move_count, active_player, status, last_move=''):
@@ -453,6 +457,7 @@ def self_play_game(model, epoch, num_simulations=40, visualize=False):
     game = QuoridorGame()
     mcts = MCTS(model)
     trajectory = [] # items of (tensor, policy_probs, current_player_turn)
+    mcts_evals = [] # root Q evaluations per move
     move_count = 0
     state_history = {}
     is_draw = False
@@ -480,6 +485,7 @@ def self_play_game(model, epoch, num_simulations=40, visualize=False):
             break
 
         root = mcts.run_search(game, num_simulations=num_simulations, epoch=epoch)
+        mcts_evals.append(root.Q)
         
         # Policy probability distribution over NUM_ACTIONS actions
         visit_counts = np.zeros(NUM_ACTIONS, dtype=np.float32)
@@ -568,7 +574,7 @@ def self_play_game(model, epoch, num_simulations=40, visualize=False):
         for s, p, v in training_examples
     ]
 
-    return training_examples, winner
+    return training_examples, winner, mcts_evals
 
 def load_dataset_from_disk(data_dir="data", max_positions=20000):
     if not os.path.exists(data_dir):
@@ -599,6 +605,74 @@ def load_dataset_from_disk(data_dir="data", max_positions=20000):
     # Reverse dataset to maintain chronological order
     dataset.reverse()
     return dataset
+
+def play_evaluation_match(model_current, model_previous, num_simulations=100, num_games=4):
+    """
+    Play a small tournament of games between the current model and the previous checkpoint model.
+    Returns the win rate of the current model. Draws count as 0.5.
+    """
+    model_current.eval()
+    model_previous.eval()
+    
+    mcts_curr = MCTS(model_current, dirichlet_eps=0.0)
+    mcts_prev = MCTS(model_previous, dirichlet_eps=0.0)
+    
+    curr_wins = 0.0
+    
+    for g in range(num_games):
+        game = QuoridorGame()
+        # Alternate who plays as P1
+        curr_is_p1 = (g % 2 == 0)
+        
+        move_count = 0
+        state_history = {}
+        is_draw = False
+        
+        while game.is_game_over() == 0 and move_count < 300:
+            state_key = (
+                game.p1_pos,
+                game.p2_pos,
+                frozenset(game.h_walls),
+                frozenset(game.v_walls),
+                game.p1_walls_left,
+                game.p2_walls_left,
+                game.is_p1_turn
+            )
+            state_history[state_key] = state_history.get(state_key, 0) + 1
+            if state_history[state_key] >= 3:
+                is_draw = True
+                break
+                
+            is_curr_turn = (game.is_p1_turn == curr_is_p1)
+            active_mcts = mcts_curr if is_curr_turn else mcts_prev
+            
+            root = active_mcts.run_search(game, num_simulations=num_simulations)
+            if not root.children:
+                break
+            best_idx = max(root.children.keys(), key=lambda idx: root.children[idx].N)
+            
+            valid_actions = game.get_valid_actions()
+            selected_action = None
+            for act in valid_actions:
+                if map_action_to_index_perspective(act, game.is_p1_turn) == best_idx:
+                    selected_action = act
+                    break
+            if selected_action is None:
+                selected_action = random.choice(valid_actions) if valid_actions else None
+                
+            if selected_action is None:
+                break
+                
+            game.step(selected_action)
+            move_count += 1
+            
+        winner = 0 if is_draw else game.is_game_over()
+        if winner == 0:
+            curr_wins += 0.5
+        elif (winner == 1 and curr_is_p1) or (winner == -1 and not curr_is_p1):
+            curr_wins += 1.0
+            
+    return curr_wins / num_games
 
 def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num_simulations=400, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False):
     import os
@@ -645,10 +719,17 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
         
         # Self-play step
         epoch_examples = []
+        epoch_mcts_evals = []
+
+        # Clone the model at start of epoch to act as previous checkpoint reference
+        prev_model = QuoridorNet(num_residual_blocks=10, channels=128)
+        prev_model.load_state_dict(copy.deepcopy(model.state_dict()))
+
         for g in range(games_per_epoch):
             _METRICS['game_idx'] = g + 1
-            game_data, winner = self_play_game(model, epoch, num_simulations=num_simulations, visualize=visualize)
+            game_data, winner, mcts_evals = self_play_game(model, epoch, num_simulations=num_simulations, visualize=visualize)
             epoch_examples.extend(game_data)
+            epoch_mcts_evals.extend(mcts_evals)
             
             # Increment outcome metrics
             if winner == 1:
@@ -720,7 +801,23 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
         _METRICS['entropy'] = epoch_entropy / max(1, num_batches)
         _METRICS['lr'] = current_lr
         
-        print(f"  Training Summary: Policy Loss = {_METRICS['policy_loss']:.4f}, Value Loss = {_METRICS['value_loss']:.4f}, Policy Entropy = {_METRICS['entropy']:.4f}, LR = {_METRICS['lr']:.6f}")
+        # Calculate new metrics
+        avg_eval = np.mean(epoch_mcts_evals) if epoch_mcts_evals else 0.0
+        avg_abs_eval = np.mean(np.abs(epoch_mcts_evals)) if epoch_mcts_evals else 0.0
+        _METRICS['avg_mcts_eval'] = float(avg_eval)
+        _METRICS['avg_abs_mcts_eval'] = float(avg_abs_eval)
+        
+        print("  Evaluating model against previous checkpoint...")
+        win_rate = play_evaluation_match(model, prev_model, num_simulations=100, num_games=4)
+        _METRICS['win_rate_vs_prev'] = win_rate
+        
+        print(f"  Training Summary: Policy Loss = {_METRICS['policy_loss']:.4f}, Value Loss = {_METRICS['value_loss']:.4f}, Policy Entropy = {_METRICS['entropy']:.4f}, LR = {_METRICS['lr']:.6f}, Avg MCTS Eval = {avg_eval:.4f}, Mean(|Q|) = {avg_abs_eval:.4f}, Win Rate vs Prev = {win_rate*100:.1f}%")
+        
+        try:
+            dummy_game = QuoridorGame()
+            write_training_state(dummy_game, 0, '-', 'epoch_complete', f'Epoch {epoch+1} finished')
+        except Exception:
+            pass
         
         # Save checkpoint after each epoch to allow pausing and resuming
         try:
