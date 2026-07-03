@@ -400,15 +400,7 @@ class MCTS:
                 policy = torch.softmax(logits, dim=1).squeeze(0).cpu().numpy()
                 net_value = value_tensor.item()
 
-            if epoch is not None:
-                # alpha ranges from 0.5 (heavy heuristic guidance) to 1.0 (pure network) over 20 epochs
-                alpha = min(1.0, 0.5 + 0.5 * (epoch / 20.0))
-                h_val = node.game_state.evaluate_heuristic()
-                if not node.game_state.is_p1_turn:
-                    h_val = -h_val
-                value = alpha * net_value + (1.0 - alpha) * h_val
-            else:
-                value = net_value
+            value = net_value
 
             valid_actions = node.game_state.get_valid_actions()
             valid_action_indices = [map_action_to_index_perspective(act, node.game_state.is_p1_turn) for act in valid_actions]
