@@ -346,6 +346,7 @@ class MCTSNode:
         self.N = 0 # Visit count
         self.W = 0.0 # Total value
         self.Q = 0.0 # Action value
+        self.valid_actions = None  # Cached after first expansion
 
     def is_leaf(self):
         return len(self.children) == 0
@@ -407,6 +408,7 @@ class MCTS:
             value = net_value
 
             valid_actions = node.game_state.get_valid_actions()
+            node.valid_actions = valid_actions  # Cache for reuse by caller
             valid_action_indices = [map_action_to_index_perspective(act, node.game_state.is_p1_turn) for act in valid_actions]
 
             # Mask invalid actions
@@ -523,16 +525,16 @@ def self_play_game(model, epoch, num_simulations=40, visualize=False):
 
         action_idx = np.random.choice(NUM_ACTIONS, p=policy_probs)
 
-        # Apply move in the game simulator
-        valid_actions = game.get_valid_actions()
+        # Reuse valid_actions cached on root during MCTS expansion — avoids redundant BFS
+        cached_actions = root.valid_actions if root.valid_actions is not None else game.get_valid_actions()
         action_obj = None
-        for act in valid_actions:
+        for act in cached_actions:
             if map_action_to_index_perspective(act, game.is_p1_turn) == action_idx:
                 action_obj = act
                 break
-                
+
         if action_obj is None:
-            action_obj = random.choice(valid_actions)
+            action_obj = random.choice(cached_actions)
 
         # Record active player name before turn transitions
         active_player = "P1" if game.is_p1_turn else "P2"
