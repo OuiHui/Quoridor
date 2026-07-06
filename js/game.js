@@ -204,7 +204,6 @@ export function executePawnMove(x, y) {
     playSound('move');
     
     state.turn = state.turn === 1 ? 2 : 1;
-    state.interactionMode = 'move';
     
     updatePawnPositions();
     updateUI();
@@ -243,7 +242,6 @@ export function executeWallPlacement(x, y, wallType) {
     analyzePlacedWallEfficiency(x, y, wallType, player);
     
     state.turn = state.turn === 1 ? 2 : 1;
-    state.interactionMode = 'move';
     
     renderPlacedWalls();
     updateUI();
@@ -288,7 +286,6 @@ export function undoMove() {
     }
     
     state.turn = last.player;
-    state.interactionMode = 'move';
     
     logAction(`Undid last move: ${last.type === 'move' ? 'Pawn move' : 'Wall placement'}`, 'system');
     playSound('move');

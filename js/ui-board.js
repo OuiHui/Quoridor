@@ -49,7 +49,7 @@ export function renderPlacedWalls() {
 }
 
 // Initial Board Generator
-export function renderBoard({ onCellClick, onEdgeMouseMove, onEdgeMouseLeave, onEdgeClick, onJointMouseMove, onJointMouseLeave, onJointClick }) {
+export function renderBoard({ onCellClick, onCellMouseEnter, onEdgeMouseMove, onEdgeMouseLeave, onEdgeClick, onJointMouseMove, onJointMouseLeave, onJointClick }) {
     const boardEl = document.getElementById('board');
     boardEl.innerHTML = '';
     
@@ -64,6 +64,7 @@ export function renderBoard({ onCellClick, onEdgeMouseMove, onEdgeMouseLeave, on
             cell.style.gridRow = `${17 - 2 * y}`;
             
             cell.addEventListener('click', () => onCellClick(x, y));
+            cell.addEventListener('mouseenter', () => onCellMouseEnter(x, y));
             
             boardEl.appendChild(cell);
         }

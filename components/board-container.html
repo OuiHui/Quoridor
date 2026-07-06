@@ -37,19 +37,6 @@
     </div>
 </div>
 
-<!-- Action Selection Bar -->
-<div class="action-selection-bar" id="action-selection-bar">
-    <button class="action-btn active" id="btn-mode-move" data-action="move">
-        <span class="action-icon">♟</span> Move Pawn
-    </button>
-    <button class="action-btn" id="btn-mode-wall-h" data-action="wall-h">
-        <span class="action-icon icon-wall-h"></span> Horizontal Barrier
-    </button>
-    <button class="action-btn" id="btn-mode-wall-v" data-action="wall-v">
-        <span class="action-icon icon-wall-v"></span> Vertical Barrier
-    </button>
-</div>
-
 <!-- The Board Wrapper -->
 <div class="board-wrapper">
     <div class="coord-label-x">
@@ -66,11 +53,11 @@
             <div class="eval-bar-label eval-bar-label-p1" id="eval-label-p1">P1</div>
             <div class="eval-score-container">
                 <div class="eval-score-bubble" id="eval-score-bubble">
-                    <span class="eval-score-value" id="eval-score-value">0.0</span>
-                    <span class="eval-score-unit">pts</span>
+                     <span class="eval-score-value" id="eval-score-value">0.0</span>
+                     <span class="eval-score-unit">pts</span>
                 </div>
                 <div class="eval-move-badge hidden" id="eval-move-badge">
-                    <span id="eval-move-badge-text">Optimal</span>
+                     <span id="eval-move-badge-text">Optimal</span>
                 </div>
             </div>
         </div>
@@ -88,6 +75,19 @@
     <div class="coord-label-x bottom-x">
         <span>A</span><span>B</span><span>C</span><span>D</span><span>E</span><span>F</span><span>G</span><span>H</span><span>I</span>
     </div>
+</div>
+
+<!-- Action Selection Bar -->
+<div class="action-selection-bar" id="action-selection-bar">
+    <button class="action-btn active" id="btn-mode-move" data-action="move">
+        <span class="action-icon">♟</span> Move Pawn
+    </button>
+    <button class="action-btn" id="btn-mode-wall-h" data-action="wall-h">
+        <span class="action-icon icon-wall-h"></span> Horizontal Barrier
+    </button>
+    <button class="action-btn" id="btn-mode-wall-v" data-action="wall-v">
+        <span class="action-icon icon-wall-v"></span> Vertical Barrier
+    </button>
 </div>
 
 <!-- Quick Board Controls -->

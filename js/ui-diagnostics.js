@@ -356,6 +356,11 @@ export function updateActionBarUI() {
 
     if (!btnMove || !btnWallH || !btnWallV) return;
 
+    const wallsLeft = state.turn === 1 ? state.p1Walls : state.p2Walls;
+    if (wallsLeft <= 0 && state.interactionMode !== 'move') {
+        state.interactionMode = 'move';
+    }
+
     btnMove.classList.remove('active');
     btnWallH.classList.remove('active');
     btnWallV.classList.remove('active');
@@ -374,8 +379,6 @@ export function updateActionBarUI() {
     const isPlaybookViewing = state.activePlaybook !== null && !state.playbookPracticeMode;
     const isLocked = isAITurn || isPlaybookViewing || state.trainingWatchActive;
 
-    const wallsLeft = state.turn === 1 ? state.p1Walls : state.p2Walls;
-
     btnMove.disabled = isLocked;
     btnWallH.disabled = isLocked || (wallsLeft <= 0);
     btnWallV.disabled = isLocked || (wallsLeft <= 0);
@@ -383,6 +386,9 @@ export function updateActionBarUI() {
 
 // UI update sequence for turn indicators, badges, diagnostic logs, and path highlights
 export function updateUI() {
+    state.keyboardSelectedCell = null;
+    document.querySelectorAll('.board-cell.keyboard-highlight').forEach(c => c.classList.remove('keyboard-highlight'));
+
     updateActionBarUI();
     const boardEl = document.getElementById('board');
     if (boardEl) {
