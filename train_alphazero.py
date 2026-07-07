@@ -8,8 +8,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.multiprocessing as mp
 from collections import deque
 from quoridor_model import QuoridorNet, encode_state, flip_horizontal_state, flip_horizontal_policy, map_action_to_index, map_action_to_index_perspective, map_index_to_action_perspective, export_to_onnx, NUM_ACTIONS
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Path to JSON state file served by Vite dev server
 _STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'training_state.json')
@@ -392,13 +395,14 @@ class MCTS:
             # Tensorize board state
             p1_path = node.game_state.get_shortest_path(node.game_state.p1_pos, 8, opp_pos=node.game_state.p2_pos)
             p2_path = node.game_state.get_shortest_path(node.game_state.p2_pos, 0, opp_pos=node.game_state.p1_pos)
+            device = next(self.model.parameters()).device
             state_tensor = encode_state(
                 node.game_state.p1_pos, node.game_state.p2_pos,
                 node.game_state.h_walls, node.game_state.v_walls,
                 p1_path, p2_path,
                 node.game_state.p1_walls_left, node.game_state.p2_walls_left,
                 node.game_state.is_p1_turn
-            ).unsqueeze(0)
+            ).unsqueeze(0).to(device)
 
             with torch.no_grad():
                 logits, value_tensor = self.model(state_tensor)
@@ -676,9 +680,29 @@ def play_evaluation_match(model_current, model_previous, num_simulations=100, nu
             
     return curr_wins / num_games
 
-def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num_simulations=400, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False):
-    import os
+def self_play_single_game_worker(args):
+    """
+    Worker function for parallel self-play.
+    args is a tuple: (model_state_dict, epoch, num_simulations, game_id, visualize)
+    """
+    model_state_dict, epoch, num_simulations, game_id, visualize = args
+    
+    # Disable gradient calculation for worker process
+    torch.set_grad_enabled(False)
+    
+    # Instantiate clean model on CPU for worker self-play
     model = QuoridorNet(num_residual_blocks=10, channels=128)
+    model.load_state_dict(model_state_dict)
+    model.eval()
+    
+    game_data, winner, mcts_evals = self_play_game(
+        model, epoch, num_simulations=num_simulations, visualize=visualize
+    )
+    return game_data, winner, mcts_evals, game_id
+
+def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num_simulations=400, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, num_workers=1):
+    import os
+    model = QuoridorNet(num_residual_blocks=10, channels=128).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     # LR halved every 15 epochs
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
@@ -688,7 +712,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
     
     if os.path.exists(checkpoint_path):
         try:
-            checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=False)
+            checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
             model.load_state_dict(checkpoint['model_state_dict'])
             if not reset_lr:
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -724,34 +748,75 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
         epoch_mcts_evals = []
 
         # Clone the model at start of epoch to act as previous checkpoint reference
-        prev_model = QuoridorNet(num_residual_blocks=10, channels=128)
+        prev_model = QuoridorNet(num_residual_blocks=10, channels=128).to(DEVICE)
         prev_model.load_state_dict(copy.deepcopy(model.state_dict()))
 
-        for g in range(games_per_epoch):
-            _METRICS['game_idx'] = g + 1
-            game_data, winner, mcts_evals = self_play_game(model, epoch, num_simulations=num_simulations, visualize=visualize)
-            epoch_examples.extend(game_data)
-            epoch_mcts_evals.extend(mcts_evals)
+        # Determine effective visualization and worker count
+        run_visualize = visualize
+        run_workers = num_workers
+        if visualize and num_workers > 1:
+            print("  Note: Visualization is enabled, disabling parallel self-play (setting workers to 1).")
+            run_workers = 1
+
+        if run_workers > 1:
+            # CPU state dict for workers to load
+            model_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
             
-            # Increment outcome metrics
-            if winner == 1:
-                _METRICS['p1_wins'] += 1
-            elif winner == -1:
-                _METRICS['p2_wins'] += 1
-            else:
-                _METRICS['draws'] += 1
+            # Start process pool using mp context
+            ctx = mp.get_context("spawn")
+            with ctx.Pool(processes=run_workers) as pool:
+                worker_args = [
+                    (model_state_dict, epoch, num_simulations, g + 1, False)
+                    for g in range(games_per_epoch)
+                ]
                 
-            print(f"  Self-play Game {g+1}/{games_per_epoch} finished ({len(game_data)} steps)")
-            
-            # Save game data to disk for organization
-            game_epoch_dir = os.path.join(data_dir, f"epoch_{epoch+1:03d}")
-            os.makedirs(game_epoch_dir, exist_ok=True)
-            game_file = os.path.join(game_epoch_dir, f"game_{g+1:03d}.pt")
-            try:
-                torch.save(game_data, game_file)
-            except Exception as e:
-                print(f"  Warning: Failed to save game data to {game_file}: {e}")
-            
+                # Consume parallel game jobs as they finish
+                for game_data, winner, mcts_evals, game_id in pool.imap_unordered(self_play_single_game_worker, worker_args):
+                    epoch_examples.extend(game_data)
+                    epoch_mcts_evals.extend(mcts_evals)
+                    
+                    if winner == 1:
+                        _METRICS['p1_wins'] += 1
+                    elif winner == -1:
+                        _METRICS['p2_wins'] += 1
+                    else:
+                        _METRICS['draws'] += 1
+                        
+                    print(f"  Self-play Game {game_id}/{games_per_epoch} finished ({len(game_data)} steps) [Parallel]")
+                    
+                    # Save game data to disk for organization
+                    game_epoch_dir = os.path.join(data_dir, f"epoch_{epoch+1:03d}")
+                    os.makedirs(game_epoch_dir, exist_ok=True)
+                    game_file = os.path.join(game_epoch_dir, f"game_{game_id:03d}.pt")
+                    try:
+                        torch.save(game_data, game_file)
+                    except Exception as e:
+                        print(f"  Warning: Failed to save game data to {game_file}: {e}")
+        else:
+            # Sequential self-play
+            for g in range(games_per_epoch):
+                _METRICS['game_idx'] = g + 1
+                game_data, winner, mcts_evals = self_play_game(model, epoch, num_simulations=num_simulations, visualize=run_visualize)
+                epoch_examples.extend(game_data)
+                epoch_mcts_evals.extend(mcts_evals)
+                
+                if winner == 1:
+                    _METRICS['p1_wins'] += 1
+                elif winner == -1:
+                    _METRICS['p2_wins'] += 1
+                else:
+                    _METRICS['draws'] += 1
+                    
+                print(f"  Self-play Game {g+1}/{games_per_epoch} finished ({len(game_data)} steps)")
+                
+                game_epoch_dir = os.path.join(data_dir, f"epoch_{epoch+1:03d}")
+                os.makedirs(game_epoch_dir, exist_ok=True)
+                game_file = os.path.join(game_epoch_dir, f"game_{g+1:03d}.pt")
+                try:
+                    torch.save(game_data, game_file)
+                except Exception as e:
+                    print(f"  Warning: Failed to save game data to {game_file}: {e}")
+
         dataset.extend(epoch_examples)
         # Keep dataset capped to recent experiences
         if len(dataset) > dataset_size:
@@ -769,9 +834,9 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
             batch = dataset[b*batch_size : (b+1)*batch_size]
             if not batch:
                 continue
-            states = torch.stack([x[0] for x in batch])
-            target_policies = torch.tensor(np.array([x[1] for x in batch]), dtype=torch.float32)
-            target_values = torch.tensor(np.array([x[2] for x in batch]), dtype=torch.float32).unsqueeze(1)
+            states = torch.stack([x[0] for x in batch]).to(DEVICE)
+            target_policies = torch.tensor(np.array([x[1] for x in batch]), dtype=torch.float32).to(DEVICE)
+            target_values = torch.tensor(np.array([x[2] for x in batch]), dtype=torch.float32).unsqueeze(1).to(DEVICE)
             
             optimizer.zero_grad()
             logits, values = model(states)
@@ -850,6 +915,9 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_path", type=str, default="quoridor_checkpoint.pth", help="Path to checkpoint file")
     parser.add_argument("--visualize", "-v", action="store_true", help="Visualize self-play games in terminal")
     parser.add_argument("--reset_lr", action="store_true", help="Reset LR and scheduler instead of loading from checkpoint")
+    
+    default_workers = max(1, os.cpu_count() - 2)
+    parser.add_argument("--num_workers", type=int, default=default_workers, help=f"Number of parallel self-play workers (default: {default_workers})")
     args = parser.parse_args()
 
     train_alphazero(
@@ -863,4 +931,5 @@ if __name__ == "__main__":
         checkpoint_path=args.checkpoint_path,
         visualize=args.visualize,
         reset_lr=args.reset_lr,
+        num_workers=args.num_workers,
     )
