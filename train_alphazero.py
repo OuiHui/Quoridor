@@ -581,13 +581,21 @@ def self_play_game(model, epoch, num_simulations=40, visualize=False):
 
     return training_examples, winner, mcts_evals
 
-def load_dataset_from_disk(data_dir="data", max_positions=20000):
+def load_dataset_from_disk(data_dir="data", max_positions=20000, exclude_epoch_or_later=None):
     if not os.path.exists(data_dir):
         return []
     
     # Find all .pt files recursively
     pt_files = []
     for root_dir, _, files in os.walk(data_dir):
+        folder_name = os.path.basename(root_dir)
+        if folder_name.startswith("epoch_"):
+            try:
+                epoch_num = int(folder_name.split("_")[1])
+                if exclude_epoch_or_later is not None and epoch_num >= exclude_epoch_or_later:
+                    continue
+            except (ValueError, IndexError):
+                pass
         for f in files:
             if f.endswith('.pt'):
                 pt_files.append(os.path.join(root_dir, f))
@@ -658,7 +666,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
             print(f"Failed to load checkpoint ({e}). Starting from scratch.")
             
     # Load dataset from data directory, falling back to checkpoint if folder is empty/missing
-    dataset = load_dataset_from_disk(data_dir, dataset_size)
+    dataset = load_dataset_from_disk(data_dir, dataset_size, exclude_epoch_or_later=start_epoch + 1)
     if not dataset and os.path.exists(checkpoint_path):
         try:
             checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=False)
@@ -687,20 +695,75 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
             print("  Note: Visualization is enabled, disabling parallel self-play (setting workers to 1).")
             run_workers = 1
 
+        game_epoch_dir = os.path.join(data_dir, f"epoch_{epoch+1:03d}")
         if run_workers > 1:
             # CPU state dict for workers to load
             model_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
             
-            # Start process pool using mp context
-            ctx = mp.get_context("spawn")
-            with ctx.Pool(processes=run_workers) as pool:
-                worker_args = [
-                    (model_state_dict, epoch, num_simulations, g + 1, False)
-                    for g in range(games_per_epoch)
-                ]
+            # Determine which games need to be run vs loaded from disk
+            games_to_run = []
+            for g in range(games_per_epoch):
+                game_file = os.path.join(game_epoch_dir, f"game_{g+1:03d}.pt")
+                loaded_examples = None
+                if os.path.exists(game_file):
+                    try:
+                        loaded_examples = torch.load(game_file, map_location=torch.device('cpu'), weights_only=False)
+                        epoch_examples.extend(loaded_examples)
+                        print(f"  Self-play Game {g+1}/{games_per_epoch} loaded from disk (resumed)")
+                    except Exception:
+                        pass
                 
-                # Consume parallel game jobs as they finish
-                for game_data, winner, mcts_evals, game_id in pool.imap_unordered(self_play_single_game_worker, worker_args):
+                if loaded_examples is None:
+                    games_to_run.append(g + 1)
+            
+            if games_to_run:
+                # Start process pool using mp context
+                ctx = mp.get_context("spawn")
+                with ctx.Pool(processes=run_workers) as pool:
+                    worker_args = [
+                        (model_state_dict, epoch, num_simulations, game_id, False)
+                        for game_id in games_to_run
+                    ]
+                    
+                    # Consume parallel game jobs as they finish
+                    for game_data, winner, mcts_evals, game_id in pool.imap_unordered(self_play_single_game_worker, worker_args):
+                        epoch_examples.extend(game_data)
+                        epoch_mcts_evals.extend(mcts_evals)
+                        
+                        if winner == 1:
+                            _METRICS['p1_wins'] += 1
+                        elif winner == -1:
+                            _METRICS['p2_wins'] += 1
+                        else:
+                            _METRICS['draws'] += 1
+                            
+                        print(f"  Self-play Game {game_id}/{games_per_epoch} finished ({len(game_data)} steps) [Parallel]")
+                        
+                        # Save game data to disk for organization
+                        os.makedirs(game_epoch_dir, exist_ok=True)
+                        game_file = os.path.join(game_epoch_dir, f"game_{game_id:03d}.pt")
+                        try:
+                            torch.save(game_data, game_file)
+                        except Exception as e:
+                            print(f"  Warning: Failed to save game data to {game_file}: {e}")
+        else:
+            # Sequential self-play
+            for g in range(games_per_epoch):
+                _METRICS['game_idx'] = g + 1
+                
+                # Check if game is already on disk
+                game_file = os.path.join(game_epoch_dir, f"game_{g+1:03d}.pt")
+                loaded_examples = None
+                if os.path.exists(game_file):
+                    try:
+                        loaded_examples = torch.load(game_file, map_location=torch.device('cpu'), weights_only=False)
+                        epoch_examples.extend(loaded_examples)
+                        print(f"  Self-play Game {g+1}/{games_per_epoch} loaded from disk (resumed)")
+                    except Exception:
+                        pass
+                
+                if loaded_examples is None:
+                    game_data, winner, mcts_evals = self_play_game(model, epoch, num_simulations=num_simulations, visualize=run_visualize)
                     epoch_examples.extend(game_data)
                     epoch_mcts_evals.extend(mcts_evals)
                     
@@ -711,40 +774,13 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
                     else:
                         _METRICS['draws'] += 1
                         
-                    print(f"  Self-play Game {game_id}/{games_per_epoch} finished ({len(game_data)} steps) [Parallel]")
+                    print(f"  Self-play Game {g+1}/{games_per_epoch} finished ({len(game_data)} steps)")
                     
-                    # Save game data to disk for organization
-                    game_epoch_dir = os.path.join(data_dir, f"epoch_{epoch+1:03d}")
                     os.makedirs(game_epoch_dir, exist_ok=True)
-                    game_file = os.path.join(game_epoch_dir, f"game_{game_id:03d}.pt")
                     try:
                         torch.save(game_data, game_file)
                     except Exception as e:
                         print(f"  Warning: Failed to save game data to {game_file}: {e}")
-        else:
-            # Sequential self-play
-            for g in range(games_per_epoch):
-                _METRICS['game_idx'] = g + 1
-                game_data, winner, mcts_evals = self_play_game(model, epoch, num_simulations=num_simulations, visualize=run_visualize)
-                epoch_examples.extend(game_data)
-                epoch_mcts_evals.extend(mcts_evals)
-                
-                if winner == 1:
-                    _METRICS['p1_wins'] += 1
-                elif winner == -1:
-                    _METRICS['p2_wins'] += 1
-                else:
-                    _METRICS['draws'] += 1
-                    
-                print(f"  Self-play Game {g+1}/{games_per_epoch} finished ({len(game_data)} steps)")
-                
-                game_epoch_dir = os.path.join(data_dir, f"epoch_{epoch+1:03d}")
-                os.makedirs(game_epoch_dir, exist_ok=True)
-                game_file = os.path.join(game_epoch_dir, f"game_{g+1:03d}.pt")
-                try:
-                    torch.save(game_data, game_file)
-                except Exception as e:
-                    print(f"  Warning: Failed to save game data to {game_file}: {e}")
 
         dataset.extend(epoch_examples)
         # Keep dataset capped to recent experiences
