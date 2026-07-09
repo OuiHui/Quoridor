@@ -641,7 +641,7 @@ def self_play_single_game_worker(args):
     )
     return game_data, winner, mcts_evals, game_id
 
-def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num_simulations=400, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, num_workers=1):
+def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num_simulations=400, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, num_workers=1, no_multithreading=False):
     import os
     model = QuoridorNet(num_residual_blocks=10, channels=128).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -691,7 +691,11 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
         # Determine effective visualization and worker count
         run_visualize = visualize
         run_workers = num_workers
-        if visualize and num_workers > 1:
+        if no_multithreading:
+            print("  Multithreading/multiprocessing disabled: setting workers to 1 and PyTorch threads to 1.")
+            run_workers = 1
+            torch.set_num_threads(1)
+        elif visualize and num_workers > 1:
             print("  Note: Visualization is enabled, disabling parallel self-play (setting workers to 1).")
             run_workers = 1
 
@@ -876,6 +880,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_path", type=str, default="quoridor_checkpoint.pth", help="Path to checkpoint file")
     parser.add_argument("--visualize", "-v", action="store_true", help="Visualize self-play games in terminal")
     parser.add_argument("--reset_lr", action="store_true", help="Reset LR and scheduler instead of loading from checkpoint")
+    parser.add_argument("--no_multithreading", action="store_true", help="Disable parallel self-play/multiprocessing and limit PyTorch to a single thread")
     
     default_workers = max(1, os.cpu_count() - 2)
     parser.add_argument("--num_workers", type=int, default=default_workers, help=f"Number of parallel self-play workers (default: {default_workers})")
@@ -893,4 +898,5 @@ if __name__ == "__main__":
         visualize=args.visualize,
         reset_lr=args.reset_lr,
         num_workers=args.num_workers,
+        no_multithreading=args.no_multithreading,
     )
