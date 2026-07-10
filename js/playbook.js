@@ -30,6 +30,9 @@ export function initPlaybook(actions) {
     const practiceBtn = document.getElementById('pb-practice');
     if (practiceBtn) practiceBtn.addEventListener('click', togglePlaybookPractice);
 
+    const deactivateBtn = document.getElementById('pb-deactivate');
+    if (deactivateBtn) deactivateBtn.addEventListener('click', exitPlaybookMode);
+
     const toggleCollapseBtn = document.getElementById('pb-toggle-collapse');
     const leftPanel = document.querySelector('.left-panel');
     const collapsedTitle = document.getElementById('pb-collapsed-title');
@@ -59,12 +62,29 @@ export function loadPlaybook(key) {
         document.getElementById('playbook-empty').classList.remove('hidden');
         const boardEl = document.getElementById('board');
         if (boardEl) boardEl.classList.remove('playbook-locked');
+        if (boardActions && boardActions.clearLogs) {
+            boardActions.clearLogs();
+        }
+
+        const headerTitle = document.getElementById('logs-header-title');
+        if (headerTitle) headerTitle.textContent = "Match History";
+        const gameLogs = document.getElementById('game-logs');
+        if (gameLogs) gameLogs.classList.remove('hidden');
+        const pbMovesList = document.getElementById('playbook-moves-list');
+        if (pbMovesList) pbMovesList.classList.add('hidden');
         return;
     }
     
     state.activePlaybook = PLAYBOOK_DATA[key];
     state.playbookStep = 0;
     state.playbookPracticeMode = false;
+
+    const headerTitle = document.getElementById('logs-header-title');
+    if (headerTitle) headerTitle.textContent = "Playbook Sequence";
+    const gameLogs = document.getElementById('game-logs');
+    if (gameLogs) gameLogs.classList.add('hidden');
+    const pbMovesList = document.getElementById('playbook-moves-list');
+    if (pbMovesList) pbMovesList.classList.remove('hidden');
     
     // UI details
     document.getElementById('playbook-empty').classList.add('hidden');
@@ -84,10 +104,11 @@ export function loadPlaybook(key) {
     
     state.activePlaybook.moves.forEach((mv, index) => {
         const item = document.createElement('div');
-        item.className = 'pb-move-item';
+        const playerNum = index % 2 === 0 ? 1 : 2;
+        item.className = `pb-move-item pb-move-p${playerNum}`;
         item.dataset.index = index;
         item.innerHTML = `
-            <span>${index + 1}. Player ${index % 2 === 0 ? 1 : 2} (${mv.notation})</span>
+            <span>${index + 1}. Player ${playerNum} (${mv.notation})</span>
             <span style="font-size:0.7rem; color:var(--color-text-muted)">Info</span>
         `;
         item.addEventListener('click', () => jumpToPlaybookStep(index + 1));
@@ -426,4 +447,12 @@ export function exitPlaybookMode() {
         const autoplayBtn = document.getElementById('pb-autoplay');
         if (autoplayBtn) autoplayBtn.textContent = "Auto Play";
     }
+
+    // Restore Match History UI
+    const headerTitle = document.getElementById('logs-header-title');
+    if (headerTitle) headerTitle.textContent = "Match History";
+    const gameLogs = document.getElementById('game-logs');
+    if (gameLogs) gameLogs.classList.remove('hidden');
+    const pbMovesList = document.getElementById('playbook-moves-list');
+    if (pbMovesList) pbMovesList.classList.add('hidden');
 }

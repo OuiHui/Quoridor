@@ -9,9 +9,16 @@ import { renderHints, clearHints } from './ui-hints.js';
 export function logAction(text, type) {
     const logsContainer = document.getElementById('game-logs');
     if (!logsContainer) return;
+
+    let displayText = text;
+    const colonIndex = text.indexOf(':');
+    if (colonIndex !== -1) {
+        displayText = text.substring(colonIndex + 1).trim();
+    }
+
     const log = document.createElement('div');
     log.className = `log-entry ${type}-log`;
-    log.textContent = text;
+    log.textContent = displayText;
     logsContainer.appendChild(log);
     logsContainer.scrollTop = logsContainer.scrollHeight;
 }
@@ -427,13 +434,17 @@ export function updateUI() {
     document.getElementById('p1-path-len').textContent = p1Len === Infinity ? 'Blocked' : p1Len;
     document.getElementById('p2-path-len').textContent = p2Len === Infinity ? 'Blocked' : p2Len;
 
-    document.getElementById('diag-p1-dist').textContent = p1Len;
-    document.getElementById('diag-p2-dist').textContent = p2Len;
+    const diagP1 = document.getElementById('diag-p1-dist');
+    if (diagP1) diagP1.textContent = p1Len;
+    const diagP2 = document.getElementById('diag-p2-dist');
+    if (diagP2) diagP2.textContent = p2Len;
 
     const tempoDiff = p2Len - p1Len;
     const tempoEl = document.getElementById('diag-tempo-diff');
-    tempoEl.textContent = tempoDiff > 0 ? `+${tempoDiff} P1` : tempoDiff < 0 ? `${tempoDiff} P2` : '0 (Equal)';
-    tempoEl.style.color = tempoDiff > 0 ? 'var(--color-p1)' : tempoDiff < 0 ? 'var(--color-p2)' : 'var(--color-text-muted)';
+    if (tempoEl) {
+        tempoEl.textContent = tempoDiff > 0 ? `+${tempoDiff} P1` : tempoDiff < 0 ? `${tempoDiff} P2` : '0 (Equal)';
+        tempoEl.style.color = tempoDiff > 0 ? 'var(--color-p1)' : tempoDiff < 0 ? 'var(--color-p2)' : 'var(--color-text-muted)';
+    }
 
     document.querySelectorAll('.board-cell').forEach(cell => {
         cell.classList.remove('valid-move', 'p1-path', 'p2-path');
@@ -504,7 +515,7 @@ export function updateUI() {
 // Diagnostics helper showing path length changes for placed wall
 export function analyzePlacedWallEfficiency(x, y, type, playerWhoPlaced) {
     const readout = document.getElementById('efficiency-readout');
-    const analyzerPanel = document.querySelector('.efficiency-analyzer');
+    const analyzerPanel = document.querySelector('.diagnostics-panel');
     if (!readout || !analyzerPanel) return;
 
     const wallKey = `${x},${y}`;
@@ -559,7 +570,7 @@ export function analyzePlacedWallEfficiency(x, y, type, playerWhoPlaced) {
 }
 
 export function hideWallAnalyzer() {
-    const analyzerPanel = document.querySelector('.efficiency-analyzer');
+    const analyzerPanel = document.querySelector('.diagnostics-panel');
     if (analyzerPanel) {
         analyzerPanel.classList.add('hidden');
     }

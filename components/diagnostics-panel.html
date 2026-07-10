@@ -36,26 +36,9 @@
     </div>
 
     <!-- PERFORMANCE/DIAGNOSTICS ANALYZER -->
-    <div class="control-group diagnostics-panel">
-        <h3>Performance Diagnostics</h3>
-
-        <div class="diagnostics-row">
-            <div class="diag-metric">
-                <span class="diag-label">P1 Distance</span>
-                <span class="diag-val cyan-text" id="diag-p1-dist">8</span>
-            </div>
-            <div class="diag-metric">
-                <span class="diag-label">P2 Distance</span>
-                <span class="diag-val amber-text" id="diag-p2-dist">8</span>
-            </div>
-            <div class="diag-metric">
-                <span class="diag-label">Tempo Diff</span>
-                <span class="diag-val" id="diag-tempo-diff">0</span>
-            </div>
-        </div>
-
+    <div class="control-group diagnostics-panel hidden">
         <!-- WALL EFFICIENCY PANEL -->
-        <div class="efficiency-analyzer hidden">
+        <div class="efficiency-analyzer">
             <h4>Wall Placement Analyzer</h4>
             <div class="efficiency-content" id="efficiency-readout">
                 <p class="muted">Hover a wall location on the board to analyze its blocking impact before placing.</p>
@@ -65,10 +48,13 @@
 
     <!-- MOVES LOG -->
     <div class="control-group logs-group">
-        <h3>Match History</h3>
+        <h3 id="logs-header-title">Match History</h3>
         <div class="logs-container" id="game-logs">
             <!-- Populated dynamically -->
             <div class="log-entry system-log">Board initialized. Select Mode or Opening to begin.</div>
+        </div>
+        <div class="moves-list hidden" id="playbook-moves-list">
+            <!-- Populated dynamically -->
         </div>
     </div>
 </div>

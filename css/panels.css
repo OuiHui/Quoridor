@@ -53,9 +53,7 @@
     gap: 8px;
 }
 
-.playbook-controls #pb-reset {
-    grid-column: span 2;
-}
+
 
 .playbook-status-msg {
     font-size: 0.85rem;
@@ -115,6 +113,14 @@
 
 .pb-move-item:hover {
     background: rgba(255, 255, 255, 0.05);
+}
+
+.pb-move-item.pb-move-p1 {
+    color: var(--color-p1);
+}
+
+.pb-move-item.pb-move-p2 {
+    color: var(--color-p2);
 }
 
 .pb-move-item.active.active-p1 {
@@ -317,15 +323,23 @@
     color: var(--color-text-muted);
 }
 
+.right-panel .panel-body {
+    display: flex;
+    flex-direction: column;
+    overflow-y: hidden;
+}
+
 /* LOGS */
 .logs-group {
     flex-grow: 1;
     display: flex;
     flex-direction: column;
+    min-height: 0;
 }
 
 .logs-container {
-    height: 140px;
+    flex-grow: 1;
+    height: 0;
     overflow-y: auto;
     background: rgba(0, 0, 0, 0.3);
     border-radius: 8px;

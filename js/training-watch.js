@@ -84,8 +84,8 @@ function renderTrainingStateOnMainBoard(data) {
         const watchMove = document.getElementById('watch-move-count');
         const watchLast = document.getElementById('watch-last-move');
 
-        const p1Dist = document.getElementById('diag-p1-dist')?.textContent || '8';
-        const p2Dist = document.getElementById('diag-p2-dist')?.textContent || '8';
+        const p1Dist = document.getElementById('p1-path-len')?.textContent || '8';
+        const p2Dist = document.getElementById('p2-path-len')?.textContent || '8';
 
         if (watchP1) watchP1.textContent = p1Dist;
         if (watchP2) watchP2.textContent = p2Dist;
