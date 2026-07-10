@@ -8,7 +8,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.multiprocessing as mp
 from collections import deque
 from quoridor_model import QuoridorNet, encode_state, flip_horizontal_state, flip_horizontal_policy, map_action_to_index, map_action_to_index_perspective, map_index_to_action_perspective, export_to_onnx, NUM_ACTIONS
 
@@ -621,27 +620,7 @@ def load_dataset_from_disk(data_dir="data", max_positions=20000, exclude_epoch_o
 
 # play_evaluation_match removed to disable checking win rate vs previous model
 
-def self_play_single_game_worker(args):
-    """
-    Worker function for parallel self-play.
-    args is a tuple: (model_state_dict, epoch, num_simulations, game_id, visualize)
-    """
-    model_state_dict, epoch, num_simulations, game_id, visualize = args
-    
-    # Disable gradient calculation for worker process
-    torch.set_grad_enabled(False)
-    
-    # Instantiate clean model on CPU for worker self-play
-    model = QuoridorNet(num_residual_blocks=10, channels=128)
-    model.load_state_dict(model_state_dict)
-    model.eval()
-    
-    game_data, winner, mcts_evals = self_play_game(
-        model, epoch, num_simulations=num_simulations, visualize=visualize
-    )
-    return game_data, winner, mcts_evals, game_id
-
-def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num_simulations=400, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, num_workers=1, no_multithreading=False):
+def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num_simulations=400, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False):
     import os
     model = QuoridorNet(num_residual_blocks=10, channels=128).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -688,103 +667,40 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
         epoch_examples = []
         epoch_mcts_evals = []
 
-        # Determine effective visualization and worker count
-        run_visualize = visualize
-        run_workers = num_workers
-        if no_multithreading:
-            print("  Multithreading/multiprocessing disabled: setting workers to 1 and PyTorch threads to 1.")
-            run_workers = 1
-            torch.set_num_threads(1)
-        elif visualize and num_workers > 1:
-            print("  Note: Visualization is enabled, disabling parallel self-play (setting workers to 1).")
-            run_workers = 1
-
         game_epoch_dir = os.path.join(data_dir, f"epoch_{epoch+1:03d}")
-        if run_workers > 1:
-            # CPU state dict for workers to load
-            model_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
+        for g in range(games_per_epoch):
+            _METRICS['game_idx'] = g + 1
             
-            # Determine which games need to be run vs loaded from disk
-            games_to_run = []
-            for g in range(games_per_epoch):
-                game_file = os.path.join(game_epoch_dir, f"game_{g+1:03d}.pt")
-                loaded_examples = None
-                if os.path.exists(game_file):
-                    try:
-                        loaded_examples = torch.load(game_file, map_location=torch.device('cpu'), weights_only=False)
-                        epoch_examples.extend(loaded_examples)
-                        print(f"  Self-play Game {g+1}/{games_per_epoch} loaded from disk (resumed)")
-                    except Exception:
-                        pass
-                
-                if loaded_examples is None:
-                    games_to_run.append(g + 1)
+            # Check if game is already on disk
+            game_file = os.path.join(game_epoch_dir, f"game_{g+1:03d}.pt")
+            loaded_examples = None
+            if os.path.exists(game_file):
+                try:
+                    loaded_examples = torch.load(game_file, map_location=torch.device('cpu'), weights_only=False)
+                    epoch_examples.extend(loaded_examples)
+                    print(f"  Self-play Game {g+1}/{games_per_epoch} loaded from disk (resumed)")
+                except Exception:
+                    pass
             
-            if games_to_run:
-                # Start process pool using mp context
-                ctx = mp.get_context("spawn")
-                with ctx.Pool(processes=run_workers) as pool:
-                    worker_args = [
-                        (model_state_dict, epoch, num_simulations, game_id, False)
-                        for game_id in games_to_run
-                    ]
-                    
-                    # Consume parallel game jobs as they finish
-                    for game_data, winner, mcts_evals, game_id in pool.imap_unordered(self_play_single_game_worker, worker_args):
-                        epoch_examples.extend(game_data)
-                        epoch_mcts_evals.extend(mcts_evals)
-                        
-                        if winner == 1:
-                            _METRICS['p1_wins'] += 1
-                        elif winner == -1:
-                            _METRICS['p2_wins'] += 1
-                        else:
-                            _METRICS['draws'] += 1
-                            
-                        print(f"  Self-play Game {game_id}/{games_per_epoch} finished ({len(game_data)} steps) [Parallel]")
-                        
-                        # Save game data to disk for organization
-                        os.makedirs(game_epoch_dir, exist_ok=True)
-                        game_file = os.path.join(game_epoch_dir, f"game_{game_id:03d}.pt")
-                        try:
-                            torch.save(game_data, game_file)
-                        except Exception as e:
-                            print(f"  Warning: Failed to save game data to {game_file}: {e}")
-        else:
-            # Sequential self-play
-            for g in range(games_per_epoch):
-                _METRICS['game_idx'] = g + 1
+            if loaded_examples is None:
+                game_data, winner, mcts_evals = self_play_game(model, epoch, num_simulations=num_simulations, visualize=visualize)
+                epoch_examples.extend(game_data)
+                epoch_mcts_evals.extend(mcts_evals)
                 
-                # Check if game is already on disk
-                game_file = os.path.join(game_epoch_dir, f"game_{g+1:03d}.pt")
-                loaded_examples = None
-                if os.path.exists(game_file):
-                    try:
-                        loaded_examples = torch.load(game_file, map_location=torch.device('cpu'), weights_only=False)
-                        epoch_examples.extend(loaded_examples)
-                        print(f"  Self-play Game {g+1}/{games_per_epoch} loaded from disk (resumed)")
-                    except Exception:
-                        pass
+                if winner == 1:
+                    _METRICS['p1_wins'] += 1
+                elif winner == -1:
+                    _METRICS['p2_wins'] += 1
+                else:
+                    _METRICS['draws'] += 1
+                    
+                print(f"  Self-play Game {g+1}/{games_per_epoch} finished ({len(game_data)} steps)")
                 
-                if loaded_examples is None:
-                    game_data, winner, mcts_evals = self_play_game(model, epoch, num_simulations=num_simulations, visualize=run_visualize)
-                    epoch_examples.extend(game_data)
-                    epoch_mcts_evals.extend(mcts_evals)
-                    
-                    if winner == 1:
-                        _METRICS['p1_wins'] += 1
-                    elif winner == -1:
-                        _METRICS['p2_wins'] += 1
-                    else:
-                        _METRICS['draws'] += 1
-                        
-                    print(f"  Self-play Game {g+1}/{games_per_epoch} finished ({len(game_data)} steps)")
-                    
-                    os.makedirs(game_epoch_dir, exist_ok=True)
-                    try:
-                        torch.save(game_data, game_file)
-                    except Exception as e:
-                        print(f"  Warning: Failed to save game data to {game_file}: {e}")
+                os.makedirs(game_epoch_dir, exist_ok=True)
+                try:
+                    torch.save(game_data, game_file)
+                except Exception as e:
+                    print(f"  Warning: Failed to save game data to {game_file}: {e}")
 
         dataset.extend(epoch_examples)
         # Keep dataset capped to recent experiences
@@ -880,10 +796,6 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_path", type=str, default="quoridor_checkpoint.pth", help="Path to checkpoint file")
     parser.add_argument("--visualize", "-v", action="store_true", help="Visualize self-play games in terminal")
     parser.add_argument("--reset_lr", action="store_true", help="Reset LR and scheduler instead of loading from checkpoint")
-    parser.add_argument("--no_multithreading", action="store_true", help="Disable parallel self-play/multiprocessing and limit PyTorch to a single thread")
-    
-    default_workers = max(1, os.cpu_count() - 2)
-    parser.add_argument("--num_workers", type=int, default=default_workers, help=f"Number of parallel self-play workers (default: {default_workers})")
     args = parser.parse_args()
 
     train_alphazero(
@@ -897,6 +809,4 @@ if __name__ == "__main__":
         checkpoint_path=args.checkpoint_path,
         visualize=args.visualize,
         reset_lr=args.reset_lr,
-        num_workers=args.num_workers,
-        no_multithreading=args.no_multithreading,
     )

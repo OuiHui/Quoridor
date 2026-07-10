@@ -68,8 +68,6 @@ python train_alphazero.py --epochs 80 --games_per_epoch 30 --simulations 120 --d
 * `--dataset_size`: Maximum training positions stored in the replay buffer (default: `20000`).
 * `--data_dir`: Directory to save/load structured game files (default: `"data"`).
 * `--checkpoint_path`: Path to check-in/load weights (default: `"quoridor_checkpoint.pth"`).
-* `--num_workers`: Number of parallel self-play workers (default: `CPU cores - 2`).
-* `--no_multithreading`: Disable parallel self-play/multiprocessing and limit PyTorch to a single thread.
 
 ---
 
