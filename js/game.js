@@ -5,7 +5,7 @@ import { getValidPawnMoves, findShortestPath, validateWallPlacement } from './en
 import { makeAIMove, evaluateBoard, generateSmartMoves, minimax } from './ai.js';
 import { verifyPlaybookPracticeMove, exitPlaybookMode, updatePlaybookUI } from './playbook.js';
 import { updatePawnPositions, renderPlacedWalls } from './ui-board.js';
-import { updateUI, logAction, analyzePlacedWallEfficiency, hideWallAnalyzer, clearLogs, getBoardStateKey } from './ui-diagnostics.js';
+import { updateUI, logAction, analyzePlacedWallEfficiency, hideWallAnalyzer, clearLogs, removeLastLog, getBoardStateKey } from './ui-diagnostics.js';
 import { clearHints } from './ui-hints.js';
 
 function updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextEl) {
@@ -287,7 +287,7 @@ export function undoMove() {
     
     state.turn = last.player;
     
-    logAction(`Undid last move: ${last.type === 'move' ? 'Pawn move' : 'Wall placement'}`, 'system');
+    removeLastLog();
     playSound('move');
     
     updatePawnPositions();
@@ -336,7 +336,6 @@ export function resetGame() {
         updatePlaybookUI();
     }
     
-    logAction("Game reset. Board initialized.", "system");
     updateUI();
     
     if (state.gameMode === 'ai' && state.aiSettings.color === 'p1') {

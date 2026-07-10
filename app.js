@@ -18,11 +18,11 @@ import { state } from './js/state.js';
 import { playSound } from './js/sfx.js';
 import { validateWallPlacement, getValidPawnMoves } from './js/engine.js';
 import { getBestMoves } from './js/ai.js';
-import { initPlaybook } from './js/playbook.js';
+import { initPlaybook, playbookNextStep, playbookPrevStep } from './js/playbook.js';
 
 // Import UI Views
 import { renderBoard, updatePawnPositions, renderPlacedWalls } from './js/ui-board.js';
-import { updateUI, logAction } from './js/ui-diagnostics.js';
+import { updateUI, logAction, clearLogs } from './js/ui-diagnostics.js';
 import { renderHints, clearHints } from './js/ui-hints.js';
 import { initTrainingWatch, showTrainingWatch, hideTrainingWatch } from './js/training-watch.js';
 
@@ -281,7 +281,8 @@ function init() {
         resetBoardState,
         renderPlacedWalls,
         updatePawnPositions,
-        logAction
+        logAction,
+        clearLogs
     });
 
     // Wire up interaction mode buttons
@@ -578,6 +579,19 @@ function init() {
             ((state.turn === 1 && state.aiSettings.color === 'p1') ||
                 (state.turn === 2 && state.aiSettings.color === 'p2'));
         if (isAITurn) return;
+
+        if (state.activePlaybook) {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                playbookNextStep();
+                e.preventDefault();
+                return;
+            }
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                playbookPrevStep();
+                e.preventDefault();
+                return;
+            }
+        }
 
         const key = e.key.toLowerCase();
 

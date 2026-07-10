@@ -571,3 +571,10 @@ export function clearLogs() {
         logsContainer.innerHTML = '';
     }
 }
+
+export function removeLastLog() {
+    const logsContainer = document.getElementById('game-logs');
+    if (logsContainer && logsContainer.lastElementChild) {
+        logsContainer.removeChild(logsContainer.lastElementChild);
+    }
+}

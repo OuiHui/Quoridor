@@ -29,6 +29,19 @@ export function initPlaybook(actions) {
     
     const practiceBtn = document.getElementById('pb-practice');
     if (practiceBtn) practiceBtn.addEventListener('click', togglePlaybookPractice);
+
+    const toggleCollapseBtn = document.getElementById('pb-toggle-collapse');
+    const leftPanel = document.querySelector('.left-panel');
+    const collapsedTitle = document.getElementById('pb-collapsed-title');
+    
+    const toggleCollapse = () => {
+        if (leftPanel) {
+            leftPanel.classList.toggle('collapsed');
+        }
+    };
+    
+    if (toggleCollapseBtn) toggleCollapseBtn.addEventListener('click', toggleCollapse);
+    if (collapsedTitle) collapsedTitle.addEventListener('click', toggleCollapse);
 }
 
 export function loadPlaybook(key) {
@@ -56,7 +69,13 @@ export function loadPlaybook(key) {
     // UI details
     document.getElementById('playbook-empty').classList.add('hidden');
     document.getElementById('playbook-info').classList.remove('hidden');
-    document.getElementById('playbook-title').textContent = state.activePlaybook.title;
+    const titleEl = document.getElementById('playbook-title');
+    titleEl.textContent = state.activePlaybook.title;
+    if (state.activePlaybook.side === 'p2') {
+        titleEl.style.color = 'var(--color-p2)';
+    } else {
+        titleEl.style.color = 'var(--color-p1)';
+    }
     document.getElementById('playbook-description').textContent = state.activePlaybook.description;
     
     // Render list of moves
@@ -80,6 +99,9 @@ export function loadPlaybook(key) {
         boardActions.setGameMode('sandbox');
         // Reset board to initial positions
         boardActions.resetBoardState();
+        if (boardActions.clearLogs) {
+            boardActions.clearLogs();
+        }
     }
     
     updatePlaybookUI();
@@ -108,9 +130,10 @@ export function updatePlaybookUI() {
     // Highlight active step in sequence
     document.querySelectorAll('.pb-move-item').forEach(el => {
         const idx = parseInt(el.dataset.index);
-        el.classList.remove('active');
+        el.classList.remove('active', 'active-p1', 'active-p2');
         if (idx === step - 1) {
-            el.classList.add('active');
+            const playerNum = idx % 2 === 0 ? 1 : 2;
+            el.classList.add('active', `active-p${playerNum}`);
             // Scroll to it
             el.scrollIntoView({ block: 'nearest' });
         }
@@ -320,6 +343,9 @@ export function togglePlaybookPractice() {
         // Reset board to beginning of playbook to practice from step 0
         if (boardActions) {
             boardActions.resetBoardState();
+            if (boardActions.clearLogs) {
+                boardActions.clearLogs();
+            }
         }
         state.playbookStep = 0;
     } else {

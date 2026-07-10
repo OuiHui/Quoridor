@@ -2,6 +2,7 @@
 export const PLAYBOOK_DATA = {
     reed: {
         title: "Dr. Reed's Opening (Double Wall)",
+        side: "p1",
         description: "Places two horizontal walls early on at c3h and f3h. This creates a narrow bottleneck in the center, forcing the opponent to navigate through a controlled corridor while you advance your pawn.",
         moves: [
             { notation: 'e2', desc: "Player 1 steps forward, claiming center presence." },
@@ -17,6 +18,7 @@ export const PLAYBOOK_DATA = {
     },
     shiller: {
         title: "Shiller Opening (Tempo Vertical)",
+        side: "p1",
         description: "Named after Champion Larry Shiller. After three pawn moves, Player 1 places a vertical wall directly behind their pawn. This aligns Player 1's own path while adding complex routing decisions for the opponent.",
         moves: [
             { notation: 'e2', desc: "Player 1 steps forward to e2." },
@@ -32,6 +34,7 @@ export const PLAYBOOK_DATA = {
     },
     'center-rush': {
         title: "Standard Center Rush",
+        side: "p1",
         description: "Focuses strictly on pawn movement speed. Players race to the center to force a pawn jump. Winning the jump grants a critical 1-tempo advantage.",
         moves: [
             { notation: 'e2', desc: "Player 1 advances to e2." },
@@ -47,6 +50,7 @@ export const PLAYBOOK_DATA = {
     },
     'mirror-defense': {
         title: "Mirror Defense",
+        side: "p2",
         description: "Player 2 mirrors Player 1's movements and wall placements. This neutralizes early aggression and challenges Player 1 to break the symmetry creatively.",
         moves: [
             { notation: 'e2', desc: "Player 1 starts e2." },
