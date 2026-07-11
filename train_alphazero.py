@@ -624,8 +624,8 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
     import os
     model = QuoridorNet(num_residual_blocks=10, channels=128).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    # LR halved every 15 epochs
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
+    # LR decayed every 50 epochs with a gentler decay rate of 0.8
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.8)
     loss_val_fn = nn.MSELoss()
 
     start_epoch = 0
@@ -638,6 +638,18 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                 if 'scheduler_state_dict' in checkpoint:
                     scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                
+                # Override scheduler configuration with current settings
+                scheduler.step_size = 50
+                scheduler.gamma = 0.8
+                # Update base_lrs and current learning rate to the configured lr
+                scheduler.base_lrs = [lr]
+                # Calculate what the learning rate should be at start_epoch under the new schedule
+                decay_count = checkpoint.get('epoch', 0) // 50
+                current_scheduled_lr = lr * (0.8 ** decay_count)
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = current_scheduled_lr
+                print(f"Adjusted learning rate to {current_scheduled_lr:.6f} based on new schedule (decayed {decay_count} times).")
             start_epoch = checkpoint.get('epoch', 0)
             lr_note = ' (LR reset to initial)' if reset_lr else ''
             print(f"Loaded checkpoint from {checkpoint_path}. Resuming from epoch {start_epoch+1}{lr_note}")
