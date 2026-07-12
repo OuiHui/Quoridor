@@ -23,3 +23,11 @@ data_test/
 backups/quoridor_checkpoint.pth
 backups/quoridor_model.onnx
 backups/quoridor_model.onnx.data
+
+# C++ compilation artifacts
+build/
+*.pyd
+*.so
+*.lib
+*.exp
+*.obj

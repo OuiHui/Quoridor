@@ -277,6 +277,8 @@ def map_index_to_action_perspective(index, is_p1_turn, p1_pos, p2_pos):
 
 def export_to_onnx(model, filepath="quoridor_model.onnx"):
     model.eval()
+    orig_device = next(model.parameters()).device
+    model.cpu()
     dummy_input = torch.randn(1, 11, 9, 9, dtype=torch.float32)
     try:
         # Set environment variable and reconfigure streams to force UTF-8 on Windows
@@ -308,3 +310,5 @@ def export_to_onnx(model, filepath="quoridor_model.onnx"):
     except Exception as e:
         print(f"Warning: ONNX export failed with exception: {e}")
         print("This is likely a non-fatal console encoding error; the training checkpoint is still saved.")
+    finally:
+        model.to(orig_device)
