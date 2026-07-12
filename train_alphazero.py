@@ -1,7 +1,11 @@
+import os
+# Disable PyTorch Dynamo and Python JIT to prevent interpreter crash on experimental Python 3.14
+os.environ["TORCHDYNAMO_DISABLE"] = "1"
+os.environ["PYTHON_JIT"] = "0"
+
 import json
 import copy
 import math
-import os
 import random
 import time
 import numpy as np
