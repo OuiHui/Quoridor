@@ -11,8 +11,13 @@ class ONNXModelEvaluator:
             selected_providers.append('CPUExecutionProvider')
             
         print(f"ONNX Runtime trying providers: {selected_providers}")
+        
+        # Read model into memory to prevent Windows file locking issues during active training
+        with open(onnx_path, "rb") as f:
+            model_bytes = f.read()
+            
         try:
-            self.session = ort.InferenceSession(onnx_path, providers=selected_providers)
+            self.session = ort.InferenceSession(model_bytes, providers=selected_providers)
             self.input_name = self.session.get_inputs()[0].name
             # Run test inference to verify execution provider stability
             dummy = np.zeros((1, 11, 9, 9), dtype=np.float32)
@@ -20,7 +25,7 @@ class ONNXModelEvaluator:
             print(f"ONNX Runtime successfully initialized with: {self.session.get_providers()}")
         except Exception as e:
             print(f"Warning: Selected providers failed test inference ({e}). Falling back to CPUExecutionProvider...")
-            self.session = ort.InferenceSession(onnx_path, providers=['CPUExecutionProvider'])
+            self.session = ort.InferenceSession(model_bytes, providers=['CPUExecutionProvider'])
             self.input_name = self.session.get_inputs()[0].name
             print("ONNX Runtime successfully initialized with: ['CPUExecutionProvider']")
         
