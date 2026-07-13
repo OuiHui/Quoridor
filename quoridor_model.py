@@ -305,7 +305,8 @@ def export_to_onnx(model, filepath="quoridor_model.onnx"):
             do_constant_folding=True,
             input_names=['input'],
             output_names=['policy', 'value'],
-            dynamic_axes={'input': {0: 'batch_size'}, 'policy': {0: 'batch_size'}, 'value': {0: 'batch_size'}}
+            dynamic_axes={'input': {0: 'batch_size'}, 'policy': {0: 'batch_size'}, 'value': {0: 'batch_size'}},
+            external_data=False
         )
     except Exception as e:
         print(f"Warning: ONNX export failed with exception: {e}")

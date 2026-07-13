@@ -7,6 +7,7 @@ __pycache__/
 /quoridor_model.onnx
 /quoridor_model.onnx.data
 /quoridor_checkpoint.pth
+/quoridor_model_epoch_*
 
 dist/
 public/quoridor_model.onnx

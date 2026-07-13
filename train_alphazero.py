@@ -796,9 +796,30 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
             print(f"  Failed to save checkpoint: {e}")
             
         # Re-export model to ONNX so the background actor processes hot-reload updated weights
+        onnx_filename = f"quoridor_model_epoch_{epoch+1:03d}.onnx"
         try:
-            export_to_onnx(model_gpu, "quoridor_model.onnx")
-            print("  Successfully updated quoridor_model.onnx weights.")
+            export_to_onnx(model_gpu, onnx_filename)
+            print(f"  Successfully exported weights to {onnx_filename}.")
+            
+            # Try to overwrite the default static filename (may fail on Windows if currently locked)
+            import shutil
+            try:
+                shutil.copy(onnx_filename, "quoridor_model.onnx")
+                if os.path.exists(f"{onnx_filename}.data"):
+                    shutil.copy(f"{onnx_filename}.data", "quoridor_model.onnx.data")
+                print("  Successfully synchronized quoridor_model.onnx.")
+            except Exception:
+                pass
+                
+            # Clean up older epoch files to keep the disk clean (keep last 2 epochs)
+            if epoch >= 2:
+                old_onnx = f"quoridor_model_epoch_{epoch-1:03d}.onnx"
+                old_data = f"quoridor_model_epoch_{epoch-1:03d}.onnx.data"
+                try:
+                    if os.path.exists(old_onnx): os.remove(old_onnx)
+                    if os.path.exists(old_data): os.remove(old_data)
+                except Exception:
+                    pass
         except Exception as e:
             print(f"  Failed to update ONNX model: {e}")
         

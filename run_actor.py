@@ -149,24 +149,40 @@ def main():
     print("           HIGH-PERFORMANCE QUORIDOR SELF-PLAY ACTOR")
     print("=" * 60)
     
-    # Wait until an initial ONNX model is available
-    while not os.path.exists(ONNX_PATH):
-        print(f"Waiting for {ONNX_PATH} to be exported by the learner...")
-        time.sleep(5)
-        
-    evaluator = ONNXModelEvaluator(ONNX_PATH)
-    last_model_time = os.path.getmtime(ONNX_PATH)
+    loaded_model_path = None
+    evaluator = None
     
     # Infinite generation loop
     while True:
-        # Check if ONNX model was updated and hot-reload it
-        current_model_time = os.path.getmtime(ONNX_PATH)
-        if current_model_time > last_model_time:
-            print("Detected new model weights! Reloading ONNX evaluator...")
-            evaluator = ONNXModelEvaluator(ONNX_PATH)
-            last_model_time = current_model_time
-            
         epoch = get_current_epoch()
+        expected_model_path = f"quoridor_model_epoch_{epoch+1:03d}.onnx"
+        
+        # If the expected model for the current epoch doesn't exist yet, try the previous epoch's model
+        if not os.path.exists(expected_model_path):
+            expected_model_path = f"quoridor_model_epoch_{epoch:03d}.onnx"
+            
+        # Fallback to default name if still not found
+        if not os.path.exists(expected_model_path):
+            expected_model_path = "quoridor_model.onnx"
+            
+        # Wait until a model file is available
+        if not os.path.exists(expected_model_path):
+            print(f"Waiting for a starting ONNX model file to be exported by the learner...")
+            time.sleep(5)
+            continue
+            
+        # Load or reload model weights dynamically
+        if expected_model_path != loaded_model_path:
+            print(f"Loading ONNX model evaluator from {expected_model_path}...")
+            try:
+                evaluator = ONNXModelEvaluator(expected_model_path)
+                loaded_model_path = expected_model_path
+            except Exception as e:
+                # Handle cases where the learner is in the middle of writing the file
+                print(f"ONNX model file is currently locked/writing, retrying in 2s... ({e})")
+                time.sleep(2)
+                continue
+            
         epoch_dir = os.path.join(DATA_DIR, f"epoch_{epoch+1:03d}")
         
         # Count files in the current epoch folder
@@ -181,7 +197,6 @@ def main():
             
         print(f"\nGenerating batch of games for Epoch {epoch+1} ({num_completed}/{GAMES_PER_EPOCH} completed)...")
         # Run a batch of games in parallel
-        # Batch size can be tweaked to feed the GPU efficiently (e.g. 16 or 32)
         run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=NUM_SIMULATIONS)
 
 if __name__ == "__main__":
