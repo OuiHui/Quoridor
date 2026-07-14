@@ -403,9 +403,7 @@ class MCTS:
                 
                 # Calculate PUCT score for all children
                 for act_idx, child in node.children.items():
-                    # child's Q is from the child's perspective (opponent).
-                    # So to the parent, the value is -child.Q.
-                    q_val = -child.Q
+                    q_val = -child.Q if child.N > 0 else node.Q
                     u = q_val + self.c_puct * child.prior * (math.sqrt(node.N) / (1 + child.N))
                     if u > best_score:
                         best_score = u

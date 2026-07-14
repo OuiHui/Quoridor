@@ -229,7 +229,7 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                 
                 for (const auto& pair : node->children) {
                     MCTSNode* child = pair.second;
-                    double q_val = -child->Q; // Negate because child is from opponent perspective
+                    double q_val = (child->N > 0) ? -child->Q : node->Q;
                     double u = q_val + c_puct * child->prior * (std::sqrt(node->N) / (1.0 + child->N));
                     if (u > best_score) {
                         best_score = u;
