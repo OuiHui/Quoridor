@@ -40,7 +40,11 @@ def get_current_epoch():
         for d in os.listdir(DATA_DIR):
             if d.startswith("epoch_"):
                 try:
-                    epochs.append(int(d.split("_")[1]))
+                    epoch_num = int(d.split("_")[1])
+                    epoch_dir = os.path.join(DATA_DIR, d)
+                    num_completed = len([f for f in os.listdir(epoch_dir) if f.endswith(".pt")])
+                    if num_completed >= GAMES_PER_EPOCH:
+                        epochs.append(epoch_num)
                 except ValueError:
                     pass
         if epochs:
