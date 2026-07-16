@@ -31,40 +31,45 @@ class QuoridorNet(nn.Module):
     """
     def __init__(self, num_residual_blocks=10, channels=128):
         super(QuoridorNet, self).__init__()
-        self.conv_init = nn.Conv2d(11, channels, kernel_size=3, padding=1, bias=False)
+        self.conv_init = nn.Conv2d(6, channels, kernel_size=3, padding=1, bias=False)
         self.bn_init = nn.BatchNorm2d(channels)
         
         self.res_blocks = nn.ModuleList([
             ResidualBlock(channels) for _ in range(num_residual_blocks)
         ])
         
-        # Value Head: (128, 9, 9) -> Conv(128, 4, 1) -> BN -> ReLU -> Flatten -> Linear(4*9*9, 64) -> ReLU -> Linear(64, 1) -> Tanh
+        # Value Head: (128, 9, 9) -> Conv -> BN -> ReLU -> Flatten -> Cat with scalars -> Linear -> ReLU -> Linear -> Tanh
         self.value_conv = nn.Conv2d(channels, 4, kernel_size=1, bias=False)
         self.value_bn = nn.BatchNorm2d(4)
-        self.value_fc1 = nn.Linear(4 * 9 * 9, 64)
+        self.value_fc1 = nn.Linear(4 * 9 * 9 + 5, 64)
         self.value_fc2 = nn.Linear(64, 1)
         
-        # Policy Head: (128, 9, 9) -> Conv(128, 4, 1) -> BN -> ReLU -> Flatten -> Linear(4*9*9, 140)
+        # Policy Head: (128, 9, 9) -> Conv -> BN -> ReLU -> Flatten -> Cat with scalars -> Linear
         self.policy_conv = nn.Conv2d(channels, 4, kernel_size=1, bias=False)
         self.policy_bn = nn.BatchNorm2d(4)
-        self.policy_fc = nn.Linear(4 * 9 * 9, 140)
+        self.policy_fc = nn.Linear(4 * 9 * 9 + 5, 140)
 
     def forward(self, x):
+        x_spatial = x[:, [0, 1, 2, 3, 6, 7], :, :]
+        scalars = x[:, [4, 5, 8, 9, 10], 0, 0]
+
         # Trunk
-        out = F.relu(self.bn_init(self.conv_init(x)))
+        out = F.relu(self.bn_init(self.conv_init(x_spatial)))
         for block in self.res_blocks:
             out = block(out)
             
         # Value Head
         v = F.relu(self.value_bn(self.value_conv(out)))
         v = v.view(v.size(0), -1)
-        v = F.relu(self.value_fc1(v))
+        v_in = torch.cat([v, scalars], dim=1)
+        v = F.relu(self.value_fc1(v_in))
         v = torch.tanh(self.value_fc2(v))
         
         # Policy Head
         p = F.relu(self.policy_bn(self.policy_conv(out)))
         p = p.view(p.size(0), -1)
-        logits = self.policy_fc(p)
+        p_in = torch.cat([p, scalars], dim=1)
+        logits = self.policy_fc(p_in)
         
         return logits, v
 

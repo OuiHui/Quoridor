@@ -650,7 +650,7 @@ def load_dataset_from_disk(data_dir="data", max_positions=20000, exclude_epoch_o
 
 # play_evaluation_match removed to disable checking win rate vs previous model
 
-def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num_simulations=100, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, device="auto"):
+def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.0003, num_simulations=100, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, device="auto"):
     import os
     import time
     global DEVICE
@@ -749,6 +749,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.001, num
             loss = loss_p + loss_v
             
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model_gpu.parameters(), max_norm=1.0)
             optimizer.step()
             
             epoch_p_loss += loss_p.item()
@@ -832,7 +833,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=200, help="Total epochs to train (continues from checkpoint)")
     parser.add_argument("--games_per_epoch", type=int, default=50, help="Number of self-play games per epoch")
     parser.add_argument("--batch_size", type=int, default=64, help="Mini-batch size for model training")
-    parser.add_argument("--lr", type=float, default=0.001, help="Initial learning rate")
+    parser.add_argument("--lr", type=float, default=0.0003, help="Initial learning rate")
     parser.add_argument("--simulations", type=int, default=100, help="Number of MCTS simulations per turn")
     parser.add_argument("--dataset_size", type=int, default=50000, help="Max replay buffer size (recent positions kept)")
     parser.add_argument("--data_dir", type=str, default="data", help="Directory to save/load training games")
