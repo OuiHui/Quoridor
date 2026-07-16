@@ -6,7 +6,7 @@ import torch
 import numpy as np
 import quoridor_cpp
 from onnx_inference import ONNXModelEvaluator
-from quoridor_model import flip_horizontal_state, flip_horizontal_policy, map_index_to_action_perspective
+from quoridor_model import flip_horizontal_state, flip_horizontal_policy, map_index_to_action_perspective, map_action_to_index_perspective
 
 # Constants matching train_alphazero.py
 TEMP_THRESHOLD = 30
@@ -21,6 +21,12 @@ def python_action_to_cpp(py_action):
         return quoridor_cpp.Action.Move(py_action['dir'], py_action['to'][0], py_action['to'][1])
     else:
         return quoridor_cpp.Action.Wall(py_action['wallType'], py_action['x'], py_action['y'])
+
+def cpp_action_to_python(cpp_action):
+    if cpp_action.type == 'move':
+        return {'type': 'move', 'dir': cpp_action.move_dir, 'to': (cpp_action.to_x, cpp_action.to_y)}
+    else:
+        return {'type': 'wall', 'wallType': cpp_action.wall_type, 'x': cpp_action.wall_x, 'y': cpp_action.wall_y}
 
 def get_current_epoch():
     """
@@ -95,19 +101,19 @@ def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=100):
                 final_winner = 0 if is_draw else winner
                 
                 training_examples = []
-                for state_flat, policy_probs, is_p1 in trajectories[global_idx]:
+                for state_flat, policy_probs, is_p1, valid_mask in trajectories[global_idx]:
                     if final_winner == 0:
                         target_value = 0.0
                     else:
                         target_value = 1.0 if (final_winner == 1 and is_p1) or (final_winner == -1 and not is_p1) else -1.0
                     
                     state_tensor = torch.tensor(state_flat, dtype=torch.float32).reshape(11, 9, 9)
-                    training_examples.append((state_tensor, policy_probs, target_value))
+                    training_examples.append((state_tensor, policy_probs, target_value, valid_mask))
                 
                 # Augment with left-right board symmetry
                 augmented_examples = training_examples + [
-                    (flip_horizontal_state(s), flip_horizontal_policy(p), v)
-                    for s, p, v in training_examples
+                    (flip_horizontal_state(s), flip_horizontal_policy(p), v, flip_horizontal_policy(m))
+                    for (s, p, v, m) in training_examples
                 ]
                 
                 # Save results to disk
@@ -126,9 +132,17 @@ def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=100):
             visits_sum = visits.sum()
             policy_probs = visits / (visits_sum if visits_sum > 0 else 1.0)
             
+            # Generate valid move mask
+            valid_actions = game.get_valid_actions()
+            valid_mask = np.zeros(140, dtype=np.bool_)
+            for act in valid_actions:
+                py_act = cpp_action_to_python(act)
+                idx = map_action_to_index_perspective(py_act, game.is_p1_turn)
+                valid_mask[idx] = True
+            
             # Store position encoding
             state_flat = quoridor_cpp.MCTS.encode_state_cpp(game)
-            trajectories[global_idx].append((state_flat, policy_probs, game.is_p1_turn))
+            trajectories[global_idx].append((state_flat, policy_probs, game.is_p1_turn, valid_mask))
             
             # Select action
             if move_counts[global_idx] < TEMP_THRESHOLD:

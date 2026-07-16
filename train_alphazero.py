@@ -738,9 +738,13 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.0003, nu
             states = torch.stack([x[0] for x in batch]).to(DEVICE)
             target_policies = torch.tensor(np.array([x[1] for x in batch]), dtype=torch.float32).to(DEVICE)
             target_values = torch.tensor(np.array([x[2] for x in batch]), dtype=torch.float32).unsqueeze(1).to(DEVICE)
+            valid_masks = torch.tensor(np.array([x[3] for x in batch]), dtype=torch.bool).to(DEVICE)
             
             optimizer.zero_grad()
             logits, values = model_gpu(states)
+            
+            # Mask invalid moves with a large negative value before softmax
+            logits = logits.masked_fill(~valid_masks, -1e9)
             
             # Manual cross-entropy: works correctly with soft MCTS targets on all PyTorch versions
             log_probs = torch.log_softmax(logits, dim=1)
