@@ -641,19 +641,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     try {
         const timestamp = Date.now();
         const modelRes = await fetch(`./quoridor_model.onnx?t=${timestamp}`);
+        if (!modelRes.ok) throw new Error(`HTTP error status: ${modelRes.status}`);
         const modelBuffer = await modelRes.arrayBuffer();
 
-        const dataRes = await fetch(`./quoridor_model.onnx.data?t=${timestamp}`);
-        const dataBuffer = await dataRes.arrayBuffer();
-
-        window.quoridorONNXSession = await ort.InferenceSession.create(new Uint8Array(modelBuffer), {
-            externalData: [
-                {
-                    data: new Uint8Array(dataBuffer),
-                    path: 'quoridor_model.onnx.data'
-                }
-            ]
-        });
+        window.quoridorONNXSession = await ort.InferenceSession.create(new Uint8Array(modelBuffer));
         console.log("AlphaZero ONNX model loaded successfully!");
     } catch (e) {
         console.warn("Could not load ONNX model, running on heuristic MCTS fallback:", e);

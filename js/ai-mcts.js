@@ -312,7 +312,6 @@ class MCTSNode {
         this.children = new Map(); // actionIdx -> MCTSNode
         this.N = 0;   // Visit count
         this.W = 0.0; // Total value
-        self.Q = 0.0; // Mean action value
     }
     
     get Q() {
@@ -413,7 +412,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             for (const child of node.children.values()) {
                 // Node stores Q value from the perspective of active player at child node.
                 // Parent's active player values child value as opponent outcome (-Q).
-                const qScore = -child.Q;
+                const qScore = child.N > 0 ? -child.Q : node.Q;
                 const uScore = qScore + cPuct * child.prior * (Math.sqrt(node.N) / (1 + child.N));
                 if (uScore > bestScore) {
                     bestScore = uScore;
@@ -477,12 +476,20 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             value = heuristicEval.value;
         }
         
-        // Expand node children
-        for (const action of validActions) {
+        // Extract valid action indices and sum probabilities
+        let policySum = 0.0;
+        const validActionPairs = validActions.map(action => {
             const idx = mapActionToIndexPerspective(action, node.state.turn, node.state.p1Pos, node.state.p2Pos);
+            const p = policy[idx] || 0.0;
+            policySum += p;
+            return { action, idx, priorProb: p };
+        });
+
+        // Expand node children with normalized priors
+        for (const { action, idx, priorProb } of validActionPairs) {
             const nextState = transitionState(node.state, action);
-            const priorProb = policy[idx] || 0.0;
-            node.children.set(idx, new MCTSNode(nextState, node, idx, priorProb));
+            const normalizedPrior = policySum > 1e-8 ? priorProb / policySum : 1.0 / validActionPairs.length;
+            node.children.set(idx, new MCTSNode(nextState, node, idx, normalizedPrior));
         }
         
         // 3. BACKPROPAGATION
