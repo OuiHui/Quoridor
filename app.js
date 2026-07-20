@@ -647,7 +647,8 @@ window.addEventListener('DOMContentLoaded', async () => {
         window.quoridorONNXSession = await ort.InferenceSession.create(new Uint8Array(modelBuffer));
         console.log("AlphaZero ONNX model loaded successfully!");
     } catch (e) {
-        console.warn("Could not load ONNX model, running on heuristic MCTS fallback:", e);
+        console.error("CRITICAL: Could not load ONNX model. AlphaZero AI will be unavailable:", e);
+        throw e;
     }
     init();
 });

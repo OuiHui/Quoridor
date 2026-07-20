@@ -443,37 +443,32 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             continue;
         }
         
-        if (modelSession) {
-            // --- ONNX MODEL INFERENCE ---
-            try {
-                const tensorData = tensorizeBoardState(
-                    node.state.p1Pos, node.state.p2Pos,
-                    node.state.hWalls, node.state.vWalls,
-                    node.state.p1Walls, node.state.p2Walls,
-                    node.state.turn
-                );
-                const inputTensor = new ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
-                const results = await modelSession.run({ input: inputTensor });
-                
-                const policyData = results.policy.data;
-                const rawValue = results.value.data[0];
-                
-                // Softmax on policy output
-                const expPolicy = policyData.map(Math.exp);
-                const sumExp = expPolicy.reduce((a, b) => a + b, 0);
-                policy = expPolicy.map(v => v / sumExp);
-                value = rawValue;
-            } catch (e) {
-                console.error("ONNX evaluation error, fallback to heuristics:", e);
-                const heuristicEval = fallbackEvaluate(node.state, validActions);
-                policy = heuristicEval.policy;
-                value = heuristicEval.value;
-            }
-        } else {
-            // --- HEURISTIC SEARCH FALLBACK ---
-            const heuristicEval = fallbackEvaluate(node.state, validActions);
-            policy = heuristicEval.policy;
-            value = heuristicEval.value;
+        if (!modelSession) {
+            throw new Error("AlphaZero ONNX model is not loaded. Cannot run AlphaZero MCTS without the model session.");
+        }
+
+        // --- ONNX MODEL INFERENCE ---
+        try {
+            const tensorData = tensorizeBoardState(
+                node.state.p1Pos, node.state.p2Pos,
+                node.state.hWalls, node.state.vWalls,
+                node.state.p1Walls, node.state.p2Walls,
+                node.state.turn
+            );
+            const inputTensor = new ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
+            const results = await modelSession.run({ input: inputTensor });
+            
+            const policyData = results.policy.data;
+            const rawValue = results.value.data[0];
+            
+            // Softmax on policy output
+            const expPolicy = policyData.map(Math.exp);
+            const sumExp = expPolicy.reduce((a, b) => a + b, 0);
+            policy = expPolicy.map(v => v / sumExp);
+            value = rawValue;
+        } catch (e) {
+            console.error("ONNX evaluation error during MCTS:", e);
+            throw e;
         }
         
         // Extract valid action indices and sum probabilities
