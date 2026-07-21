@@ -60,14 +60,14 @@ class QuoridorNet(nn.Module):
             
         # Value Head
         v = F.relu(self.value_bn(self.value_conv(out)))
-        v = v.view(v.size(0), -1)
+        v = torch.flatten(v, 1)
         v_in = torch.cat([v, scalars], dim=1)
         v = F.relu(self.value_fc1(v_in))
         v = torch.tanh(self.value_fc2(v))
         
         # Policy Head
         p = F.relu(self.policy_bn(self.policy_conv(out)))
-        p = p.view(p.size(0), -1)
+        p = torch.flatten(p, 1)
         p_in = torch.cat([p, scalars], dim=1)
         logits = self.policy_fc(p_in)
         
@@ -301,6 +301,7 @@ def export_to_onnx(model, filepath="quoridor_model.onnx"):
                     sys.stderr.reconfigure(encoding='utf-8')
                 except Exception:
                     pass
+        batch_dim = torch.export.Dim('batch', min=1, max=1024)
         torch.onnx.export(
             model,
             dummy_input,
@@ -310,7 +311,7 @@ def export_to_onnx(model, filepath="quoridor_model.onnx"):
             do_constant_folding=True,
             input_names=['input'],
             output_names=['policy', 'value'],
-            dynamic_axes={'input': {0: 'batch_size'}, 'policy': {0: 'batch_size'}, 'value': {0: 'batch_size'}},
+            dynamic_shapes={'x': {0: batch_dim}},
             external_data=False
         )
     except Exception as e:

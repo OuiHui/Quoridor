@@ -730,6 +730,8 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.0003, nu
         epoch_p_loss = 0.0
         epoch_v_loss = 0.0
         epoch_entropy = 0.0
+        epoch_mcts_eval = 0.0
+        epoch_abs_mcts_eval = 0.0
         
         for b in range(num_batches):
             batch = dataset[b*batch_size : (b+1)*batch_size]
@@ -758,6 +760,8 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.0003, nu
             
             epoch_p_loss += loss_p.item()
             epoch_v_loss += loss_v.item()
+            epoch_mcts_eval += target_values.mean().item()
+            epoch_abs_mcts_eval += torch.abs(target_values).mean().item()
             
             # Track policy entropy
             with torch.no_grad():
@@ -773,10 +777,8 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.0003, nu
         _METRICS['value_loss'] = epoch_v_loss / max(1, num_batches)
         _METRICS['entropy'] = epoch_entropy / max(1, num_batches)
         _METRICS['lr'] = current_lr
-        
-        # Set average evaluations placeholder (actors handle actual search counts)
-        _METRICS['avg_mcts_eval'] = 0.0
-        _METRICS['avg_abs_mcts_eval'] = 0.0
+        _METRICS['avg_mcts_eval'] = epoch_mcts_eval / max(1, num_batches)
+        _METRICS['avg_abs_mcts_eval'] = epoch_abs_mcts_eval / max(1, num_batches)
         
         print(f"  Training Summary: Policy Loss = {_METRICS['policy_loss']:.4f}, Value Loss = {_METRICS['value_loss']:.4f}, Policy Entropy = {_METRICS['entropy']:.4f}, LR = {_METRICS['lr']:.6f}")
         
@@ -838,7 +840,7 @@ if __name__ == "__main__":
     parser.add_argument("--games_per_epoch", type=int, default=50, help="Number of self-play games per epoch")
     parser.add_argument("--batch_size", type=int, default=64, help="Mini-batch size for model training")
     parser.add_argument("--lr", type=float, default=0.0003, help="Initial learning rate")
-    parser.add_argument("--simulations", type=int, default=100, help="Number of MCTS simulations per turn")
+    parser.add_argument("--simulations", type=int, default=400, help="Number of MCTS simulations per turn")
     parser.add_argument("--dataset_size", type=int, default=50000, help="Max replay buffer size (recent positions kept)")
     parser.add_argument("--data_dir", type=str, default="data", help="Directory to save/load training games")
     parser.add_argument("--checkpoint_path", type=str, default="quoridor_checkpoint.pth", help="Path to checkpoint file")

@@ -10,7 +10,7 @@ from quoridor_model import flip_horizontal_state, flip_horizontal_policy, map_in
 
 # Constants matching train_alphazero.py
 TEMP_THRESHOLD = 30
-NUM_SIMULATIONS = 100  # Default simulations per move
+NUM_SIMULATIONS = 400  # Default simulations per move
 GAMES_PER_EPOCH = 50   # Expected games per epoch
 DATA_DIR = "data"
 ONNX_PATH = "quoridor_model.onnx"
