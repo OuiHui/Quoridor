@@ -317,21 +317,54 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                     );
                 }
                 
-                // Add Dirichlet Noise at the root node during the first simulation step
+                // Add Group-Aware Dirichlet Noise at root: 50% mass to pawn moves, 50% to wall moves
                 if (sim == 0 && leaf == roots[i] && !leaf->children.empty()) {
                     std::gamma_distribution<double> gamma(dirichlet_alpha, 1.0);
-                    std::vector<double> noise;
-                    double noise_sum = 0.0;
-                    for (size_t c = 0; c < leaf->children.size(); ++c) {
-                        double val = gamma(gen);
-                        if (val < 1e-8) val = 1e-8;
-                        noise.push_back(val);
-                        noise_sum += val;
+                    
+                    std::vector<int> pawn_keys;
+                    std::vector<int> wall_keys;
+                    for (const auto& pair : leaf->children) {
+                        if (pair.first < 12) {
+                            pawn_keys.push_back(pair.first);
+                        } else {
+                            wall_keys.push_back(pair.first);
+                        }
                     }
                     
-                    int noise_idx = 0;
+                    std::map<int, double> noise_map;
+                    
+                    if (!pawn_keys.empty()) {
+                        double pawn_sum = 0.0;
+                        std::vector<double> pawn_noises;
+                        for (size_t c = 0; c < pawn_keys.size(); ++c) {
+                            double val = gamma(gen);
+                            if (val < 1e-8) val = 1e-8;
+                            pawn_noises.push_back(val);
+                            pawn_sum += val;
+                        }
+                        double pawn_mass = wall_keys.empty() ? 1.0 : 0.5;
+                        for (size_t c = 0; c < pawn_keys.size(); ++c) {
+                            noise_map[pawn_keys[c]] = pawn_mass * (pawn_noises[c] / pawn_sum);
+                        }
+                    }
+                    
+                    if (!wall_keys.empty()) {
+                        double wall_sum = 0.0;
+                        std::vector<double> wall_noises;
+                        for (size_t c = 0; c < wall_keys.size(); ++c) {
+                            double val = gamma(gen);
+                            if (val < 1e-8) val = 1e-8;
+                            wall_noises.push_back(val);
+                            wall_sum += val;
+                        }
+                        double wall_mass = pawn_keys.empty() ? 1.0 : 0.5;
+                        for (size_t c = 0; c < wall_keys.size(); ++c) {
+                            noise_map[wall_keys[c]] = wall_mass * (wall_noises[c] / wall_sum);
+                        }
+                    }
+                    
                     for (auto& pair : leaf->children) {
-                        double n = noise[noise_idx++] / noise_sum;
+                        double n = noise_map[pair.first];
                         pair.second->prior = (1.0 - dirichlet_eps) * pair.second->prior + dirichlet_eps * n;
                     }
                 }

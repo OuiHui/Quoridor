@@ -9,7 +9,7 @@ from onnx_inference import ONNXModelEvaluator
 from quoridor_model import flip_horizontal_state, flip_horizontal_policy, map_index_to_action_perspective, map_action_to_index_perspective
 
 # Constants matching train_alphazero.py
-TEMP_THRESHOLD = 30
+TEMP_THRESHOLD = 6
 NUM_SIMULATIONS = 400  # Default simulations per move
 GAMES_PER_EPOCH = 50   # Expected games per epoch
 DATA_DIR = "data"
@@ -101,11 +101,16 @@ def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=100):
                 final_winner = 0 if is_draw else winner
                 
                 training_examples = []
-                for state_flat, policy_probs, is_p1, valid_mask in trajectories[global_idx]:
+                total_moves = len(trajectories[global_idx])
+                for idx, (state_flat, policy_probs, is_p1, valid_mask) in enumerate(trajectories[global_idx]):
                     if final_winner == 0:
                         target_value = 0.0
                     else:
-                        target_value = 1.0 if (final_winner == 1 and is_p1) or (final_winner == -1 and not is_p1) else -1.0
+                        is_win = (final_winner == 1 and is_p1) or (final_winner == -1 and not is_p1)
+                        base_val = 1.0 if is_win else -1.0
+                        moves_to_end = total_moves - 1 - idx
+                        discount = 0.99 ** moves_to_end
+                        target_value = base_val * discount
                     
                     state_tensor = torch.tensor(state_flat, dtype=torch.float32).reshape(11, 9, 9)
                     training_examples.append((state_tensor, policy_probs, target_value, valid_mask))

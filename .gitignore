@@ -21,9 +21,7 @@ quoridor_model_backup.onnx.data
 # Training data
 data/
 data_test/
-backups/quoridor_checkpoint.pth
-backups/quoridor_model.onnx
-backups/quoridor_model.onnx.data
+checkpoint_backup/
 
 # C++ compilation artifacts
 build/
@@ -32,3 +30,4 @@ build/
 *.lib
 *.exp
 *.obj
+public/training_state.json
