@@ -1,6 +1,6 @@
 # Quoridor AlphaZero AI
 
-An implementation of an AlphaZero-style reinforcement learning agent for the board game Quoridor. The system uses Self-Play and Monte Carlo Tree Search (MCTS) to train a deep residual neural network, which is then exported to ONNX to run in the web browser.
+An implementation of an AlphaZero-style reinforcement learning agent for the board game Quoridor. The system uses a high-performance C++ simulator and Monte Carlo Tree Search (MCTS) engine (bound to Python via `pybind11`) for self-play data generation, and PyTorch to train a deep residual neural network. The trained model is then exported to ONNX to run in the web browser.
 
 ---
 
@@ -73,14 +73,25 @@ The output policy vector of size 140 represents all possible moves and wall plac
 
 ## How to Train the Model
 
-You can launch and configure the AlphaZero training pipeline using `train_alphazero.py`:
+The training pipeline uses a high-performance C++ simulator and MCTS engine for self-play game generation. Before running the training pipeline, you must compile the C++ extension module.
+
+### 1. Compile the C++ Extension
+Ensure you have a C++ compiler (such as MSVC on Windows, or GCC/Clang on Linux/macOS) and `pybind11` installed, then build the extension in-place:
+```powershell
+pip install pybind11
+python setup_cpp.py build_ext --inplace
+```
+This generates a compiled binary (`quoridor_cpp.pyd` on Windows or `quoridor_cpp.so` on Linux/macOS) in the root directory.
+
+### 2. Run the Training Pipeline
+Once compiled, you can launch and configure the AlphaZero training pipeline using `train_alphazero.py`. This script automatically spawns the C++ self-play actor (`run_actor.py`) in the background to generate games:
 
 ```powershell
-# Resume or start training with default settings (50 epochs, 20 games/epoch)
+# Resume or start training with default settings (200 epochs, 50 games/epoch)
 python train_alphazero.py
 
-# Continue training up to epoch 100
-python train_alphazero.py --epochs 100
+# Continue training up to epoch 300
+python train_alphazero.py --epochs 300
 
 # Train with real-time ASCII board visualization in the console
 python train_alphazero.py --visualize
@@ -90,10 +101,10 @@ python train_alphazero.py --epochs 80 --games_per_epoch 30 --simulations 120 --d
 ```
 
 ### CLI Arguments
-* `--epochs`: Total target epochs (default: `50`).
-* `--games_per_epoch`: Self-play games per epoch (default: `20`).
-* `--simulations`: MCTS searches per move (default: `100`).
-* `--dataset_size`: Maximum training positions stored in the replay buffer (default: `20000`).
+* `--epochs`: Total target epochs (default: `200`).
+* `--games_per_epoch`: Self-play games per epoch (default: `50`).
+* `--simulations`: MCTS searches per move (default: `400`).
+* `--dataset_size`: Maximum training positions stored in the replay buffer (default: `50000`).
 * `--data_dir`: Directory to save/load structured game files (default: `"data"`).
 * `--checkpoint_path`: Path to check-in/load weights (default: `"quoridor_checkpoint.pth"`).
 
@@ -107,6 +118,7 @@ The training pipeline runs in a loop across a user-specified number of epochs. E
 ### 1. Self-Play (Data Generation)
 * **Match Simulation**: The current neural network plays against itself for a set number of games per epoch (`games_per_epoch`, default: 50).
 * **MCTS Guidance**: During each turn, Monte Carlo Tree Search (MCTS) executes a deep lookahead (`simulations`, default: 400). It uses the model's **Policy Head** as prior probabilities to narrow down candidate branches and the **Value Head** to immediately evaluate leaf nodes.
+* **C++ Acceleration**: The self-play games are simulated in parallel batches by `run_actor.py` using the compiled C++ simulator and MCTS engine, leveraging ONNX Runtime for fast batched neural network inference.
 * **Exploration vs. Exploitation**: 
   - For the first 30 moves of each game, moves are sampled proportionally to the MCTS visit counts to guarantee diverse trajectories.
   - After 30 moves, the agent acts greedily by picking the most-visited move.
@@ -154,3 +166,14 @@ python play_vs_minimax.py --depth 3 --simulations 150 --games 5 --visualize
 * `--depth`: Search depth for the Minimax bot (default: `2`).
 * `--simulations`: MCTS simulations per turn for the AlphaZero bot (default: `100`).
 * `--games`: Total games to play in the series (default: `10`).
+
+---
+
+## Verifying the C++ Simulator
+
+To ensure the C++ simulator behaves identically to the Python reference implementation (including pathfinding, wall placement validation, and game rules), you can run the verification test suite:
+
+```powershell
+python verify_simulator.py
+```
+This runs 1,000 random game steps across both simulators and asserts that all positions, valid moves, heuristics, and shortest paths match perfectly.
