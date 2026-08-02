@@ -11,16 +11,18 @@ from quoridor_model import QuoridorNet
 PORT = 5555
 HOST = "127.0.0.1"
 CHECKPOINT_PATH = "quoridor_checkpoint.pth"
-DEFAULT_ONNX_PATH = "quoridor_model.onnx"
+
+# Enable cuDNN autotuner for maximum GPU kernel performance
+torch.backends.cudnn.benchmark = True
 
 def get_latest_checkpoint_path():
-    """Finds the newest available PyTorch model checkpoint or ONNX model."""
+    """Finds the newest available PyTorch model checkpoint."""
     if os.path.exists(CHECKPOINT_PATH):
         return CHECKPOINT_PATH
     return None
 
 class PyTorchCUDAInferenceEngine:
-    """High-throughput PyTorch CUDA Inference Engine for NVIDIA GPUs."""
+    """High-throughput PyTorch CUDA Inference Engine using FP16 Tensor Cores."""
     def __init__(self, checkpoint_path=None):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = QuoridorNet(num_residual_blocks=10, channels=128).to(self.device).eval()
@@ -32,13 +34,13 @@ class PyTorchCUDAInferenceEngine:
         else:
             self.check_and_reload()
 
-        # Warmup run
+        # Warmup run with FP16 Autocast
         dummy = torch.zeros((1, 11, 9, 9), device=self.device)
-        with torch.inference_mode():
+        with torch.inference_mode(), torch.amp.autocast('cuda', enabled=(self.device.type == 'cuda')):
             _ = self.model(dummy)
         
         ts = time.strftime("%H:%M:%S")
-        print(f"[{ts}] [GPU Server] PyTorch Engine running on: {torch.cuda.get_device_name(0) if self.device.type == 'cuda' else 'CPU'}", flush=True)
+        print(f"[{ts}] [GPU Server] PyTorch FP16 Engine active on: {torch.cuda.get_device_name(0) if self.device.type == 'cuda' else 'CPU'}", flush=True)
 
     def load_checkpoint(self, path):
         if not os.path.exists(path):
@@ -47,10 +49,11 @@ class PyTorchCUDAInferenceEngine:
             ckpt = torch.load(path, map_location=self.device, weights_only=False)
             state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
             self.model.load_state_dict(state_dict)
+            
             self.checkpoint_path = path
             self.mtime = os.path.getmtime(path)
             ts = time.strftime("%H:%M:%S")
-            print(f"[{ts}] [GPU Server] Successfully loaded weights from '{path}' onto {self.device}", flush=True)
+            print(f"[{ts}] [GPU Server] Loaded checkpoint '{path}' onto {self.device}", flush=True)
             return True
         except Exception as e:
             ts = time.strftime("%H:%M:%S")
@@ -65,23 +68,27 @@ class PyTorchCUDAInferenceEngine:
 
     def evaluate_combined(self, batch_input):
         tensor_in = torch.from_numpy(batch_input).to(self.device, non_blocking=True)
-        with torch.inference_mode():
+        with torch.inference_mode(), torch.amp.autocast('cuda', enabled=(self.device.type == 'cuda')):
             logits, values = self.model(tensor_in)
             policies = torch.softmax(logits, dim=1)
             
-        policies_np = policies.cpu().numpy().astype(np.float32)
-        values_np = values.ravel().cpu().numpy().astype(np.float32)
+        policies_np = np.ascontiguousarray(policies.float().cpu().numpy(), dtype=np.float32)
+        values_np = np.ascontiguousarray(values.float().ravel().cpu().numpy(), dtype=np.float32)
         return policies_np, values_np
 
 def receive_exact(sock, n_bytes):
-    """Utility to receive exactly n_bytes from a socket."""
+    """Utility to receive exactly n_bytes from a socket robustly."""
+    sock.setblocking(True)
     buf = bytearray()
-    while len(buf) < n_bytes:
-        chunk = sock.recv(n_bytes - len(buf))
-        if not chunk:
-            return None
-        buf.extend(chunk)
-    return bytes(buf)
+    try:
+        while len(buf) < n_bytes:
+            chunk = sock.recv(n_bytes - len(buf))
+            if not chunk:
+                return None
+            buf.extend(chunk)
+        return bytes(buf)
+    finally:
+        sock.setblocking(False)
 
 def run_server(port=PORT):
     engine = PyTorchCUDAInferenceEngine()
@@ -89,7 +96,7 @@ def run_server(port=PORT):
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_sock.bind((HOST, port))
-    server_sock.listen(16)
+    server_sock.listen(32)
     server_sock.setblocking(False)
 
     ts = time.strftime("%H:%M:%S")
@@ -110,7 +117,7 @@ def run_server(port=PORT):
                 engine.check_and_reload()
                 last_reload_check = now
 
-            rlist, _, _ = select.select([server_sock] + client_sockets, [], [], 0.001)
+            rlist, _, _ = select.select([server_sock] + client_sockets, [], [], 0.0005)
 
             for s in rlist:
                 if s is server_sock:
@@ -127,16 +134,10 @@ def run_server(port=PORT):
 
             for s in client_sockets:
                 try:
-                    header = s.recv(4)
-                    if not header:
+                    header = receive_exact(s, 4)
+                    if header is None:
                         disconnected.append(s)
                         continue
-                    if len(header) < 4:
-                        rem = receive_exact(s, 4 - len(header))
-                        if rem is None:
-                            disconnected.append(s)
-                            continue
-                        header = header + rem
                     
                     m_count = struct.unpack('!I', header)[0]
                     expected_bytes = m_count * 11 * 9 * 9 * 4
