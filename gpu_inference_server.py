@@ -5,105 +5,73 @@ import socket
 import select
 import struct
 import numpy as np
-import onnxruntime as ort
 import torch
+from quoridor_model import QuoridorNet
 
 PORT = 5555
 HOST = "127.0.0.1"
-DEFAULT_ONNX_PATH = "quoridor_model.onnx"
 CHECKPOINT_PATH = "quoridor_checkpoint.pth"
+DEFAULT_ONNX_PATH = "quoridor_model.onnx"
 
-def get_latest_model_path():
-    """Finds the path to the newest available ONNX model."""
-    epoch = 0
+def get_latest_checkpoint_path():
+    """Finds the newest available PyTorch model checkpoint or ONNX model."""
     if os.path.exists(CHECKPOINT_PATH):
-        try:
-            checkpoint = torch.load(CHECKPOINT_PATH, map_location='cpu', weights_only=False)
-            epoch = checkpoint.get('epoch', 0)
-        except Exception:
-            pass
-            
-    candidates = [
-        f"quoridor_model_epoch_{epoch+1:03d}.onnx",
-        f"quoridor_model_epoch_{epoch:03d}.onnx",
-        DEFAULT_ONNX_PATH
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            return path
+        return CHECKPOINT_PATH
     return None
 
-class InferenceEngine:
-    """Manages the ONNX Runtime session with CUDA optimizations."""
-    def __init__(self, model_path):
-        self.model_path = model_path
-        self.session = None
-        self.input_name = None
+class PyTorchCUDAInferenceEngine:
+    """High-throughput PyTorch CUDA Inference Engine for NVIDIA GPUs."""
+    def __init__(self, checkpoint_path=None):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = QuoridorNet(num_residual_blocks=10, channels=128).to(self.device).eval()
+        self.checkpoint_path = None
         self.mtime = None
-        self.load_model(model_path)
+        
+        if checkpoint_path and os.path.exists(checkpoint_path):
+            self.load_checkpoint(checkpoint_path)
+        else:
+            self.check_and_reload()
 
-    def load_model(self, path):
+        # Warmup run
+        dummy = torch.zeros((1, 11, 9, 9), device=self.device)
+        with torch.inference_mode():
+            _ = self.model(dummy)
+        
+        ts = time.strftime("%H:%M:%S")
+        print(f"[{ts}] [GPU Server] PyTorch Engine running on: {torch.cuda.get_device_name(0) if self.device.type == 'cuda' else 'CPU'}", flush=True)
+
+    def load_checkpoint(self, path):
         if not os.path.exists(path):
             return False
-            
-        providers = ort.get_available_providers()
-        selected_providers = []
-        if 'CUDAExecutionProvider' in providers:
-            selected_providers.append((
-                'CUDAExecutionProvider', {
-                    'device_id': 0,
-                    'arena_extend_strategy': 'kNextPowerOfTwo',
-                    'gpu_mem_limit': 4 * 1024 * 1024 * 1024,  # 4 GB max memory limit
-                    'cudnn_conv_algo_search': 'EXHAUSTIVE',
-                    'do_copy_in_default_stream': True,
-                }
-            ))
-        if 'CPUExecutionProvider' in providers:
-            selected_providers.append('CPUExecutionProvider')
-
-        with open(path, "rb") as f:
-            model_bytes = f.read()
-
         try:
-            session_options = ort.SessionOptions()
-            session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            
-            self.session = ort.InferenceSession(model_bytes, session_options, providers=selected_providers)
-            self.input_name = self.session.get_inputs()[0].name
-            self.model_path = path
+            ckpt = torch.load(path, map_location=self.device, weights_only=False)
+            state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
+            self.model.load_state_dict(state_dict)
+            self.checkpoint_path = path
             self.mtime = os.path.getmtime(path)
-            
-            # Warmup run
-            dummy = np.zeros((1, 11, 9, 9), dtype=np.float32)
-            self.session.run(['policy', 'value'], {self.input_name: dummy})
-            
             ts = time.strftime("%H:%M:%S")
-            print(f"[{ts}] [GPU Server] Loaded ONNX model '{path}' using {self.session.get_providers()[0]}", flush=True)
+            print(f"[{ts}] [GPU Server] Successfully loaded weights from '{path}' onto {self.device}", flush=True)
             return True
         except Exception as e:
             ts = time.strftime("%H:%M:%S")
-            print(f"[{ts}] [GPU Server] Error loading ONNX model '{path}': {e}", flush=True)
+            print(f"[{ts}] [GPU Server] Error loading checkpoint '{path}': {e}", flush=True)
             return False
 
     def check_and_reload(self):
-        latest = get_latest_model_path()
-        if latest and latest != self.model_path:
-            self.load_model(latest)
-        elif latest and os.path.exists(latest):
-            current_mtime = os.path.getmtime(latest)
-            if self.mtime is None or current_mtime > self.mtime:
-                self.load_model(latest)
+        latest = get_latest_checkpoint_path()
+        if latest:
+            if self.checkpoint_path != latest or os.path.getmtime(latest) > (self.mtime or 0):
+                self.load_checkpoint(latest)
 
     def evaluate_combined(self, batch_input):
-        outputs = self.session.run(['policy', 'value'], {self.input_name: batch_input})
-        logits = outputs[0]
-        values = outputs[1]
-
-        logits_max = np.max(logits, axis=1, keepdims=True)
-        e_x = np.exp(logits - logits_max)
-        policies = e_x / np.sum(e_x, axis=1, keepdims=True)
-
-        return policies.astype(np.float32), values.ravel().astype(np.float32)
+        tensor_in = torch.from_numpy(batch_input).to(self.device, non_blocking=True)
+        with torch.inference_mode():
+            logits, values = self.model(tensor_in)
+            policies = torch.softmax(logits, dim=1)
+            
+        policies_np = policies.cpu().numpy().astype(np.float32)
+        values_np = values.ravel().cpu().numpy().astype(np.float32)
+        return policies_np, values_np
 
 def receive_exact(sock, n_bytes):
     """Utility to receive exactly n_bytes from a socket."""
@@ -116,14 +84,7 @@ def receive_exact(sock, n_bytes):
     return bytes(buf)
 
 def run_server(port=PORT):
-    model_path = get_latest_model_path()
-    while model_path is None:
-        ts = time.strftime("%H:%M:%S")
-        print(f"[{ts}] [GPU Server] Waiting for ONNX model file to exist...", flush=True)
-        time.sleep(3)
-        model_path = get_latest_model_path()
-
-    engine = InferenceEngine(model_path)
+    engine = PyTorchCUDAInferenceEngine()
 
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -159,8 +120,6 @@ def run_server(port=PORT):
                     client_sockets.append(conn)
                     ts = time.strftime("%H:%M:%S")
                     print(f"[{ts}] [GPU Server] Actor client connected from {addr}", flush=True)
-                else:
-                    pass
 
             # Read pending requests from connected client sockets
             pending_requests = []
