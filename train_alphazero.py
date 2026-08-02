@@ -88,53 +88,85 @@ def write_training_state(game=None, move_count=0, active_player='-', status='epo
         json.dump(payload, f)
 
 
-def load_dataset_from_disk(data_dir="data", max_positions=50000, exclude_epoch_or_later=None):
-    if not os.path.exists(data_dir):
-        return []
-    
-    # Find all .pt files recursively
-    pt_files = []
-    for root_dir, _, files in os.walk(data_dir):
-        folder_name = os.path.basename(root_dir)
-        if folder_name.startswith("epoch_"):
+def count_games_in_dir(epoch_dir):
+    """Accurately count completed games in directory regardless of batching format."""
+    if not os.path.exists(epoch_dir):
+        return 0
+    total = 0
+    for f in os.listdir(epoch_dir):
+        if not f.endswith('.pt'):
+            continue
+        if f.startswith("games_"):
             try:
-                epoch_num = int(folder_name.split("_")[1])
-                if exclude_epoch_or_later is not None and epoch_num >= exclude_epoch_or_later:
-                    continue
-            except (ValueError, IndexError):
-                pass
-        for f in files:
-            if f.endswith('.pt'):
-                pt_files.append(os.path.join(root_dir, f))
-                
-    # Sort files by filename to ensure they are processed chronologically
-    pt_files.sort()
-    
-    dataset = []
-    # Load from newest to oldest to satisfy max_positions efficiently
-    for filepath in reversed(pt_files):
-        try:
-            game_data = torch.load(filepath, map_location=torch.device('cpu'), weights_only=False)
-            dataset.extend(game_data)
-            if len(dataset) >= max_positions:
-                dataset = dataset[:max_positions]
-                break
-        except Exception as e:
-            print(f"Warning: Failed to load training data file {filepath}: {e}")
-            
-    # Reverse dataset to maintain chronological order
-    dataset.reverse()
-    return dataset
+                parts = f.split("_")
+                total += int(parts[1])
+            except (IndexError, ValueError):
+                total += 1
+        else:
+            total += 1
+    return total
+
+class ReplayDatasetCache:
+    """Incremental dataset loader maintaining an in-memory buffer across epochs."""
+    def __init__(self, data_dir="data", max_positions=50000):
+        self.data_dir = data_dir
+        self.max_positions = max_positions
+        self.loaded_files = set()
+        self.dataset = []
+
+    def update(self, exclude_epoch_or_later=None):
+        if not os.path.exists(self.data_dir):
+            return self.dataset
+
+        pt_files = []
+        for root_dir, _, files in os.walk(self.data_dir):
+            folder_name = os.path.basename(root_dir)
+            if folder_name.startswith("epoch_"):
+                try:
+                    epoch_num = int(folder_name.split("_")[1])
+                    if exclude_epoch_or_later is not None and epoch_num >= exclude_epoch_or_later:
+                        continue
+                except (ValueError, IndexError):
+                    pass
+            for f in files:
+                if f.endswith('.pt'):
+                    full_path = os.path.join(root_dir, f)
+                    if full_path not in self.loaded_files:
+                        pt_files.append(full_path)
+
+        pt_files.sort()
+        new_count = len(pt_files)
+        for filepath in pt_files:
+            try:
+                game_data = torch.load(filepath, map_location=torch.device('cpu'), weights_only=False)
+                self.dataset.extend(game_data)
+                self.loaded_files.add(filepath)
+            except Exception as e:
+                print(f"Warning: Failed to load dataset file {filepath}: {e}")
+
+        if len(self.dataset) > self.max_positions:
+            self.dataset = self.dataset[-self.max_positions:]
+
+        if new_count > 0:
+            ts = time.strftime("%H:%M:%S")
+            print(f"[{ts}] [Learner] Dataset cache loaded {new_count} new file(s). Buffer total: {len(self.dataset)} positions", flush=True)
+
+        return self.dataset
+
+def load_dataset_from_disk(data_dir="data", max_positions=50000, exclude_epoch_or_later=None):
+    cache = ReplayDatasetCache(data_dir, max_positions)
+    return cache.update(exclude_epoch_or_later)
 
 
 def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.0003, num_simulations=400, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, device="auto"):
     global DEVICE
     DEVICE = select_device(device)
     print(f"Training device: {DEVICE}")
+    if DEVICE.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
     
     model_gpu = QuoridorNet(num_residual_blocks=10, channels=128).to(DEVICE)
     optimizer = optim.Adam(model_gpu.parameters(), lr=lr, weight_decay=1e-4)
-    # LR decayed every 50 epochs with a gentler decay rate of 0.8
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.8)
     loss_val_fn = nn.MSELoss()
 
@@ -149,7 +181,6 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.0003, nu
                 if 'scheduler_state_dict' in checkpoint:
                     scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
                 
-                # Override scheduler configuration with current settings
                 scheduler.step_size = 50
                 scheduler.gamma = 0.8
                 scheduler.base_lrs = [lr]
@@ -164,13 +195,16 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.0003, nu
         except Exception as e:
             print(f"Failed to load checkpoint ({e}). Starting from scratch.")
             
-    # Load dataset from data directory
-    dataset = load_dataset_from_disk(data_dir, dataset_size, exclude_epoch_or_later=start_epoch + 1)
+    # Initialize incremental replay buffer cache
+    replay_cache = ReplayDatasetCache(data_dir, dataset_size)
+    dataset = replay_cache.update(exclude_epoch_or_later=start_epoch + 1)
     if not dataset and os.path.exists(checkpoint_path):
         try:
             checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=False)
-            dataset = checkpoint.get('dataset', [])
-            if dataset:
+            fallback = checkpoint.get('dataset', [])
+            if fallback:
+                replay_cache.dataset = fallback[-dataset_size:]
+                dataset = replay_cache.dataset
                 print(f"Loaded dataset fallback of {len(dataset)} positions from checkpoint.")
         except Exception:
             pass
@@ -178,6 +212,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.0003, nu
     print("Starting AlphaZero-style learner training loop...")
     _METRICS['total_epochs'] = epochs
     _METRICS['total_games'] = games_per_epoch
+
     for epoch in range(start_epoch, epochs):
         print(f"\n--- Epoch {epoch+1}/{epochs} ---")
         _METRICS['epoch'] = epoch + 1
@@ -187,77 +222,89 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.0003, nu
         last_log_count = -1
         while True:
             os.makedirs(game_epoch_dir, exist_ok=True)
-            files = [f for f in os.listdir(game_epoch_dir) if f.endswith('.pt')]
-            cur_count = len(files)
+            cur_count = count_games_in_dir(game_epoch_dir)
             if cur_count >= games_per_epoch:
                 ts = time.strftime("%H:%M:%S")
-                print(f"[{ts}] [Learner] Self-play games ready ({cur_count}/{games_per_epoch}). Starting GPU neural net training...", flush=True)
+                print(f"[{ts}] [Learner] Self-play games ready ({cur_count}/{games_per_epoch}). Starting GPU training...", flush=True)
                 break
             if cur_count != last_log_count:
                 ts = time.strftime("%H:%M:%S")
                 pct = int(cur_count * 100 / max(1, games_per_epoch))
-                print(f"[{ts}] [Learner] Self-play game generation progress: {cur_count}/{games_per_epoch} games ({pct}%)", flush=True)
+                print(f"[{ts}] [Learner] Self-play progress: {cur_count}/{games_per_epoch} games ({pct}%)", flush=True)
                 last_log_count = cur_count
             time.sleep(4)
             
-        # Load the newly completed dataset
-        dataset = load_dataset_from_disk(data_dir, dataset_size, exclude_epoch_or_later=epoch + 2)
+        # 2. Update replay cache with newly completed dataset
+        dataset = replay_cache.update(exclude_epoch_or_later=epoch + 2)
+        if not dataset:
+            continue
 
-        # 2. Training step (using model_gpu for high throughput backpropagation)
+        epoch_start_time = time.time()
+
+        # 3. Fast Vectorized Training Pass with AMP
         model_gpu.train()
-        random.shuffle(dataset)
-        num_batches = max(1, len(dataset) // batch_size)
+
+        states_all = torch.stack([x[0] for x in dataset])
+        policies_all = torch.tensor(np.array([x[1] for x in dataset]), dtype=torch.float32)
+        values_all = torch.tensor(np.array([x[2] for x in dataset]), dtype=torch.float32).unsqueeze(1)
+        masks_all = torch.tensor(np.array([x[3] for x in dataset]), dtype=torch.bool)
+
+        num_samples = len(dataset)
+        indices = torch.randperm(num_samples)
+        num_batches = max(1, num_samples // batch_size)
+
+        use_amp = (DEVICE.type in ('cuda', 'xpu'))
+        scaler = torch.amp.GradScaler(DEVICE.type, enabled=use_amp)
+
         epoch_p_loss = 0.0
         epoch_v_loss = 0.0
         epoch_entropy = 0.0
         epoch_mcts_eval = 0.0
         epoch_abs_mcts_eval = 0.0
-        
-        log_interval = max(1, num_batches // 5)
+
         for b in range(num_batches):
-            batch = dataset[b*batch_size : (b+1)*batch_size]
-            if not batch:
-                continue
-            states = torch.stack([x[0] for x in batch]).to(DEVICE)
-            target_policies = torch.tensor(np.array([x[1] for x in batch]), dtype=torch.float32).to(DEVICE)
-            target_values = torch.tensor(np.array([x[2] for x in batch]), dtype=torch.float32).unsqueeze(1).to(DEVICE)
-            valid_masks = torch.tensor(np.array([x[3] for x in batch]), dtype=torch.bool).to(DEVICE)
+            batch_idx = indices[b * batch_size : (b + 1) * batch_size]
+            states = states_all[batch_idx].to(DEVICE, non_blocking=True)
+            target_policies = policies_all[batch_idx].to(DEVICE, non_blocking=True)
+            target_values = values_all[batch_idx].to(DEVICE, non_blocking=True)
+            valid_masks = masks_all[batch_idx].to(DEVICE, non_blocking=True)
             
             optimizer.zero_grad()
-            logits, values = model_gpu(states)
+            with torch.amp.autocast(DEVICE.type, enabled=use_amp):
+                logits, values = model_gpu(states)
+                logits = logits.masked_fill(~valid_masks, -1e9)
+                log_probs = torch.log_softmax(logits, dim=1)
+                loss_p = -torch.sum(target_policies * log_probs) / logits.size(0)
+                loss_v = loss_val_fn(values, target_values)
+                loss = loss_p + loss_v
             
-            # Mask invalid moves with a large negative value before softmax
-            logits = logits.masked_fill(~valid_masks, -1e9)
-            
-            # Manual cross-entropy: works correctly with soft MCTS targets on all PyTorch versions
-            log_probs = torch.log_softmax(logits, dim=1)
-            loss_p = -torch.sum(target_policies * log_probs) / logits.size(0)
-            loss_v = loss_val_fn(values, target_values)
-            loss = loss_p + loss_v
-            
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model_gpu.parameters(), max_norm=1.0)
-            optimizer.step()
+            if use_amp:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model_gpu.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model_gpu.parameters(), max_norm=1.0)
+                optimizer.step()
             
             epoch_p_loss += loss_p.item()
             epoch_v_loss += loss_v.item()
             epoch_mcts_eval += target_values.mean().item()
             epoch_abs_mcts_eval += torch.abs(target_values).mean().item()
             
-            # Track policy entropy
             with torch.no_grad():
                 probs = torch.softmax(logits, dim=-1)
                 entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=-1).mean()
                 epoch_entropy += entropy.item()
 
-            if (b + 1) % log_interval == 0 or b == num_batches - 1:
-                ts = time.strftime("%H:%M:%S")
-                print(f"[{ts}] [Learner] Epoch {epoch+1} Batch [{b+1}/{num_batches}] - Policy Loss: {loss_p.item():.4f}, Value Loss: {loss_v.item():.4f}", flush=True)
-            
         scheduler.step()
         current_lr = scheduler.get_last_lr()[0]
         
-        # Update metrics for browser live panel
+        elapsed = time.time() - epoch_start_time
+        pos_per_sec = num_samples / max(0.001, elapsed)
+
         _METRICS['policy_loss'] = epoch_p_loss / max(1, num_batches)
         _METRICS['value_loss'] = epoch_v_loss / max(1, num_batches)
         _METRICS['entropy'] = epoch_entropy / max(1, num_batches)
@@ -266,7 +313,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.0003, nu
         _METRICS['avg_abs_mcts_eval'] = epoch_abs_mcts_eval / max(1, num_batches)
         
         ts = time.strftime("%H:%M:%S")
-        print(f"[{ts}] [Learner] Epoch {epoch+1} Complete | Policy Loss = {_METRICS['policy_loss']:.4f}, Value Loss = {_METRICS['value_loss']:.4f}, Policy Entropy = {_METRICS['entropy']:.4f}, LR = {_METRICS['lr']:.6f}", flush=True)
+        print(f"[{ts}] [Learner] Epoch {epoch+1} Complete ({elapsed:.1f}s, {pos_per_sec:.0f} pos/s) | Policy Loss: {_METRICS['policy_loss']:.4f} | Value Loss: {_METRICS['value_loss']:.4f} | Policy Entropy: {_METRICS['entropy']:.4f} | LR: {current_lr:.6f}", flush=True)
         
         try:
             write_training_state(None, 0, '-', 'epoch_complete', f'Epoch {epoch+1} finished')

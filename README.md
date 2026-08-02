@@ -2,6 +2,9 @@
 
 An implementation of an AlphaZero-style reinforcement learning agent for the board game Quoridor. The system uses a high-performance C++ simulator and Monte Carlo Tree Search (MCTS) engine (bound to Python via `pybind11`) for self-play data generation, and PyTorch to train a deep residual neural network. The trained model is then exported to ONNX to run in the web browser.
 
+> [!TIP]
+> For a detailed technical overview of system modules, data flows, and performance optimizations, see the [Architecture Documentation](docs/architecture.md).
+
 ---
 
 ## Generated Files Guide
@@ -17,13 +20,13 @@ When running the training pipeline, the following files and folders are generate
 * **`public/training_state.json`**: A temporary JSON file updated in real-time during self-play. The Vite dev server and web application poll this file to render a visual live overlay of the training board state and metrics.
 
 ### Structured Training Data
-* **`data/epoch_XXX/game_YYY.pt`**: Organized self-play game records. Each file contains a list of states, MCTS policy distributions, and game outcomes generated during that game. Keeping this data game-by-game prevents checkpoint file bloating.
+* **`data/epoch_XXX/games_YYY.pt`**: Organized self-play game records written in consolidated batch files per actor pass. Each file contains states, MCTS policy distributions, and game outcomes.
 
 ---
 
 ## Neural Network Architecture
 
-The agent is driven by a deep residual neural network ([QuoridorNet](quoridor_model.py#L24-L69)):
+The agent is driven by a deep residual neural network ([QuoridorNet](quoridor_model.py#L24-L75)):
 
 ### 1. Input State Representation `(11, 9, 9)`
 The game board is represented as an $11 \times 9 \times 9$ tensor. The 11 channels are defined as:
@@ -84,27 +87,27 @@ python setup_cpp.py build_ext --inplace
 This generates a compiled binary (`quoridor_cpp.pyd` on Windows or `quoridor_cpp.so` on Linux/macOS) in the root directory.
 
 ### 2. Run the Training Pipeline
-Once compiled, you can launch and configure the AlphaZero training pipeline using `train_alphazero.py`. This script automatically spawns the C++ self-play actor (`run_actor.py`) in the background to generate games:
+Once compiled, launch and configure the AlphaZero training pipeline using `train_alphazero.py`. This script automatically spawns parallel C++ self-play actor processes ([run_actor.py](run_actor.py)) in the background:
 
 ```powershell
-# Resume or start training with default settings (200 epochs, 50 games/epoch)
+# Start training with default settings (200 epochs, 50 games/epoch, 6 parallel actors)
 python train_alphazero.py
 
 # Continue training up to epoch 300
 python train_alphazero.py --epochs 300
 
-# Train with real-time ASCII board visualization in the console
-python train_alphazero.py --visualize
-
-# Custom training configuration
-python train_alphazero.py --epochs 80 --games_per_epoch 30 --simulations 120 --dataset_size 30000
+# High-throughput training with custom mini-batch size and 8 parallel actors
+python train_alphazero.py --batch_size 256 --num_actors 8 --device cuda
 ```
 
 ### CLI Arguments
 * `--epochs`: Total target epochs (default: `200`).
 * `--games_per_epoch`: Self-play games per epoch (default: `50`).
 * `--simulations`: MCTS searches per move (default: `400`).
+* `--batch_size`: Mini-batch size for model training (default: `64`).
 * `--dataset_size`: Maximum training positions stored in the replay buffer (default: `50000`).
+* `--num_actors`: Number of parallel self-play actor processes (default: `6`).
+* `--device`: Execution device (`"auto"`, `"cuda"`, `"xpu"`, `"directml"`, `"cpu"`).
 * `--data_dir`: Directory to save/load structured game files (default: `"data"`).
 * `--checkpoint_path`: Path to check-in/load weights (default: `"quoridor_checkpoint.pth"`).
 
@@ -118,22 +121,22 @@ The training pipeline runs in a loop across a user-specified number of epochs. E
 ### 1. Self-Play (Data Generation)
 * **Match Simulation**: The current neural network plays against itself for a set number of games per epoch (`games_per_epoch`, default: 50).
 * **MCTS Guidance**: During each turn, Monte Carlo Tree Search (MCTS) executes a deep lookahead (`simulations`, default: 400). It uses the model's **Policy Head** as prior probabilities to narrow down candidate branches and the **Value Head** to immediately evaluate leaf nodes.
-* **C++ Acceleration**: The self-play games are simulated in parallel batches by `run_actor.py` using the compiled C++ simulator and MCTS engine, leveraging ONNX Runtime for fast batched neural network inference.
+* **C++ Acceleration**: Self-play games are simulated in parallel batches by [run_actor.py](run_actor.py) using the compiled C++ simulator and MCTS engine, leveraging ONNX Runtime for fast batched neural network inference.
 * **Exploration vs. Exploitation**: 
-  - For the first 30 moves of each game, moves are sampled proportionally to the MCTS visit counts to guarantee diverse trajectories.
-  - After 30 moves, the agent acts greedily by picking the most-visited move.
-  - Dirichlet noise is added to the root nodes to ensure the agent explores new tactical options.
-* **Data Logging**: The game history (state tensors, search probability targets, and active player perspectives) is recorded.
-* **Symmetry Augmentation**: Each position is augmented using a horizontal flip (left-right board symmetry), doubling the training dataset size for free.
+  - For the first 6 moves of each game, pawn moves are sampled proportionally to MCTS visit counts to guarantee diverse openings.
+  - After 6 moves, the agent acts greedily by picking the most-visited action.
+  - Dirichlet noise ($\alpha=0.3, \epsilon=0.15$) is added to the root node to ensure exploration.
+* **Consolidated Data Batching**: Trajectories are saved in consolidated files (`games_32_<timestamp>_<uuid>.pt`) to maximize disk I/O performance.
+* **Symmetry Augmentation**: Each position is augmented using horizontal mirroring (left-right board symmetry), doubling the dataset size for free.
 
 ### 2. Optimization (Neural Network Training)
-* **Replay Buffer**: All positions from current and recent epochs are stored in a rolling dataset (capped by `dataset_size`).
-* **Mini-Batch Training**: The positions are shuffled and trained on in mini-batches (default batch size: 64) using the Adam optimizer with weight decay.
-* **Loss Function**: The total loss is a sum of two components:
-  - **Policy Loss**: Cross-entropy between the network's raw policy predictions and the target MCTS visit count distributions.
-  - **Value Loss**: Mean Squared Error (MSE) between the network's predicted game value ($V \in [-1, 1]$) and the final game outcome ($Z \in \{-1, 1\}$ or $0$ for draws).
-* **Learning Rate Decay**: The learning rate scheduler halves the learning rate every 15 epochs.
-* **ONNX Export**: A checkpoint (`quoridor_checkpoint.pth`) is saved after each epoch. At the end of the entire run, the model is exported as `quoridor_model.onnx` to run on the frontend.
+* **Replay Buffer Caching**: Positions are maintained in an in-memory buffer via `ReplayDatasetCache`, loading only newly generated batch files each epoch.
+* **AMP & Vectorized Tensors**: Mini-batches are trained with Automatic Mixed Precision (`torch.amp.autocast('cuda')`) and pre-stacked contiguous memory tensors for 2x-3x faster backpropagation.
+* **Loss Function**:
+  - **Policy Loss**: Cross-entropy between predicted policy logits and target MCTS visit distributions.
+  - **Value Loss**: Mean Squared Error (MSE) between predicted value ($V \in [-1, 1]$) and outcome ($Z \in \{-1, 1\}$ or $0$ for draws).
+* **Learning Rate Decay**: `StepLR` decays LR by 0.8 every 50 epochs.
+* **ONNX Export**: Updated weights are exported to `quoridor_model.onnx` so self-play workers hot-reload the latest model automatically.
 
 ---
 
