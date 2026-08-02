@@ -272,7 +272,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
             optimizer.zero_grad()
             with torch.amp.autocast(DEVICE.type, enabled=use_amp):
                 logits, values = model_gpu(states)
-                logits = logits.masked_fill(~valid_masks, -1e9)
+                logits = logits.masked_fill(~valid_masks, -1e4)
                 log_probs = torch.log_softmax(logits, dim=1)
                 loss_p = -torch.sum(target_policies * log_probs) / logits.size(0)
                 loss_v = loss_val_fn(values, target_values)

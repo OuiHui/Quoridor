@@ -386,6 +386,62 @@ function checkGameOver(state) {
     return 0; // playing
 }
 
+// Module-level tree cache for subtree preservation across turns
+let activeMCTSRoot = null;
+
+/**
+ * Resets the active MCTS tree cache.
+ */
+export function resetMCTSTree() {
+    activeMCTSRoot = null;
+}
+
+/**
+ * Checks deep equality of two Quoridor game states.
+ */
+export function areStatesEqual(s1, s2) {
+    if (!s1 || !s2) return false;
+    if (s1.p1Pos.x !== s2.p1Pos.x || s1.p1Pos.y !== s2.p1Pos.y) return false;
+    if (s1.p2Pos.x !== s2.p2Pos.x || s1.p2Pos.y !== s2.p2Pos.y) return false;
+    if (s1.turn !== s2.turn) return false;
+    if (s1.p1Walls !== s2.p1Walls || s1.p2Walls !== s2.p2Walls) return false;
+    if (s1.hWalls.size !== s2.hWalls.size || s1.vWalls.size !== s2.vWalls.size) return false;
+
+    for (const key of s1.hWalls.keys()) {
+        if (!s2.hWalls.has(key)) return false;
+    }
+    for (const key of s1.vWalls.keys()) {
+        if (!s2.vWalls.has(key)) return false;
+    }
+
+    return true;
+}
+
+/**
+ * Traverses old search tree up to 2 levels deep to locate a pre-existing state node.
+ */
+function findMatchingNodeInTree(oldRoot, targetState) {
+    if (!oldRoot) return null;
+    if (areStatesEqual(oldRoot.state, targetState)) {
+        return oldRoot;
+    }
+    for (const child of oldRoot.children.values()) {
+        if (areStatesEqual(child.state, targetState)) {
+            child.parent = null;
+            return child;
+        }
+    }
+    for (const child of oldRoot.children.values()) {
+        for (const grandChild of child.children.values()) {
+            if (areStatesEqual(grandChild.state, targetState)) {
+                grandChild.parent = null;
+                return grandChild;
+            }
+        }
+    }
+    return null;
+}
+
 // MONTE CARLO TREE SEARCH GUIDED BY NEURAL NETWORK OR HEURISTIC FALLBACK
 export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn, numSimulations = 60, modelSession = null) {
     const rootState = {
@@ -398,8 +454,16 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         turn
     };
     
-    const root = new MCTSNode(rootState);
+    // Subtree reuse: check if we can reuse node from previous search
+    let root = findMatchingNodeInTree(activeMCTSRoot, rootState);
+    if (!root) {
+        root = new MCTSNode(rootState);
+    } else {
+        root.parent = null;
+    }
+
     const cPuct = 1.4;
+    const PRUNING_THRESHOLD = 0.005;
     
     for (let sim = 0; sim < numSimulations; sim++) {
         let node = root;
@@ -471,24 +535,52 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             throw e;
         }
         
-        // Extract valid action indices and sum probabilities
-        let policySum = 0.0;
+        // Extract valid action indices & apply Policy Prior Pruning
         const validActionPairs = validActions.map(action => {
             const idx = mapActionToIndexPerspective(action, node.state.turn, node.state.p1Pos, node.state.p2Pos);
             const p = policy[idx] || 0.0;
-            policySum += p;
             return { action, idx, priorProb: p };
         });
 
+        // Filter non-pawn moves with prior below threshold unless candidate count is very small
+        let filteredPairs = validActionPairs.filter(pair => pair.action.type === 'move' || pair.priorProb >= PRUNING_THRESHOLD);
+        if (filteredPairs.length < 4) {
+            filteredPairs = validActionPairs;
+        }
+
+        let policySum = 0.0;
+        for (const pair of filteredPairs) {
+            policySum += pair.priorProb;
+        }
+
         // Expand node children with normalized priors
-        for (const { action, idx, priorProb } of validActionPairs) {
+        for (const { action, idx, priorProb } of filteredPairs) {
             const nextState = transitionState(node.state, action);
-            const normalizedPrior = policySum > 1e-8 ? priorProb / policySum : 1.0 / validActionPairs.length;
+            const normalizedPrior = policySum > 1e-8 ? priorProb / policySum : 1.0 / filteredPairs.length;
             node.children.set(idx, new MCTSNode(nextState, node, idx, normalizedPrior));
         }
         
         // 3. BACKPROPAGATION
         backpropagate(node, value);
+
+        // 4. DYNAMIC EARLY STOPPING
+        if (sim >= 15 && root.children.size > 1) {
+            let maxVisits = -1;
+            let secondMaxVisits = -1;
+            for (const child of root.children.values()) {
+                if (child.N > maxVisits) {
+                    secondMaxVisits = maxVisits;
+                    maxVisits = child.N;
+                } else if (child.N > secondMaxVisits) {
+                    secondMaxVisits = child.N;
+                }
+            }
+            const remainingSims = numSimulations - (sim + 1);
+            if (maxVisits - secondMaxVisits > remainingSims) {
+                // Top move visit lead cannot be overtaken by remaining simulation budget
+                break;
+            }
+        }
     }
     
     // Choose best move based on maximum visit counts (robust policy)
@@ -502,9 +594,18 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
     }
     
     if (bestActionIdx === -1) {
-        // Fallback to random legal move
+        activeMCTSRoot = null;
         const actions = getValidMCTSActions(rootState);
         return actions[0] || null;
+    }
+
+    // Preserve chosen branch as root for next turn
+    const chosenChild = root.children.get(bestActionIdx);
+    if (chosenChild) {
+        chosenChild.parent = null;
+        activeMCTSRoot = chosenChild;
+    } else {
+        activeMCTSRoot = null;
     }
     
     return mapIndexToActionPerspective(bestActionIdx, turn, p1Pos, p2Pos);
