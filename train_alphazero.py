@@ -395,9 +395,13 @@ if __name__ == "__main__":
                 pass
         export_to_onnx(starting_model, "quoridor_model.onnx")
 
-    # 2. Spawn the self-play game generator Actors in the background
+    # 2. Spawn the Centralized GPU Inference Server and self-play game generator Actors
     num_actors = max(1, args.num_actors)
     ts = time.strftime("%H:%M:%S")
+    print(f"[{ts}] [Learner] Spawning Centralized GPU Inference Server...", flush=True)
+    server_process = subprocess.Popen([sys.executable, 'gpu_inference_server.py'])
+    time.sleep(2)  # Allow GPU server to initialize CUDA context and load ONNX model
+
     print(f"[{ts}] [Learner] Spawning {num_actors} parallel self-play Actor processes...", flush=True)
     actor_processes = [
         subprocess.Popen([sys.executable, 'run_actor.py', '--actor_id', str(i + 1), '--simulations', str(args.simulations)])
@@ -420,8 +424,10 @@ if __name__ == "__main__":
             device=args.device,
         )
     finally:
-        print(f"Stopping {len(actor_processes)} background self-play Actor processes...")
+        print(f"Stopping {len(actor_processes)} background self-play Actor processes and GPU server...")
         for p in actor_processes:
             p.terminate()
+        server_process.terminate()
         for p in actor_processes:
             p.wait()
+        server_process.wait()

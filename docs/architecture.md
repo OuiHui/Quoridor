@@ -11,7 +11,8 @@ The training pipeline uses an **Asynchronous Actor-Learner Architecture**. High-
 ```mermaid
 graph TD
     A["Learner (train_alphazero.py)"] -->|Exports Weights| B["quoridor_model.onnx"]
-    B -->|Loaded by| C["Actor Workers (run_actor.py)"]
+    B -->|Loaded by| S["Central GPU Inference Server (gpu_inference_server.py)"]
+    S -->|TCP IPC Batched Inference| C["Actor Workers (run_actor.py)"]
     C -->|MCTS & C++ Simulator| D["Batched Self-Play (quoridor_cpp)"]
     D -->|Saves Consolidated .pt Files| E["data/epoch_XXX/"]
     E -->|Incremental Cache Update| F["ReplayDatasetCache"]
@@ -27,9 +28,14 @@ graph TD
 - **`QuoridorGame`**: High-performance game state representation, move generator, wall placement validator, and BFS shortest pathfinder. Exposed to Python via `pybind11` in `quoridor_cpp`.
 - **`MCTS` Engine**: Implements Monte Carlo Tree Search with PUCT selection formula ($c_{\text{puct}} = 1.4$) and Dirichlet noise ($\alpha = 0.3, \epsilon = 0.15$). Supports batched search execution (`MCTS.run_search_batched`) to unlock GPU inference parallelization.
 
-### B. Self-Play Actor Workers ([run_actor.py](../run_actor.py))
+### B. Centralized GPU Inference Server ([gpu_inference_server.py](../gpu_inference_server.py))
+- **Single GPU Context**: Dedicated process running an ONNX Runtime `InferenceSession` with `CUDAExecutionProvider`.
+- **Dynamic Micro-Batching**: Receives `(M, 11, 9, 9)` evaluation requests from all connected actors over TCP socket IPC, aggregates requests into larger batches (up to batch size 256–512), and runs single unified GPU forward passes.
+- **Auto Model Reloading**: Automatically polls for updated model checkpoints (`quoridor_model_epoch_XXX.onnx`) per epoch and hot-reloads model weights seamlessly.
+
+### C. Self-Play Actor Workers ([run_actor.py](../run_actor.py))
 - **Parallel Workers**: Multiple independent actor processes (`run_actor.py`) run in parallel.
-- **ONNX Model Evaluator**: Loads `quoridor_model.onnx` using [ONNXModelEvaluator](../onnx_inference.py#L4-L53) with hardware-accelerated execution providers (`CUDAExecutionProvider`, `TensorrtExecutionProvider`, `DmlExecutionProvider`, or `CPUExecutionProvider`).
+- **Remote Model Evaluator ([RemoteModelEvaluator](../onnx_inference.py))**: Sends state tensors over ultra-low-latency TCP sockets (`TCP_NODELAY`) to `gpu_inference_server.py`, receiving sliced policy and value tensors. Standalone mode provides fallback to local ONNX execution.
 - **Consolidated Batch File Saving**: Self-play trajectories are saved into consolidated files containing entire game batches (`games_32_<timestamp>_<uuid>.pt`), reducing disk file creation by 32x.
 
 ### C. Neural Network & Learner ([train_alphazero.py](../train_alphazero.py) & [quoridor_model.py](../quoridor_model.py))

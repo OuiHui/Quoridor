@@ -5,7 +5,7 @@ import uuid
 import torch
 import numpy as np
 import quoridor_cpp
-from onnx_inference import ONNXModelEvaluator
+from onnx_inference import ONNXModelEvaluator, RemoteModelEvaluator, create_evaluator
 from quoridor_model import flip_horizontal_state, flip_horizontal_policy, map_index_to_action_perspective, map_action_to_index_perspective
 
 # Constants matching train_alphazero.py
@@ -203,14 +203,17 @@ def main():
     parser.add_argument("--actor_id", type=int, default=1, help="Unique ID for this actor worker")
     parser.add_argument("--batch_size", type=int, default=64, help="Number of games in self-play batch")
     parser.add_argument("--simulations", type=int, default=NUM_SIMULATIONS, help="MCTS simulations per move")
+    parser.add_argument("--port", type=int, default=5555, help="Port of central GPU inference server")
+    parser.add_argument("--standalone", action="store_true", help="Force local ONNX evaluator instead of central server")
     args = parser.parse_args()
 
     actor_id = args.actor_id
     batch_size = args.batch_size
     num_simulations = args.simulations
+    use_central = not args.standalone
 
     ts = time.strftime("%H:%M:%S")
-    print(f"[{ts}] [Actor #{actor_id}] Started worker process (batch={batch_size}, sim={num_simulations})", flush=True)
+    print(f"[{ts}] [Actor #{actor_id}] Started worker process (batch={batch_size}, sim={num_simulations}, central_gpu={use_central})", flush=True)
     
     loaded_model_path = None
     evaluator = None
@@ -225,20 +228,20 @@ def main():
         if not os.path.exists(expected_model_path):
             expected_model_path = "quoridor_model.onnx"
             
-        if not os.path.exists(expected_model_path):
+        if not os.path.exists(expected_model_path) and not use_central:
             ts = time.strftime("%H:%M:%S")
             print(f"[{ts}] [Actor #{actor_id}] Waiting for initial ONNX model file...", flush=True)
             time.sleep(5)
             continue
             
-        if expected_model_path != loaded_model_path:
+        if evaluator is None or (not use_central and expected_model_path != loaded_model_path):
             ts = time.strftime("%H:%M:%S")
-            print(f"[{ts}] [Actor #{actor_id}] Loading ONNX model from {expected_model_path}...", flush=True)
+            print(f"[{ts}] [Actor #{actor_id}] Initializing evaluator (central={use_central})...", flush=True)
             try:
-                evaluator = ONNXModelEvaluator(expected_model_path)
+                evaluator = create_evaluator(expected_model_path, use_central_server=use_central, port=args.port)
                 loaded_model_path = expected_model_path
             except Exception as e:
-                print(f"[{ts}] [Actor #{actor_id}] Model locked, retrying... ({e})", flush=True)
+                print(f"[{ts}] [Actor #{actor_id}] Evaluator setup failed, retrying... ({e})", flush=True)
                 time.sleep(2)
                 continue
             
@@ -252,9 +255,6 @@ def main():
         ts = time.strftime("%H:%M:%S")
         print(f"[{ts}] [Actor #{actor_id}] Running self-play batch for Epoch {epoch+1} ({num_completed}/{GAMES_PER_EPOCH} ready)...", flush=True)
         run_self_play_batch(evaluator, epoch, batch_size=batch_size, num_simulations=num_simulations, actor_id=actor_id)
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
