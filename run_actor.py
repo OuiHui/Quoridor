@@ -1,8 +1,31 @@
 import os
+import sys
+
+# Force PyTorch & BLAS math libraries to single-thread per worker to eliminate 100+ thread CPU contention
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+import torch
+torch.set_num_threads(1)
+try:
+    torch.set_num_interop_threads(1)
+except Exception:
+    pass
+
+# Set Windows process priority to IDLE (0x00000040) so background self-play NEVER lags mouse/UI
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x00000040)
+    except Exception:
+        pass
+
 import time
 import random
 import uuid
-import torch
 import numpy as np
 import quoridor_cpp
 from onnx_inference import ONNXModelEvaluator, RemoteModelEvaluator, create_evaluator
@@ -12,7 +35,7 @@ from quoridor_model import flip_horizontal_state, flip_horizontal_policy, map_in
 TEMP_THRESHOLD = 6
 NUM_SIMULATIONS = 400  # Default simulations per move
 GAMES_PER_EPOCH = 50   # Expected games per epoch
-DATA_DIR = "data"
+DATA_DIR = os.environ.get("QUORIDOR_DATA_DIR", r"C:\quoridor_data")
 ONNX_PATH = "quoridor_model.onnx"
 CHECKPOINT_PATH = "quoridor_checkpoint.pth"
 
@@ -74,7 +97,7 @@ def get_current_epoch():
             return max(epochs)
     return 0
 
-def run_self_play_batch(evaluator, epoch, batch_size=64, num_simulations=100, actor_id=1):
+def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=100, actor_id=1):
     mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.3, dirichlet_eps=0.15)
     
     # Initialize batch vectors
@@ -201,7 +224,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Self-play actor process for Quoridor AlphaZero.")
     parser.add_argument("--actor_id", type=int, default=1, help="Unique ID for this actor worker")
-    parser.add_argument("--batch_size", type=int, default=64, help="Number of games in self-play batch")
+    parser.add_argument("--batch_size", type=int, default=16, help="Number of games in self-play batch")
     parser.add_argument("--simulations", type=int, default=NUM_SIMULATIONS, help="MCTS simulations per move")
     parser.add_argument("--port", type=int, default=5555, help="Port of central GPU inference server")
     parser.add_argument("--standalone", action="store_true", help="Force local ONNX evaluator instead of central server")

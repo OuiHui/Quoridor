@@ -3,12 +3,25 @@ import os
 os.environ["TORCHDYNAMO_DISABLE"] = "1"
 os.environ["PYTHON_JIT"] = "0"
 
+# Limit intra-op math threads per process to prevent mouse lag & CPU thread contention
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+import torch
+torch.set_num_threads(1)
+try:
+    torch.set_num_interop_threads(1)
+except Exception:
+    pass
+
 import json
 import math
 import random
 import time
 import numpy as np
-import torch
 import torch.nn as nn
 import torch.optim as optim
 
@@ -374,7 +387,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=0.0003, help="Initial learning rate")
     parser.add_argument("--simulations", type=int, default=400, help="Number of MCTS simulations per turn")
     parser.add_argument("--dataset_size", type=int, default=50000, help="Max replay buffer size (recent positions kept)")
-    parser.add_argument("--data_dir", type=str, default="data", help="Directory to save/load training games")
+    parser.add_argument("--data_dir", type=str, default=r"C:\quoridor_data", help="Directory to save/load training games")
     parser.add_argument("--checkpoint_path", type=str, default="quoridor_checkpoint.pth", help="Path to checkpoint file")
     parser.add_argument("--visualize", "-v", action="store_true", help="Visualize self-play games in terminal")
     parser.add_argument("--reset_lr", action="store_true", help="Reset LR and scheduler instead of loading from checkpoint")
@@ -404,7 +417,7 @@ if __name__ == "__main__":
 
     print(f"[{ts}] [Learner] Spawning {num_actors} parallel self-play Actor processes...", flush=True)
     actor_processes = [
-        subprocess.Popen([sys.executable, 'run_actor.py', '--actor_id', str(i + 1), '--simulations', str(args.simulations)])
+        subprocess.Popen([sys.executable, 'run_actor.py', '--actor_id', str(i + 1), '--simulations', str(args.simulations), '--batch_size', '16'])
         for i in range(num_actors)
     ]
 

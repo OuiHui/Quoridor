@@ -4,14 +4,14 @@ import numpy as np
 import onnxruntime as ort
 
 def receive_exact(sock, n_bytes):
-    """Utility function to receive exact byte count from TCP socket."""
-    buf = bytearray()
-    while len(buf) < n_bytes:
-        chunk = sock.recv(n_bytes - len(buf))
-        if not chunk:
+    """Utility function to receive exact byte count from TCP socket using MSG_WAITALL."""
+    try:
+        data = sock.recv(n_bytes, socket.MSG_WAITALL)
+        if not data or len(data) < n_bytes:
             return None
-        buf.extend(chunk)
-    return bytes(buf)
+        return data
+    except socket.error:
+        return None
 
 class RemoteModelEvaluator:
     """Client interface for Centralized GPU Inference Server over TCP IPC."""
