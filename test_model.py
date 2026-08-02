@@ -36,7 +36,7 @@ def run_tests():
     assert tensor[7, 4, 4] == 1.0, "P2 path cell incorrect in channel 7"
     assert abs(tensor[8, 0, 0] - 8.0/10.0) < 1e-5, "P1 walls left incorrect in channel 8"
     assert abs(tensor[9, 0, 0] - 9.0/10.0) < 1e-5, "P2 walls left incorrect in channel 9"
-    assert tensor[10, 0, 0] == 1.0, "Turn indicator incorrect in channel 10"
+    assert tensor[10, 0, 0] == 0.0, "Channel 10 padding incorrect"
 
     # Test P2 turn (rotated state encoding)
     tensor_p2 = encode_state(

@@ -41,17 +41,17 @@ class QuoridorNet(nn.Module):
         # Value Head: (128, 9, 9) -> Conv -> BN -> ReLU -> Flatten -> Cat with scalars -> Linear -> ReLU -> Linear -> Tanh
         self.value_conv = nn.Conv2d(channels, 4, kernel_size=1, bias=False)
         self.value_bn = nn.BatchNorm2d(4)
-        self.value_fc1 = nn.Linear(4 * 9 * 9 + 5, 64)
+        self.value_fc1 = nn.Linear(4 * 9 * 9 + 4, 64)
         self.value_fc2 = nn.Linear(64, 1)
         
         # Policy Head: (128, 9, 9) -> Conv -> BN -> ReLU -> Flatten -> Cat with scalars -> Linear
         self.policy_conv = nn.Conv2d(channels, 4, kernel_size=1, bias=False)
         self.policy_bn = nn.BatchNorm2d(4)
-        self.policy_fc = nn.Linear(4 * 9 * 9 + 5, 140)
+        self.policy_fc = nn.Linear(4 * 9 * 9 + 4, 140)
 
     def forward(self, x):
         x_spatial = x[:, [0, 1, 2, 3, 6, 7], :, :]
-        scalars = x[:, [4, 5, 8, 9, 10], 0, 0]
+        scalars = x[:, [4, 5, 8, 9], 0, 0]
 
         # Trunk
         out = F.relu(self.bn_init(self.conv_init(x_spatial)))
@@ -155,8 +155,8 @@ def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_le
     # 9. Opponent walls remaining / 10.0
     tensor[9, :, :] = min(opp_walls / 10.0, 1.0)
     
-    # 10. Absolute player identity: 1.0 if the active player is P1, 0.0 if P2.
-    tensor[10, :, :] = 1.0 if is_p1_turn else 0.0
+    # 10. Unused padding channel
+    tensor[10, :, :] = 0.0
 
     return tensor
 

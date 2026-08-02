@@ -185,11 +185,10 @@ std::vector<float> MCTS::encode_state_cpp(const QuoridorGame& game) {
         }
     }
     
-    // 10. Player identity
-    float turn_indicator = game.is_p1_turn ? 1.0f : 0.0f;
+    // 10. Unused padding channel
     for (int x = 0; x < 9; ++x) {
         for (int y = 0; y < 9; ++y) {
-            set_val(10, x, y, turn_indicator);
+            set_val(10, x, y, 0.0f);
         }
     }
     

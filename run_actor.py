@@ -58,7 +58,7 @@ def get_current_epoch():
     return 0
 
 def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=100, actor_id=1):
-    mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.3, dirichlet_eps=0.25)
+    mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.3, dirichlet_eps=0.15)
     
     # Initialize batch vectors
     games = [quoridor_cpp.QuoridorGame() for _ in range(batch_size)]
@@ -159,8 +159,14 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=100, ac
             
             # Select action
             if move_counts[global_idx] < TEMP_THRESHOLD:
-                # Proportional sampling for exploration
-                action_idx = np.random.choice(140, p=policy_probs)
+                # Proportional sampling within pawn moves for exploration during opening
+                pawn_probs = policy_probs[:12].copy()
+                pawn_sum = pawn_probs.sum()
+                if pawn_sum > 1e-6:
+                    pawn_probs /= pawn_sum
+                    action_idx = np.random.choice(12, p=pawn_probs)
+                else:
+                    action_idx = np.argmax(policy_probs)
             else:
                 # Greedy choice
                 action_idx = np.argmax(policy_probs)

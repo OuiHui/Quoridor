@@ -17,7 +17,7 @@ quoridor_model_test.onnx.data
 quoridor_checkpoint_backup.pth
 quoridor_model_backup.onnx
 quoridor_model_backup.onnx.data
-data_backup_epoch200/
+data_backup_epoch156/
 checkpoint_backup/
 
 
