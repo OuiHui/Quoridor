@@ -57,7 +57,7 @@ def get_current_epoch():
             return max(epochs)
     return 0
 
-def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=100):
+def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=100, actor_id=1):
     mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.3, dirichlet_eps=0.25)
     
     # Initialize batch vectors
@@ -67,12 +67,15 @@ def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=100):
     state_histories = [{} for _ in range(batch_size)]
     active_indices = list(range(batch_size))
     
+    batch_start_time = time.time()
+    games_completed_in_batch = 0
+    total_positions_generated = 0
+
     while len(active_indices) > 0:
         # 1. Gather active games
         active_games = [games[i] for i in active_indices]
         
         # 2. Run MCTS search in lock-step using the ONNX model evaluator as callback
-        # C++ will invoke this callback with a flat float array of shape [M, 11, 9, 9]
         visit_counts_list, _ = mcts.run_search_batched(
             active_games,
             evaluator.evaluate_batch,
@@ -128,7 +131,12 @@ def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=100):
                 file_id = f"{uuid.uuid4().hex[:8]}"
                 filepath = os.path.join(epoch_dir, f"game_{time.time():.3f}_{file_id}.pt")
                 torch.save(augmented_examples, filepath)
-                print(f"Saved game to {filepath} ({len(augmented_examples)} positions including flips)")
+                
+                games_completed_in_batch += 1
+                total_positions_generated += len(augmented_examples)
+                ts = time.strftime("%H:%M:%S")
+                res_str = "Draw" if is_draw else ("P1 Win" if final_winner == 1 else "P2 Win")
+                print(f"[{ts}] [Actor #{actor_id}] Saved game to {os.path.basename(filepath)} ({total_moves} moves, {len(augmented_examples)} positions including flips | Result: {res_str})", flush=True)
                 
                 continue  # Game complete, remove from active pool
                 
@@ -167,10 +175,27 @@ def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=100):
             
         active_indices = next_active_indices
 
+    elapsed = time.time() - batch_start_time
+    pos_per_sec = total_positions_generated / max(0.001, elapsed)
+    ts = time.strftime("%H:%M:%S")
+    print(f"[{ts}] [Actor #{actor_id}] Completed batch of {games_completed_in_batch} games in {elapsed:.1f}s ({pos_per_sec:.1f} positions/s)", flush=True)
+
 def main():
-    print("=" * 60)
-    print("           HIGH-PERFORMANCE QUORIDOR SELF-PLAY ACTOR")
-    print("=" * 60)
+    import argparse
+    parser = argparse.ArgumentParser(description="Self-play actor process for Quoridor AlphaZero.")
+    parser.add_argument("--actor_id", type=int, default=1, help="Unique ID for this actor worker")
+    parser.add_argument("--batch_size", type=int, default=32, help="Number of games in self-play batch")
+    parser.add_argument("--simulations", type=int, default=NUM_SIMULATIONS, help="MCTS simulations per move")
+    args = parser.parse_args()
+
+    actor_id = args.actor_id
+    batch_size = args.batch_size
+    num_simulations = args.simulations
+
+    ts = time.strftime("%H:%M:%S")
+    print("=" * 60, flush=True)
+    print(f"[{ts}] [Actor #{actor_id}] INITIALIZING HIGH-PERFORMANCE SELF-PLAY WORKER", flush=True)
+    print("=" * 60, flush=True)
     
     loaded_model_path = None
     evaluator = None
@@ -190,19 +215,20 @@ def main():
             
         # Wait until a model file is available
         if not os.path.exists(expected_model_path):
-            print(f"Waiting for a starting ONNX model file to be exported by the learner...")
+            ts = time.strftime("%H:%M:%S")
+            print(f"[{ts}] [Actor #{actor_id}] Waiting for initial ONNX model file...", flush=True)
             time.sleep(5)
             continue
             
         # Load or reload model weights dynamically
         if expected_model_path != loaded_model_path:
-            print(f"Loading ONNX model evaluator from {expected_model_path}...")
+            ts = time.strftime("%H:%M:%S")
+            print(f"[{ts}] [Actor #{actor_id}] Loading ONNX model evaluator from {expected_model_path}...", flush=True)
             try:
                 evaluator = ONNXModelEvaluator(expected_model_path)
                 loaded_model_path = expected_model_path
             except Exception as e:
-                # Handle cases where the learner is in the middle of writing the file
-                print(f"ONNX model file is currently locked/writing, retrying in 2s... ({e})")
+                print(f"[{ts}] [Actor #{actor_id}] ONNX model locked/writing, retrying in 2s... ({e})", flush=True)
                 time.sleep(2)
                 continue
             
@@ -214,13 +240,15 @@ def main():
             num_completed = len([f for f in os.listdir(epoch_dir) if f.endswith(".pt")])
             
         if num_completed >= GAMES_PER_EPOCH:
-            print(f"Epoch {epoch+1} is fully generated ({num_completed}/{GAMES_PER_EPOCH} games). Waiting for learner...")
+            ts = time.strftime("%H:%M:%S")
+            print(f"[{ts}] [Actor #{actor_id}] Epoch {epoch+1} target reached ({num_completed}/{GAMES_PER_EPOCH} games). Idle waiting for learner...", flush=True)
             time.sleep(5)
             continue
             
-        print(f"\nGenerating batch of games for Epoch {epoch+1} ({num_completed}/{GAMES_PER_EPOCH} completed)...")
+        ts = time.strftime("%H:%M:%S")
+        print(f"[{ts}] [Actor #{actor_id}] Starting batch of games for Epoch {epoch+1} ({num_completed}/{GAMES_PER_EPOCH} ready)...", flush=True)
         # Run a batch of games in parallel
-        run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=NUM_SIMULATIONS)
+        run_self_play_batch(evaluator, epoch, batch_size=batch_size, num_simulations=num_simulations, actor_id=actor_id)
 
 if __name__ == "__main__":
     main()

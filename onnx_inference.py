@@ -5,6 +5,10 @@ class ONNXModelEvaluator:
     def __init__(self, onnx_path):
         providers = ort.get_available_providers()
         selected_providers = []
+        if 'CUDAExecutionProvider' in providers:
+            selected_providers.append('CUDAExecutionProvider')
+        if 'TensorrtExecutionProvider' in providers:
+            selected_providers.append('TensorrtExecutionProvider')
         if 'DmlExecutionProvider' in providers:
             selected_providers.append('DmlExecutionProvider')
         if 'CPUExecutionProvider' in providers:
