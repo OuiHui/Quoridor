@@ -74,7 +74,7 @@ def get_current_epoch():
             return max(epochs)
     return 0
 
-def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=100, actor_id=1):
+def run_self_play_batch(evaluator, epoch, batch_size=64, num_simulations=100, actor_id=1):
     mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.3, dirichlet_eps=0.15)
     
     # Initialize batch vectors
@@ -201,7 +201,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Self-play actor process for Quoridor AlphaZero.")
     parser.add_argument("--actor_id", type=int, default=1, help="Unique ID for this actor worker")
-    parser.add_argument("--batch_size", type=int, default=32, help="Number of games in self-play batch")
+    parser.add_argument("--batch_size", type=int, default=64, help="Number of games in self-play batch")
     parser.add_argument("--simulations", type=int, default=NUM_SIMULATIONS, help="MCTS simulations per move")
     args = parser.parse_args()
 

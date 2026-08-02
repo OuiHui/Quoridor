@@ -158,7 +158,7 @@ def load_dataset_from_disk(data_dir="data", max_positions=50000, exclude_epoch_o
     return cache.update(exclude_epoch_or_later)
 
 
-def train_alphazero(epochs=200, games_per_epoch=50, batch_size=64, lr=0.0003, num_simulations=400, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, device="auto"):
+def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, num_simulations=400, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, device="auto"):
     global DEVICE
     DEVICE = select_device(device)
     print(f"Training device: {DEVICE}")
@@ -370,7 +370,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AlphaZero-style training loop for Quoridor.")
     parser.add_argument("--epochs", type=int, default=200, help="Total epochs to train (continues from checkpoint)")
     parser.add_argument("--games_per_epoch", type=int, default=50, help="Number of self-play games per epoch")
-    parser.add_argument("--batch_size", type=int, default=64, help="Mini-batch size for model training")
+    parser.add_argument("--batch_size", type=int, default=256, help="Mini-batch size for model training")
     parser.add_argument("--lr", type=float, default=0.0003, help="Initial learning rate")
     parser.add_argument("--simulations", type=int, default=400, help="Number of MCTS simulations per turn")
     parser.add_argument("--dataset_size", type=int, default=50000, help="Max replay buffer size (recent positions kept)")
@@ -378,7 +378,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_path", type=str, default="quoridor_checkpoint.pth", help="Path to checkpoint file")
     parser.add_argument("--visualize", "-v", action="store_true", help="Visualize self-play games in terminal")
     parser.add_argument("--reset_lr", action="store_true", help="Reset LR and scheduler instead of loading from checkpoint")
-    parser.add_argument("--num_actors", type=int, default=6, help="Number of parallel self-play actor processes (default: 6)")
+    parser.add_argument("--num_actors", type=int, default=8, help="Number of parallel self-play actor processes (default: 8)")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda", "xpu", "directml"], help="Execution device (default: auto)")
     args = parser.parse_args()
 
