@@ -32,7 +32,7 @@ from onnx_inference import ONNXModelEvaluator, RemoteModelEvaluator, create_eval
 from quoridor_model import flip_horizontal_state, flip_horizontal_policy, map_index_to_action_perspective, map_action_to_index_perspective
 
 # Constants matching train_alphazero.py
-TEMP_THRESHOLD = 6
+TEMP_THRESHOLD = 20
 NUM_SIMULATIONS = 400  # Default simulations per move
 GAMES_PER_EPOCH = 50   # Expected games per epoch
 DATA_DIR = os.environ.get("QUORIDOR_DATA_DIR", r"C:\quoridor_data")
@@ -155,10 +155,7 @@ def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=100, ac
                         target_value = 0.0
                     else:
                         is_win = (final_winner == 1 and is_p1) or (final_winner == -1 and not is_p1)
-                        base_val = 1.0 if is_win else -1.0
-                        moves_to_end = total_moves - 1 - idx
-                        discount = 0.99 ** moves_to_end
-                        target_value = base_val * discount
+                        target_value = 1.0 if is_win else -1.0
                     
                     state_tensor = torch.tensor(state_flat, dtype=torch.float32).reshape(11, 9, 9)
                     training_examples.append((state_tensor, policy_probs, target_value, valid_mask))
@@ -188,14 +185,15 @@ def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=100, ac
             trajectories[global_idx].append((state_flat, policy_probs, game.is_p1_turn, valid_mask))
             
             if move_counts[global_idx] < TEMP_THRESHOLD:
-                pawn_probs = policy_probs[:12].copy()
-                pawn_sum = pawn_probs.sum()
-                if pawn_sum > 1e-6:
-                    pawn_probs /= pawn_sum
-                    action_idx = np.random.choice(12, p=pawn_probs)
+                # Temperature tau = 1.0 sampling across all legal actions in policy_probs
+                prob_sum = policy_probs.sum()
+                if prob_sum > 1e-8:
+                    norm_probs = policy_probs / prob_sum
+                    action_idx = np.random.choice(140, p=norm_probs)
                 else:
                     action_idx = np.argmax(policy_probs)
             else:
+                # Exploitation phase: choose action with highest visit count
                 action_idx = np.argmax(policy_probs)
                 
             py_action = map_index_to_action_perspective(action_idx, game.is_p1_turn, game.p1_pos, game.p2_pos)

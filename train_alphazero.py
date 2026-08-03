@@ -308,9 +308,11 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
             epoch_abs_mcts_eval += torch.abs(target_values).mean().item()
             
             with torch.no_grad():
-                probs = torch.softmax(logits, dim=-1)
-                entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=-1).mean()
-                epoch_entropy += entropy.item()
+                probs = torch.softmax(logits.float(), dim=-1) * valid_masks.float()
+                log_p = torch.log(torch.clamp(probs, min=1e-8))
+                entropy = -torch.sum(probs * log_p, dim=-1).mean()
+                if not torch.isnan(entropy):
+                    epoch_entropy += entropy.item()
 
         scheduler.step()
         current_lr = scheduler.get_last_lr()[0]
