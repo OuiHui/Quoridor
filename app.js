@@ -8,7 +8,6 @@ import headerHtml from './components/header.html?raw';
 import playbookHtml from './components/playbook-panel.html?raw';
 import boardHtml from './components/board-container.html?raw';
 import diagnosticsHtml from './components/diagnostics-panel.html?raw';
-import footerHtml from './components/footer.html?raw';
 import modalHtml from './components/modal.html?raw';
 import trainingWatchHtml from './components/training-watch.html?raw';
 import trainingStatsPanelHtml from './components/training-stats-panel.html?raw';
@@ -77,9 +76,6 @@ function init() {
 
     const diagnosticsEl = document.querySelector('.right-panel');
     if (diagnosticsEl) diagnosticsEl.innerHTML = diagnosticsHtml;
-
-    const footerEl = document.querySelector('.app-footer');
-    if (footerEl) footerEl.innerHTML = footerHtml;
 
     const modalEl = document.getElementById('modal-container');
     if (modalEl) modalEl.innerHTML = modalHtml;
@@ -161,45 +157,32 @@ function init() {
     });
 
     // Wire up auto-hint toggle trigger
-    const hintBtn = document.getElementById('btn-hint');
-    hintBtn.addEventListener('click', () => {
+    const toggleHintMode = () => {
         if (state.trainingWatchActive) return;
         state.hintOn = !state.hintOn;
+        const hintBtn = document.getElementById('btn-hint');
         if (state.hintOn) {
-            hintBtn.textContent = 'Hint: On';
-            hintBtn.classList.remove('btn-secondary');
-            hintBtn.classList.add('btn-gold');
-            hintBtn.classList.remove('btn-accent');
-
-            const turnSnapshot = state.turn;
-            const p1PosSnapshot = { ...state.p1Pos };
-            const p2PosSnapshot = { ...state.p2Pos };
-            const hWallsSnapshot = new Map(state.hWalls);
-            const vWallsSnapshot = new Map(state.vWalls);
-            const p1WallsSnapshot = state.p1Walls;
-            const p2WallsSnapshot = state.p2Walls;
-
-            setTimeout(() => {
-                if (state.turn !== turnSnapshot) return;
-                const bestMoves = getBestMoves(
-                    turnSnapshot,
-                    p1PosSnapshot,
-                    p2PosSnapshot,
-                    hWallsSnapshot,
-                    vWallsSnapshot,
-                    p1WallsSnapshot,
-                    p2WallsSnapshot
-                );
-                renderHints(bestMoves);
-            }, 50);
+            if (hintBtn) {
+                hintBtn.textContent = 'Hint: On';
+                hintBtn.classList.remove('btn-secondary');
+                hintBtn.classList.add('btn-gold');
+                hintBtn.classList.remove('btn-accent');
+            }
         } else {
-            hintBtn.textContent = 'Hint: Off';
-            hintBtn.classList.remove('btn-accent');
-            hintBtn.classList.remove('btn-gold');
-            hintBtn.classList.add('btn-secondary');
+            if (hintBtn) {
+                hintBtn.textContent = 'Hint: Off';
+                hintBtn.classList.remove('btn-accent', 'btn-gold');
+                hintBtn.classList.add('btn-secondary');
+            }
             clearHints();
         }
-    });
+        updateUI();
+    };
+
+    const hintBtn = document.getElementById('btn-hint');
+    if (hintBtn) {
+        hintBtn.addEventListener('click', toggleHintMode);
+    }
 
     // Hint Wall hover/click delegation
     const boardEl = document.getElementById('board');
@@ -447,6 +430,11 @@ function init() {
 
         const key = e.key.toLowerCase();
 
+        if (key === 'h') {
+            toggleHintMode();
+            e.preventDefault();
+            return;
+        }
         if (key === 'f') {
             setInteractionMode('move');
             e.preventDefault();

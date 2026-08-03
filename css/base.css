@@ -6,23 +6,27 @@
     --bg-card-hover: rgba(30, 41, 59, 0.8);
     --border-color: rgba(255, 255, 255, 0.08);
     --border-glow: rgba(56, 189, 248, 0.2);
-    
-    --color-p1: #06b6d4;     /* Cyan */
+
+    --color-p1: #06b6d4;
+    /* Cyan */
     --color-p1-glow: rgba(6, 182, 212, 0.4);
-    --color-p2: #f59e0b;     /* Amber */
+    --color-p2: #f59e0b;
+    /* Amber */
     --color-p2-glow: rgba(245, 158, 11, 0.4);
-    
+
     --color-text: #e2e8f0;
     --color-text-muted: #94a3b8;
     --color-success: #10b981;
     --color-error: #ef4444;
-    --color-accent: #8b5cf6;  /* Purple */
-    --color-gold: #fbbf24;    /* Gold */
+    --color-accent: #8b5cf6;
+    /* Purple */
+    --color-gold: #fbbf24;
+    /* Gold */
     --color-gold-glow: rgba(251, 191, 36, 0.4);
-    
+
     --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     --font-mono: 'Fira Code', monospace;
-    
+
     --board-size: 536px;
     --cell-size: 48px;
     --track-size: 10px;
@@ -59,7 +63,7 @@
 
 body {
     background-color: var(--bg-dark);
-    background-image: 
+    background-image:
         radial-gradient(at 0% 0%, rgba(30, 27, 75, 0.4) 0px, transparent 50%),
         radial-gradient(at 100% 0%, rgba(15, 23, 42, 0.5) 0px, transparent 50%),
         radial-gradient(at 50% 100%, rgba(6, 78, 59, 0.2) 0px, transparent 50%);
@@ -179,6 +183,7 @@ body {
     .main-content {
         grid-template-columns: 1fr;
     }
+
     .board-container {
         order: -1;
     }
@@ -314,12 +319,4 @@ select:focus {
 
 .checkbox-wrapper input {
     cursor: pointer;
-}
-
-/* FOOTER */
-.app-footer {
-    text-align: center;
-    font-size: 0.75rem;
-    color: var(--color-text-muted);
-    padding: 10px 0;
 }

@@ -191,3 +191,12 @@ export function getBestMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wa
     return [];
 }
 
+// Get both best moves for current player and threat moves for opponent
+export function getBestMovesAndThreats(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls) {
+    const oppPlayer = player === 1 ? 2 : 1;
+    const bestMoves = getBestMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls);
+    const threatMoves = getBestMoves(oppPlayer, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls);
+    return { bestMoves, threatMoves };
+}
+
+

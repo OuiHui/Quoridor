@@ -616,6 +616,40 @@
     }
 }
 
+/* THREAT HINTS */
+.board-cell.threat-cell {
+    border: 2px dashed #ef4444 !important;
+    box-shadow: 0 0 14px rgba(239, 68, 68, 0.6);
+    background: rgba(239, 68, 68, 0.25) !important;
+}
+
+.board-cell.hint-cell.threat-cell {
+    border: 2px dashed #f59e0b !important;
+    box-shadow: 0 0 16px rgba(239, 68, 68, 0.8), 0 0 8px rgba(251, 191, 36, 0.8);
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.25), rgba(239, 68, 68, 0.25)) !important;
+}
+
+.placed-wall.threat-wall {
+    background: rgba(239, 68, 68, 0.55) !important;
+    border: 2px dashed #ef4444 !important;
+    box-shadow: 0 0 14px rgba(239, 68, 68, 0.7);
+    animation: threatPulse 1.5s infinite alternate ease-in-out;
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+@keyframes threatPulse {
+    from {
+        opacity: 0.6;
+        box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+    }
+    to {
+        opacity: 1;
+        box-shadow: 0 0 18px rgba(239, 68, 68, 0.9);
+    }
+}
+
+
 .quoridor-board.playbook-locked .board-cell,
 .quoridor-board.playbook-locked .board-edge,
 .quoridor-board.playbook-locked .board-joint,

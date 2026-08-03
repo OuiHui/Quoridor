@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { findShortestPath, getValidPawnMoves } from './engine.js';
-import { getBestMoves } from './ai.js';
+import { getBestMoves, getBestMovesAndThreats } from './ai.js';
 import { renderHints, clearHints } from './ui-hints.js';
 import { getWallNotation } from './notation.js';
 import { updateEvalBar } from './ui-eval-bar.js';
@@ -171,7 +171,7 @@ export function updateUI() {
 
         setTimeout(() => {
             if (state.turn !== turnSnapshot) return;
-            const bestMoves = getBestMoves(
+            const { bestMoves, threatMoves } = getBestMovesAndThreats(
                 turnSnapshot,
                 p1PosSnapshot,
                 p2PosSnapshot,
@@ -180,7 +180,9 @@ export function updateUI() {
                 p1WallsSnapshot,
                 p2WallsSnapshot
             );
-            renderHints(bestMoves);
+            if (state.hintOn && state.turn === turnSnapshot) {
+                renderHints(bestMoves, threatMoves);
+            }
         }, 50);
     } else {
         clearHints();

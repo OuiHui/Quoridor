@@ -1,3 +1,7 @@
+import { state } from './state.js';
+import { playSound } from './sfx.js';
+import { logAction } from './ui-history.js';
+
 export function triggerGameOver(title, message) {
     playSound('win');
     logAction(title, 'system');
