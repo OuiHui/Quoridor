@@ -20,6 +20,7 @@ import { initPlaybook } from './js/playbook.js';
 import { loadONNXModel } from './js/model-loader.js';
 import { initUIEvents, toggleHintMode, setInteractionMode } from './js/ui-events.js';
 import { initKeyboardControls } from './js/keyboard-controls.js';
+import { initCustomDropdowns } from './js/ui-dropdown.js';
 import {
     handleCellClick,
     handleCellMouseEnter,
@@ -101,6 +102,7 @@ function init() {
 
     initUIEvents();
     initKeyboardControls({ toggleHintMode, setInteractionMode });
+    initCustomDropdowns();
     setGameMode('sandbox');
 }
 
