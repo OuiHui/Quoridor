@@ -24,7 +24,19 @@ import { initPlaybook, playbookNextStep, playbookPrevStep } from './js/playbook.
 import { renderBoard, updatePawnPositions, renderPlacedWalls } from './js/ui-board.js';
 import { updateUI, logAction, clearLogs, setHistoryJumpCallback } from './js/ui-diagnostics.js';
 import { renderHints, clearHints } from './js/ui-hints.js';
-import { initTrainingWatch, showTrainingWatch, hideTrainingWatch } from './js/training-watch.js';
+import { initTrainingWatch, showTrainingWatch } from './js/training-watch.js';
+
+// Import Board Interactions
+import {
+    handleCellClick,
+    handleCellMouseEnter,
+    handleEdgeMouseMove,
+    handleEdgeMouseLeave,
+    handleEdgeClick,
+    handleJointMouseMove,
+    handleJointMouseLeave,
+    handleJointClick
+} from './js/board-interaction.js';
 
 // Import Game State Controllers
 import {
@@ -38,193 +50,19 @@ import {
     stepHistory
 } from './js/game.js';
 
-
-// RESOLVE CLAMPED WALL FROM TRACK EDGE HOVER/CLICK
-function getWallFromEdge(e, x, y, edgeType) {
-    if (edgeType === 'h') {
-        let wx;
-        if (x === 0) {
-            wx = 0;
-        } else if (x === 8) {
-            wx = 7;
-        } else {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            wx = mouseX < rect.width / 2 ? x - 1 : x;
-        }
-        return { wx, wy: y, type: 'h' };
-    } else {
-        let wy;
-        if (y === 0) {
-            wy = 0;
-        } else if (y === 8) {
-            wy = 7;
-        } else {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const mouseY = e.clientY - rect.top;
-            wy = mouseY < rect.height / 2 ? y : y - 1;
-        }
-        return { wx: x, wy, type: 'v' };
-    }
-}
-
-// VIEW EVENT CALLBACKS wired by Mediator
-
-function handleCellClick(x, y) {
+function setInteractionMode(mode) {
     if (state.trainingWatchActive) return;
-    if (state.activePlaybook !== null && !state.playbookPracticeMode) return;
-    if (state.interactionMode !== 'move') return;
-    const cell = document.querySelector(`.board-cell[data-x="${x}"][data-y="${y}"]`);
-    if (!cell || !cell.classList.contains('valid-move')) return;
-    executePawnMove(x, y);
-}
-
-function handleCellMouseEnter(x, y) {
-    if (state.trainingWatchActive) return;
-    if (state.interactionMode !== 'move') return;
-    const cell = document.querySelector(`.board-cell[data-x="${x}"][data-y="${y}"]`);
-    if (cell && cell.classList.contains('valid-move')) {
-        state.keyboardSelectedCell = { x, y };
-        document.querySelectorAll('.board-cell.keyboard-highlight').forEach(c => c.classList.remove('keyboard-highlight'));
-        cell.classList.add('keyboard-highlight');
-    }
-}
-
-function handleEdgeMouseMove(e, x, y, edgeType) {
-    if (state.trainingWatchActive) return;
-    if (state.activePlaybook !== null && !state.playbookPracticeMode) return;
     let isAITurn = state.gameMode === 'ai' &&
         ((state.turn === 1 && state.aiSettings.color === 'p1') ||
             (state.turn === 2 && state.aiSettings.color === 'p2'));
     if (isAITurn) return;
 
-    if (state.interactionMode === 'move') return;
-    if (state.interactionMode === 'wall-h' && edgeType !== 'h') return;
-    if (state.interactionMode === 'wall-v' && edgeType !== 'v') return;
-
-    const wallsLeft = state.turn === 1 ? state.p1Walls : state.p2Walls;
-    if (wallsLeft <= 0) return;
-
-    const { wx, wy, type } = getWallFromEdge(e, x, y, edgeType);
-    state.keyboardJoint = { x: wx, y: wy };
-    const isValid = validateWallPlacement(wx, wy, type, state.p1Pos, state.p2Pos, state.hWalls, state.vWalls);
-
-    const preview = document.getElementById('preview-wall');
-    if (preview) {
-        preview.className = `preview-wall visible ${type === 'h' ? 'horizontal' : 'vertical'} ${state.turn === 1 ? 'p1-preview' : 'p2-preview'}`;
-        if (!isValid) preview.classList.add('invalid');
-
-        if (type === 'h') {
-            preview.style.gridColumn = `${2 * wx + 1} / span 3`;
-            preview.style.gridRow = `${16 - 2 * wy}`;
-        } else {
-            preview.style.gridColumn = `${2 * wx + 2}`;
-            preview.style.gridRow = `${15 - 2 * wy} / span 3`;
-        }
-    }
-}
-
-function handleEdgeMouseLeave(e, x, y, edgeType) {
+    state.interactionMode = mode;
     const preview = document.getElementById('preview-wall');
     if (preview) preview.classList.remove('visible');
+    updateUI();
 }
 
-function handleEdgeClick(e, x, y, edgeType) {
-    if (state.trainingWatchActive) return;
-    if (state.activePlaybook !== null && !state.playbookPracticeMode) return;
-    let isAITurn = state.gameMode === 'ai' &&
-        ((state.turn === 1 && state.aiSettings.color === 'p1') ||
-            (state.turn === 2 && state.aiSettings.color === 'p2'));
-    if (isAITurn) return;
-
-    if (state.interactionMode === 'move') return;
-    if (state.interactionMode === 'wall-h' && edgeType !== 'h') return;
-    if (state.interactionMode === 'wall-v' && edgeType !== 'v') return;
-
-    const wallsLeft = state.turn === 1 ? state.p1Walls : state.p2Walls;
-    if (wallsLeft <= 0) {
-        playSound('error');
-        logAction("Error: No walls left!", "system");
-        return;
-    }
-
-    const { wx, wy, type } = getWallFromEdge(e, x, y, edgeType);
-    const isValid = validateWallPlacement(wx, wy, type, state.p1Pos, state.p2Pos, state.hWalls, state.vWalls);
-    if (!isValid) {
-        playSound('error');
-        logAction("Error: Invalid wall placement (overlaps or blocks path)", "system");
-        return;
-    }
-
-    executeWallPlacement(wx, wy, type);
-}
-
-function handleJointMouseMove(e, x, y) {
-    if (state.trainingWatchActive) return;
-    if (state.activePlaybook !== null && !state.playbookPracticeMode) return;
-    let isAITurn = state.gameMode === 'ai' &&
-        ((state.turn === 1 && state.aiSettings.color === 'p1') ||
-            (state.turn === 2 && state.aiSettings.color === 'p2'));
-    if (isAITurn) return;
-
-    if (state.interactionMode === 'move') return;
-    const type = state.interactionMode === 'wall-h' ? 'h' : 'v';
-
-    const wallsLeft = state.turn === 1 ? state.p1Walls : state.p2Walls;
-    if (wallsLeft <= 0) return;
-
-    state.keyboardJoint = { x, y };
-    const isValid = validateWallPlacement(x, y, type, state.p1Pos, state.p2Pos, state.hWalls, state.vWalls);
-
-    const preview = document.getElementById('preview-wall');
-    if (preview) {
-        preview.className = `preview-wall visible ${type === 'h' ? 'horizontal' : 'vertical'} ${state.turn === 1 ? 'p1-preview' : 'p2-preview'}`;
-        if (!isValid) preview.classList.add('invalid');
-
-        if (type === 'h') {
-            preview.style.gridColumn = `${2 * x + 1} / span 3`;
-            preview.style.gridRow = `${16 - 2 * y}`;
-        } else {
-            preview.style.gridColumn = `${2 * x + 2}`;
-            preview.style.gridRow = `${15 - 2 * y} / span 3`;
-        }
-    }
-}
-
-function handleJointMouseLeave(e, x, y) {
-    const preview = document.getElementById('preview-wall');
-    if (preview) preview.classList.remove('visible');
-}
-
-function handleJointClick(e, x, y) {
-    if (state.trainingWatchActive) return;
-    if (state.activePlaybook !== null && !state.playbookPracticeMode) return;
-    let isAITurn = state.gameMode === 'ai' &&
-        ((state.turn === 1 && state.aiSettings.color === 'p1') ||
-            (state.turn === 2 && state.aiSettings.color === 'p2'));
-    if (isAITurn) return;
-
-    if (state.interactionMode === 'move') return;
-    const type = state.interactionMode === 'wall-h' ? 'h' : 'v';
-
-    const wallsLeft = state.turn === 1 ? state.p1Walls : state.p2Walls;
-    if (wallsLeft <= 0) {
-        playSound('error');
-        logAction("Error: No walls left!", "system");
-        return;
-    }
-
-    const isValid = validateWallPlacement(x, y, type, state.p1Pos, state.p2Pos, state.hWalls, state.vWalls);
-    if (!isValid) {
-        playSound('error');
-        logAction("Error: Invalid wall placement (overlaps or blocks path)", "system");
-        return;
-    }
-
-    executeWallPlacement(x, y, type);
-}
-
-// BOOTSTRAP INITIALIZATION
 function init() {
     // 1. Inject HTML Templates
     const headerEl = document.querySelector('.app-header');
@@ -274,7 +112,7 @@ function init() {
         onJointClick: handleJointClick
     });
 
-    // 3. Playbook binds (inject game actions)
+    // 3. Playbook binds
     initPlaybook({
         executePawnMove,
         executeWallPlacement,
@@ -289,21 +127,7 @@ function init() {
         jumpToHistoryState
     });
 
-
     // Wire up interaction mode buttons
-    const setInteractionMode = (mode) => {
-        if (state.trainingWatchActive) return;
-        let isAITurn = state.gameMode === 'ai' &&
-            ((state.turn === 1 && state.aiSettings.color === 'p1') ||
-                (state.turn === 2 && state.aiSettings.color === 'p2'));
-        if (isAITurn) return;
-
-        state.interactionMode = mode;
-        const preview = document.getElementById('preview-wall');
-        if (preview) preview.classList.remove('visible');
-        updateUI();
-    };
-
     document.getElementById('btn-mode-move').addEventListener('click', () => setInteractionMode('move'));
     document.getElementById('btn-mode-wall-h').addEventListener('click', () => setInteractionMode('wall-h'));
     document.getElementById('btn-mode-wall-v').addEventListener('click', () => setInteractionMode('wall-v'));
@@ -330,7 +154,6 @@ function init() {
         resetGame();
     });
 
-
     // Wire up auto-hint toggle trigger
     const hintBtn = document.getElementById('btn-hint');
     hintBtn.addEventListener('click', () => {
@@ -340,7 +163,7 @@ function init() {
             hintBtn.textContent = 'Hint: On';
             hintBtn.classList.remove('btn-secondary');
             hintBtn.classList.add('btn-accent');
-            
+
             const turnSnapshot = state.turn;
             const p1PosSnapshot = { ...state.p1Pos };
             const p2PosSnapshot = { ...state.p2Pos };
@@ -352,12 +175,12 @@ function init() {
             setTimeout(() => {
                 if (state.turn !== turnSnapshot) return;
                 const bestMoves = getBestMoves(
-                    turnSnapshot, 
-                    p1PosSnapshot, 
-                    p2PosSnapshot, 
-                    hWallsSnapshot, 
-                    vWallsSnapshot, 
-                    p1WallsSnapshot, 
+                    turnSnapshot,
+                    p1PosSnapshot,
+                    p2PosSnapshot,
+                    hWallsSnapshot,
+                    vWallsSnapshot,
+                    p1WallsSnapshot,
                     p2WallsSnapshot
                 );
                 renderHints(bestMoves);
@@ -369,7 +192,6 @@ function init() {
             clearHints();
         }
     });
-
 
     // Hint Wall hover/click delegation
     const boardEl = document.getElementById('board');
@@ -445,11 +267,10 @@ function init() {
         state.soundEnabled = e.target.checked;
     });
 
-    // 5. Game Mode buttons
+    // Game Mode buttons
     document.querySelectorAll('.mode-btn[data-mode]').forEach(btn => {
         btn.addEventListener('click', () => setGameMode(btn.dataset.mode));
     });
-
 
     // AI Difficulty select
     document.getElementById('ai-difficulty').addEventListener('change', (e) => {
