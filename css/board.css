@@ -560,15 +560,15 @@
 
 /* HINTS */
 .board-cell.hint-cell {
-    border: 2px dashed var(--color-accent) !important;
-    box-shadow: 0 0 12px rgba(139, 92, 246, 0.4);
-    background: rgba(139, 92, 246, 0.15) !important;
+    border: 2px dashed var(--color-gold) !important;
+    box-shadow: 0 0 14px var(--color-gold-glow);
+    background: rgba(251, 191, 36, 0.2) !important;
 }
 
 .placed-wall.hint-wall {
-    background: rgba(139, 92, 246, 0.4) !important;
-    border: 2px dashed var(--color-accent) !important;
-    box-shadow: 0 0 12px rgba(139, 92, 246, 0.6);
+    background: rgba(251, 191, 36, 0.5) !important;
+    border: 2px dashed var(--color-gold) !important;
+    box-shadow: 0 0 14px rgba(251, 191, 36, 0.6);
     animation: hintPulse 1.5s infinite alternate ease-in-out;
     pointer-events: auto;
     cursor: pointer;
@@ -576,12 +576,12 @@
 
 @keyframes hintPulse {
     from {
-        opacity: 0.5;
-        box-shadow: 0 0 6px rgba(139, 92, 246, 0.3);
+        opacity: 0.6;
+        box-shadow: 0 0 8px rgba(251, 191, 36, 0.4);
     }
     to {
-        opacity: 0.9;
-        box-shadow: 0 0 16px rgba(139, 92, 246, 0.7);
+        opacity: 1;
+        box-shadow: 0 0 18px rgba(251, 191, 36, 0.85);
     }
 }
 

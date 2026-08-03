@@ -107,8 +107,6 @@ export function executeWallPlacement(x, y, wallType) {
     logAction(`Player ${player}: Placed wall at ${getWallNotation(x, y, wallType)}`, `p${player}`);
     playSound('wall');
 
-    analyzePlacedWallEfficiency(x, y, wallType, player);
-
     state.turn = state.turn === 1 ? 2 : 1;
 
     renderPlacedWalls();

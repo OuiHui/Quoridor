@@ -162,7 +162,8 @@ function init() {
         if (state.hintOn) {
             hintBtn.textContent = 'Hint: On';
             hintBtn.classList.remove('btn-secondary');
-            hintBtn.classList.add('btn-accent');
+            hintBtn.classList.add('btn-gold');
+            hintBtn.classList.remove('btn-accent');
 
             const turnSnapshot = state.turn;
             const p1PosSnapshot = { ...state.p1Pos };
@@ -188,6 +189,7 @@ function init() {
         } else {
             hintBtn.textContent = 'Hint: Off';
             hintBtn.classList.remove('btn-accent');
+            hintBtn.classList.remove('btn-gold');
             hintBtn.classList.add('btn-secondary');
             clearHints();
         }
@@ -258,14 +260,20 @@ function init() {
     });
 
     // Checkbox binds
-    document.getElementById('chk-show-paths').addEventListener('change', (e) => {
-        state.showPaths = e.target.checked;
-        updateUI();
-    });
+    const chkShowPaths = document.getElementById('chk-show-paths');
+    if (chkShowPaths) {
+        chkShowPaths.addEventListener('change', (e) => {
+            state.showPaths = e.target.checked;
+            updateUI();
+        });
+    }
 
-    document.getElementById('chk-sound').addEventListener('change', (e) => {
-        state.soundEnabled = e.target.checked;
-    });
+    const chkSound = document.getElementById('chk-sound');
+    if (chkSound) {
+        chkSound.addEventListener('change', (e) => {
+            state.soundEnabled = e.target.checked;
+        });
+    }
 
     // Game Mode buttons
     document.querySelectorAll('.mode-btn[data-mode]').forEach(btn => {

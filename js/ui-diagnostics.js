@@ -187,63 +187,6 @@ export function updateUI() {
     }
 }
 
-export function analyzePlacedWallEfficiency(x, y, type, playerWhoPlaced) {
-    const readout = document.getElementById('efficiency-readout');
-    const analyzerPanel = document.querySelector('.diagnostics-panel');
-    if (!readout || !analyzerPanel) return;
+export function analyzePlacedWallEfficiency(x, y, type, playerWhoPlaced) {}
 
-    const wallKey = `${x},${y}`;
-
-    if (type === 'h') state.hWalls.delete(wallKey);
-    else state.vWalls.delete(wallKey);
-
-    const baseP1 = findShortestPath(state.p1Pos.x, state.p1Pos.y, 8, state.hWalls, state.vWalls).length - 1;
-    const baseP2 = findShortestPath(state.p2Pos.x, state.p2Pos.y, 0, state.hWalls, state.vWalls).length - 1;
-
-    if (type === 'h') state.hWalls.set(wallKey, playerWhoPlaced);
-    else state.vWalls.set(wallKey, playerWhoPlaced);
-
-    const nextP1 = findShortestPath(state.p1Pos.x, state.p1Pos.y, 8, state.hWalls, state.vWalls).length - 1;
-    const nextP2 = findShortestPath(state.p2Pos.x, state.p2Pos.y, 0, state.hWalls, state.vWalls).length - 1;
-
-    const diffP1 = nextP1 - baseP1;
-    const diffP2 = nextP2 - baseP2;
-
-    const efficiencyScore = playerWhoPlaced === 1 ? (diffP2 - diffP1) : (diffP1 - diffP2);
-
-    let advice = "Neutral impact. Conserves wall potential.";
-    if (efficiencyScore > 0) {
-        advice = `Excellent Placement! Adds +${efficiencyScore} net moves to opponent's route.`;
-    } else if (efficiencyScore < 0) {
-        advice = `Suboptimal: Adds +${Math.abs(efficiencyScore)} moves to your own path.`;
-    } else if (diffP1 === 0 && diffP2 === 0) {
-        advice = "No direct impact on path lengths. Use for strategic trapping.";
-    }
-
-    readout.innerHTML = `
-        <div class="efficiency-results">
-            <span class="eff-title">WALL PLACED: ${getWallNotation(x, y, type).toUpperCase()}</span>
-            <div class="eff-impact-row">
-                <span>P1 Path Impact:</span>
-                <span class="${diffP1 > 0 ? 'eff-negative' : 'eff-neutral'}">${diffP1 > 0 ? '+' + diffP1 : '0'}</span>
-            </div>
-            <div class="eff-impact-row">
-                <span>P2 Path Impact:</span>
-                <span class="${diffP2 > 0 ? 'eff-negative' : 'eff-neutral'}">${diffP2 > 0 ? '+' + diffP2 : '0'}</span>
-            </div>
-            <div class="eff-impact-row" style="margin-top: 4px; padding-top: 4px; border-top: 1px dashed rgba(255,255,255,0.05)">
-                <span style="font-weight:600">Advice:</span>
-                <span style="font-weight:600; text-align:right" class="${efficiencyScore > 0 ? 'eff-positive' : efficiencyScore < 0 ? 'eff-negative' : 'eff-neutral'}">${advice}</span>
-            </div>
-        </div>
-    `;
-
-    analyzerPanel.classList.remove('hidden');
-}
-
-export function hideWallAnalyzer() {
-    const analyzerPanel = document.querySelector('.diagnostics-panel');
-    if (analyzerPanel) {
-        analyzerPanel.classList.add('hidden');
-    }
-}
+export function hideWallAnalyzer() {}

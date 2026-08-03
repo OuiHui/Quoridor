@@ -28,7 +28,7 @@ export const state = {
     playbookAutoplayTimer: null,
     
     // Path display state
-    showPaths: true,
+    showPaths: false,
     soundEnabled: true,
     hintOn: false,
 
