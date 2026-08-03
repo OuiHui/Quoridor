@@ -49,12 +49,12 @@ class PyTorchCUDAInferenceEngine:
         try:
             ckpt = torch.load(path, map_location=self.device, weights_only=False)
             state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
-            self.model.load_state_dict(state_dict)
+            self.model.load_state_dict(state_dict, strict=False)
             
             self.checkpoint_path = path
             self.mtime = os.path.getmtime(path)
             ts = time.strftime("%H:%M:%S")
-            print(f"[{ts}] [GPU Server] Loaded checkpoint '{path}' onto {self.device}", flush=True)
+            print(f"[{ts}] [GPU Server] Loaded checkpoint '{path}' onto {self.device} (strict=False)", flush=True)
             return True
         except Exception as e:
             ts = time.strftime("%H:%M:%S")

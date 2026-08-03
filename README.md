@@ -50,10 +50,10 @@ The game board is represented as an $11 \times 9 \times 9$ tensor. The 11 channe
 
 ### 2. The Convolutional Trunk
 * **Initial Block**: A $3 \times 3$ 2D Convolution layer with 128 channels, followed by 2D Batch Normalization and a ReLU activation function.
-* **Residual Trunk**: Consists of **10 Residual Blocks** with 128 channels each. Each block performs two consecutive $3 \times 3$ convolutions, each accompanied by Batch Normalization and ReLU, alongside a skip connection adding the block's input back to its final output. This block layout helps prevent vanishing gradients and extracts deep spatial-tactical features from the board layout.
+* **Residual Trunk with SE-Attention**: Consists of **10 Residual Blocks** with 128 channels each and **Squeeze-and-Excitation (SE)** channel attention. Each block performs two consecutive $3 \times 3$ convolutions (with Batch Normalization and ReLU), passes through an adaptive SE channel attention module to recalibrate feature channels based on global grid context, and adds a skip connection.
 
-### 3. The Dual Heads
-The network splits into two output branches:
+### 3. Multi-Head Output Architecture
+The network splits into three output branches:
 * **Policy Head**:
   - Compresses the trunk's 128 channels down to 4 channels using a $1 \times 1$ convolution.
   - Applies Batch Normalization and a ReLU activation.
@@ -62,7 +62,11 @@ The network splits into two output branches:
   - Compresses features down to 4 channels using a $1 \times 1$ convolution.
   - Applies Batch Normalization and a ReLU activation.
   - Flattens the output and passes it through a fully connected linear layer of size 64 with a ReLU activation.
-  - Passes the result through a final fully connected linear layer with a `tanh` activation to output a scalar in `[-1.0, 1.0]`, representing the expected game outcome (1.0 indicates a guaranteed win for the active player, -1.0 indicates a loss).
+  - Passes the result through a final fully connected linear layer with a `tanh` activation to output a scalar in `[-1.0, 1.0]`, representing the expected game outcome.
+* **Auxiliary Path Head**:
+  - Compresses features down to 2 channels using a $1 \times 1$ convolution.
+  - Applies Batch Normalization and a ReLU activation.
+  - Passes through a linear layer and a `sigmoid` activation to predict normalized remaining shortest path lengths $[0.0, 1.0]$ for active player and opponent.
 
 ### 4. Action Space Mapping (140 Actions)
 The output policy vector of size 140 represents all possible moves and wall placements:

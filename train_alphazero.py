@@ -188,11 +188,14 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
     if os.path.exists(checkpoint_path):
         try:
             checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=False)
-            model_gpu.load_state_dict(checkpoint['model_state_dict'])
-            if not reset_lr:
-                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                if 'scheduler_state_dict' in checkpoint:
-                    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            model_gpu.load_state_dict(checkpoint['model_state_dict'], strict=False)
+            if not reset_lr and 'optimizer_state_dict' in checkpoint:
+                try:
+                    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                    if 'scheduler_state_dict' in checkpoint:
+                        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                except Exception as opt_err:
+                    print(f"Note: Re-initializing optimizer for updated architecture layers ({opt_err}).")
                 
                 scheduler.step_size = 50
                 scheduler.gamma = 0.8
@@ -204,7 +207,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
                 print(f"Adjusted learning rate to {current_scheduled_lr:.6f} based on new schedule (decayed {decay_count} times).")
             start_epoch = checkpoint.get('epoch', 0)
             lr_note = ' (LR reset to initial)' if reset_lr else ''
-            print(f"Loaded checkpoint from {checkpoint_path}. Resuming from epoch {start_epoch+1}{lr_note}")
+            print(f"Loaded existing network weights from {checkpoint_path} (strict=False). Resuming from epoch {start_epoch+1}{lr_note}")
         except Exception as e:
             print(f"Failed to load checkpoint ({e}). Starting from scratch.")
             
@@ -282,14 +285,17 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
             target_values = values_all[batch_idx].to(DEVICE, non_blocking=True)
             valid_masks = masks_all[batch_idx].to(DEVICE, non_blocking=True)
             
+            target_aux = states[:, [4, 5], 0, 0]
+            
             optimizer.zero_grad()
             with torch.amp.autocast(DEVICE.type, enabled=use_amp):
-                logits, values = model_gpu(states)
+                logits, values, aux_preds = model_gpu(states, return_aux=True)
                 logits = logits.masked_fill(~valid_masks, -1e4)
                 log_probs = torch.log_softmax(logits, dim=1)
                 loss_p = -torch.sum(target_policies * log_probs) / logits.size(0)
                 loss_v = loss_val_fn(values, target_values)
-                loss = loss_p + loss_v
+                loss_aux = loss_val_fn(aux_preds, target_aux)
+                loss = loss_p + loss_v + 0.1 * loss_aux
             
             if use_amp:
                 scaler.scale(loss).backward()

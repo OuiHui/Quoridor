@@ -2,10 +2,25 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class SEBlock(nn.Module):
+    """Squeeze-and-Excitation channel attention block."""
+    def __init__(self, channels=128, reduction=16):
+        super(SEBlock, self).__init__()
+        reduced = max(8, channels // reduction)
+        self.fc1 = nn.Linear(channels, reduced, bias=False)
+        self.fc2 = nn.Linear(reduced, channels, bias=False)
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y = x.mean(dim=(2, 3))
+        y = F.relu(self.fc1(y))
+        y = torch.sigmoid(self.fc2(y)).view(b, c, 1, 1)
+        return x * y
+
 class ResidualBlock(nn.Module):
     """
-    Standard residual block with two 3x3 Conv2d layers,
-    BatchNorm, and a skip connection.
+    Residual block with two 3x3 Conv2d layers, BatchNorm,
+    Squeeze-and-Excitation attention, and a skip connection.
     """
     def __init__(self, channels=128):
         super(ResidualBlock, self).__init__()
@@ -13,11 +28,13 @@ class ResidualBlock(nn.Module):
         self.bn1 = nn.BatchNorm2d(channels)
         self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(channels)
+        self.se = SEBlock(channels)
 
     def forward(self, x):
         residual = x
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
+        out = self.se(out)
         out += residual
         return F.relu(out)
 
@@ -25,9 +42,10 @@ class QuoridorNet(nn.Module):
     """
     AlphaZero-style network for Quoridor.
     Input shape: (Batch, 11, 9, 9)
-    Trunk: 10 ResidualBlocks with 128 channels.
+    Trunk: 10 ResidualBlocks with SE-Attention and 128 channels.
     Value Head: outputs scalar in [-1, 1].
     Policy Head: outputs 140 action logits.
+    Auxiliary Head: outputs 2 scalars in [0, 1] for active and opp path lengths.
     """
     def __init__(self, num_residual_blocks=10, channels=128):
         super(QuoridorNet, self).__init__()
@@ -49,7 +67,12 @@ class QuoridorNet(nn.Module):
         self.policy_bn = nn.BatchNorm2d(4)
         self.policy_fc = nn.Linear(4 * 9 * 9 + 4, 140)
 
-    def forward(self, x):
+        # Auxiliary Path Head: predicts [active_path_len, opp_path_len] normalized in [0, 1]
+        self.aux_conv = nn.Conv2d(channels, 2, kernel_size=1, bias=False)
+        self.aux_bn = nn.BatchNorm2d(2)
+        self.aux_fc = nn.Linear(2 * 9 * 9 + 4, 2)
+
+    def forward(self, x, return_aux=False):
         x_spatial = x[:, [0, 1, 2, 3, 6, 7], :, :]
         scalars = x[:, [4, 5, 8, 9], 0, 0]
 
@@ -71,6 +94,13 @@ class QuoridorNet(nn.Module):
         p_in = torch.cat([p, scalars], dim=1)
         logits = self.policy_fc(p_in)
         
+        if return_aux:
+            aux = F.relu(self.aux_bn(self.aux_conv(out)))
+            aux = torch.flatten(aux, 1)
+            aux_in = torch.cat([aux, scalars], dim=1)
+            aux_path = torch.sigmoid(self.aux_fc(aux_in))
+            return logits, v, aux_path
+
         return logits, v
 
 def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_left, p2_walls_left, is_p1_turn):

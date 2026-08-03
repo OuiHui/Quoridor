@@ -31,40 +31,46 @@ export function isSameMove(m1, m2) {
     return false;
 }
 
+function evalToWinProb(evalScore) {
+    if (evalScore === Infinity) return 1.0;
+    if (evalScore === -Infinity) return 0.0;
+    if (evalScore === null || evalScore === undefined) return 0.5;
+    return 1 / (1 + Math.pow(10, -evalScore / 100));
+}
+
 function classifyMove(chosenScore, bestScore, player, secondBestScore = null) {
     let loss = 0;
+    let winLoss = 0;
+    
+    const bestWinProb = player === 1 ? evalToWinProb(bestScore) : (1 - evalToWinProb(bestScore));
+    const chosenWinProb = player === 1 ? evalToWinProb(chosenScore) : (1 - evalToWinProb(chosenScore));
+    winLoss = Math.max(0, (bestWinProb - chosenWinProb) * 100);
+
     if (player === 1) {
-        if (bestScore === Infinity) {
-            loss = chosenScore === Infinity ? 0 : Infinity;
-        } else {
-            loss = bestScore - chosenScore;
-        }
+        loss = (bestScore === Infinity) ? (chosenScore === Infinity ? 0 : Infinity) : (bestScore - chosenScore);
     } else {
-        if (bestScore === -Infinity) {
-            loss = chosenScore === -Infinity ? 0 : Infinity;
-        } else {
-            loss = chosenScore - bestScore;
-        }
+        loss = (bestScore === -Infinity) ? (chosenScore === -Infinity ? 0 : Infinity) : (chosenScore - bestScore);
     }
 
-    const playerWinning = player === 1 ? (bestScore >= 30 || bestScore === Infinity) : (bestScore <= -30 || bestScore === -Infinity);
-    const chosenWinning = player === 1 ? (chosenScore >= 15 || chosenScore === Infinity) : (chosenScore <= -15 || chosenScore === -Infinity);
+    const playerWinning = bestWinProb >= 0.70;
+    const chosenWinning = chosenWinProb >= 0.55;
 
-    let secondLoss = null;
+    let secondWinLoss = null;
     if (secondBestScore !== null && secondBestScore !== undefined) {
-        secondLoss = player === 1 ? (bestScore - secondBestScore) : (secondBestScore - bestScore);
+        const secondWinProb = player === 1 ? evalToWinProb(secondBestScore) : (1 - evalToWinProb(secondBestScore));
+        secondWinLoss = Math.max(0, (bestWinProb - secondWinProb) * 100);
     }
 
     let classification = 'best';
     let text = 'Best';
     let symbol = '★';
 
-    if (loss <= 2) {
-        if (secondLoss !== null && secondLoss >= 20 && (chosenScore >= 30 || chosenScore === Infinity || Math.abs(chosenScore) > Math.abs(secondBestScore || 0))) {
+    if (winLoss <= 2.0) {
+        if (secondWinLoss !== null && secondWinLoss >= 10.0 && (chosenWinProb >= 0.70 || Math.abs(chosenScore) > Math.abs(secondBestScore || 0))) {
             classification = 'brilliant';
             text = 'Brilliant';
             symbol = '!!';
-        } else if (secondLoss !== null && secondLoss >= 15) {
+        } else if (secondWinLoss !== null && secondWinLoss >= 6.0) {
             classification = 'great';
             text = 'Great Move';
             symbol = '!';
@@ -73,23 +79,23 @@ function classifyMove(chosenScore, bestScore, player, secondBestScore = null) {
             text = 'Best';
             symbol = '★';
         }
-    } else if (loss <= 6) {
+    } else if (winLoss <= 6.0) {
         classification = 'excellent';
         text = 'Excellent';
         symbol = '✓';
-    } else if (loss <= 14) {
+    } else if (winLoss <= 12.0) {
         classification = 'good';
         text = 'Good';
         symbol = '👍';
-    } else if (playerWinning && !chosenWinning && loss >= 20) {
+    } else if (playerWinning && !chosenWinning && winLoss >= 15.0) {
         classification = 'miss';
         text = 'Miss';
         symbol = '❌';
-    } else if (loss <= 25) {
+    } else if (winLoss <= 22.0) {
         classification = 'inaccuracy';
         text = 'Inaccuracy';
         symbol = '?!';
-    } else if (loss <= 45) {
+    } else if (winLoss <= 40.0) {
         classification = 'mistake';
         text = 'Mistake';
         symbol = '?';
@@ -99,7 +105,7 @@ function classifyMove(chosenScore, bestScore, player, secondBestScore = null) {
         symbol = '??';
     }
 
-    return { classification, text, symbol, loss };
+    return { classification, text, symbol, loss, winLoss };
 }
 
 function updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextEl, historyItem = null, bestMove = null, secondBestScore = null) {
