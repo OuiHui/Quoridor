@@ -17,8 +17,9 @@ export const state = {
         color: 'p2'           // 'p1' or 'p2'
     },
     
-    // History for undo stack
+    // History for undo stack & time-travel navigation
     history: [],
+    historyIndex: 0,
     
     // Playbook Training State
     activePlaybook: null,

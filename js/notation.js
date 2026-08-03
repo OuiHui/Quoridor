@@ -10,6 +10,17 @@ export function getWallNotation(x, y, type) {
     return COLS[x] + (y + 1) + type;
 }
 
+// Convert move object to notation
+export function formatMoveNotation(move) {
+    if (!move) return '';
+    if (move.type === 'move') {
+        return getPawnNotation(move.to.x, move.to.y);
+    } else if (move.type === 'wall') {
+        return getWallNotation(move.x, move.y, move.wallType);
+    }
+    return '';
+}
+
 // Convert notation back to coordinates
 export function parseNotation(notation) {
     if (!notation || notation.length < 2) return null;
@@ -23,3 +34,4 @@ export function parseNotation(notation) {
     }
     return { type: 'pawn', x, y };
 }
+

@@ -158,7 +158,7 @@ export function generateSmartMoves(playerNum, p1Pos, p2Pos, hWalls, vWalls, p1Wa
 }
 
 // Get best moves for hint display.
-// Always runs at depth 3 (regardless of difficulty) for quality hints on demand.
+// Always runs at depth 5 to match game move quality analysis.
 export function getBestMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls) {
     const hWallsArray = new Uint8Array(64);
     const vWallsArray = new Uint8Array(64);
@@ -171,40 +171,23 @@ export function getBestMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wa
         vWallsArray[y * 8 + x] = 1;
     }
 
-    const candidates = generateSmartMoves(player, p1Pos, p2Pos, hWallsArray, vWallsArray, p1Walls, p2Walls);
-    if (candidates.length === 0) return [];
-
     const isP1 = player === 1;
-    const HINT_DEPTH = 3;
-
-    const scored = candidates.map(move => {
-        let nextP1Pos = { ...p1Pos }, nextP2Pos = { ...p2Pos };
-        let nextP1Walls = p1Walls, nextP2Walls = p2Walls;
-
-        const idx = move.y * 8 + move.x;
-        if (move.type === 'move') {
-            if (isP1) nextP1Pos = move.to; else nextP2Pos = move.to;
-        } else {
-            if (move.wallType === 'h') hWallsArray[idx] = 1; else vWallsArray[idx] = 1;
-            if (isP1) nextP1Walls--; else nextP2Walls--;
-        }
-
-        const result = minimax(
-            HINT_DEPTH - 1, -Infinity, Infinity, !isP1,
-            nextP1Pos, nextP2Pos, hWallsArray, vWallsArray, nextP1Walls, nextP2Walls
-        );
-
-        if (move.type === 'wall') {
-            if (move.wallType === 'h') hWallsArray[idx] = 0; else vWallsArray[idx] = 0;
-        }
-
-        return { move, score: result.score };
-    });
-
-    const bestScore = scored.reduce(
-        (best, sm) => isP1 ? Math.max(best, sm.score) : Math.min(best, sm.score),
-        isP1 ? -Infinity : Infinity
+    const result = minimax(
+        5,
+        -Infinity,
+        Infinity,
+        isP1,
+        p1Pos,
+        p2Pos,
+        hWallsArray,
+        vWallsArray,
+        p1Walls,
+        p2Walls
     );
 
-    return scored.filter(sm => sm.score === bestScore).map(sm => sm.move);
+    if (result && result.move) {
+        return [result.move];
+    }
+    return [];
 }
+

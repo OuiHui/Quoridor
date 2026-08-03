@@ -22,7 +22,7 @@ import { initPlaybook, playbookNextStep, playbookPrevStep } from './js/playbook.
 
 // Import UI Views
 import { renderBoard, updatePawnPositions, renderPlacedWalls } from './js/ui-board.js';
-import { updateUI, logAction, clearLogs } from './js/ui-diagnostics.js';
+import { updateUI, logAction, clearLogs, setHistoryJumpCallback } from './js/ui-diagnostics.js';
 import { renderHints, clearHints } from './js/ui-hints.js';
 import { initTrainingWatch, showTrainingWatch, hideTrainingWatch } from './js/training-watch.js';
 
@@ -33,8 +33,11 @@ import {
     undoMove,
     resetBoardState,
     resetGame,
-    setGameMode
+    setGameMode,
+    jumpToHistoryState,
+    stepHistory
 } from './js/game.js';
+
 
 // RESOLVE CLAMPED WALL FROM TRACK EDGE HOVER/CLICK
 function getWallFromEdge(e, x, y, edgeType) {
@@ -303,7 +306,19 @@ function init() {
     document.getElementById('btn-mode-wall-h').addEventListener('click', () => setInteractionMode('wall-h'));
     document.getElementById('btn-mode-wall-v').addEventListener('click', () => setInteractionMode('wall-v'));
 
-    // 4. Quick Board control binds
+    setHistoryJumpCallback(jumpToHistoryState);
+
+    // 4. Quick Board & Match History control binds
+    const btnHistFirst = document.getElementById('btn-history-first');
+    const btnHistPrev = document.getElementById('btn-history-prev');
+    const btnHistNext = document.getElementById('btn-history-next');
+    const btnHistLatest = document.getElementById('btn-history-latest');
+
+    if (btnHistFirst) btnHistFirst.addEventListener('click', () => jumpToHistoryState(0));
+    if (btnHistPrev) btnHistPrev.addEventListener('click', () => stepHistory(-1));
+    if (btnHistNext) btnHistNext.addEventListener('click', () => stepHistory(1));
+    if (btnHistLatest) btnHistLatest.addEventListener('click', () => jumpToHistoryState(state.history.length));
+
     document.getElementById('btn-undo').addEventListener('click', () => {
         if (state.trainingWatchActive) return;
         undoMove();
@@ -312,6 +327,7 @@ function init() {
         if (state.trainingWatchActive) return;
         resetGame();
     });
+
 
     // Wire up auto-hint toggle trigger
     const hintBtn = document.getElementById('btn-hint');
@@ -344,16 +360,14 @@ function init() {
                 );
                 renderHints(bestMoves);
             }, 50);
-            
-            logAction('Auto hints enabled.', 'system');
         } else {
             hintBtn.textContent = 'Hint: Off';
             hintBtn.classList.remove('btn-accent');
             hintBtn.classList.add('btn-secondary');
             clearHints();
-            logAction('Auto hints disabled.', 'system');
         }
     });
+
 
     // Hint Wall hover/click delegation
     const boardEl = document.getElementById('board');
@@ -626,10 +640,22 @@ function init() {
             e.preventDefault();
         }
 
+        if (e.key === '[') {
+            stepHistory(-1);
+            e.preventDefault();
+            return;
+        }
+        if (e.key === ']') {
+            stepHistory(1);
+            e.preventDefault();
+            return;
+        }
+
         if (e.key === 'Enter') {
             executeKeyboardSelectedAction();
             e.preventDefault();
         }
+
     };
 
     window.addEventListener('keydown', handleKeyDown);

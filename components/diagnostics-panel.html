@@ -48,13 +48,25 @@
 
     <!-- MOVES LOG -->
     <div class="control-group logs-group">
-        <h3 id="logs-header-title">Match History</h3>
-        <div class="logs-container" id="game-logs">
-            <!-- Populated dynamically -->
-            <div class="log-entry system-log">Board initialized. Select Mode or Opening to begin.</div>
+        <div class="logs-header">
+            <h3 id="logs-header-title">Match History</h3>
+            <span id="history-counter" class="history-step-badge">Start</span>
         </div>
+        <div class="history-controls-bar">
+            <button class="hist-btn" id="btn-history-first" title="Jump to Start (First Move)">⏮</button>
+            <button class="hist-btn" id="btn-history-prev" title="Step Backward (Left Arrow)">◀</button>
+            <button class="hist-btn" id="btn-history-next" title="Step Forward (Right Arrow)">▶</button>
+            <button class="hist-btn" id="btn-history-latest" title="Jump to Latest State">⏭</button>
+        </div>
+        <div class="blunder-detail-panel hidden" id="history-blunder-detail">
+            <!-- Populated dynamically when clicking a move with analysis -->
+        </div>
+        <div class="logs-container" id="game-logs">
+            <!-- Populated dynamically with formal move notation only -->
+        </div>
+
         <div class="moves-list hidden" id="playbook-moves-list">
             <!-- Populated dynamically -->
         </div>
     </div>
-</div>
+</div>
