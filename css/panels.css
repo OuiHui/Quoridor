@@ -356,6 +356,8 @@
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid var(--border-color);
     color: var(--color-text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .history-controls-bar {
@@ -415,6 +417,14 @@
     border-left-color: #f59e0b;
 }
 
+.blunder-card.mistake {
+    border-left-color: #f97316;
+}
+
+.blunder-card.miss {
+    border-left-color: #f43f5e;
+}
+
 .blunder-card.blunder {
     border-left-color: #ef4444;
 }
@@ -437,6 +447,16 @@
 .blunder-badge.inaccuracy {
     background: rgba(245, 158, 11, 0.2);
     color: #f59e0b;
+}
+
+.blunder-badge.mistake {
+    background: rgba(249, 115, 22, 0.2);
+    color: #fb923c;
+}
+
+.blunder-badge.miss {
+    background: rgba(244, 63, 94, 0.2);
+    color: #fb7185;
 }
 
 .blunder-badge.blunder {
@@ -508,6 +528,7 @@
     cursor: pointer;
     transition: all 0.2s ease;
     user-select: none;
+    white-space: nowrap;
 }
 
 .hist-move-item:hover {
@@ -529,12 +550,18 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
 }
 
 .hist-turn-prefix {
     color: var(--color-text-muted);
     font-size: 0.75rem;
-    min-width: 24px;
+    width: 38px;
+    min-width: 38px;
+    display: inline-block;
+    flex-shrink: 0;
 }
 
 .hist-player-badge {
@@ -542,6 +569,13 @@
     font-weight: 700;
     padding: 1px 5px;
     border-radius: 3px;
+    width: 26px;
+    min-width: 26px;
+    text-align: center;
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
 }
 
 .hist-player-badge.p1 {
@@ -559,12 +593,46 @@
     font-size: 0.85rem;
     color: #ffffff;
     letter-spacing: 0.02em;
+    flex-shrink: 0;
 }
 
 .hist-move-meta {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.hist-eval-tag {
+    font-size: 0.68rem;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    min-width: 48px;
+    text-align: center;
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.hist-eval-tag.p1-fav, .hist-eval-tag.p1-win {
+    color: var(--color-p1);
+    background: rgba(6, 182, 212, 0.12);
+    border-color: rgba(6, 182, 212, 0.3);
+}
+
+.hist-eval-tag.p2-fav, .hist-eval-tag.p2-win {
+    color: var(--color-p2);
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.3);
+}
+
+.hist-eval-tag.neutral {
+    color: var(--color-text-muted);
 }
 
 .hist-quality-tag {
@@ -573,21 +641,53 @@
     padding: 2px 6px;
     border-radius: 4px;
     font-family: var(--font-sans);
+    min-width: 78px;
+    text-align: center;
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
 }
 
-.hist-quality-tag.optimal {
+.hist-quality-tag.brilliant {
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.25), rgba(45, 212, 191, 0.25));
+    color: #2dd4bf;
+    border: 1px solid rgba(45, 212, 191, 0.4);
+    box-shadow: 0 0 6px rgba(45, 212, 191, 0.3);
+}
+
+.hist-quality-tag.great {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+}
+
+.hist-quality-tag.best, .hist-quality-tag.optimal {
     background: rgba(16, 185, 129, 0.15);
     color: var(--color-success);
 }
 
+.hist-quality-tag.excellent {
+    background: rgba(52, 211, 153, 0.15);
+    color: #34d399;
+}
+
 .hist-quality-tag.good {
-    background: rgba(6, 182, 212, 0.15);
-    color: var(--color-p1);
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
 }
 
 .hist-quality-tag.inaccuracy {
     background: rgba(245, 158, 11, 0.15);
     color: #f59e0b;
+}
+
+.hist-quality-tag.mistake {
+    background: rgba(249, 115, 22, 0.15);
+    color: #fb923c;
+}
+
+.hist-quality-tag.miss {
+    background: rgba(244, 63, 94, 0.18);
+    color: #fb7185;
 }
 
 .hist-quality-tag.blunder {

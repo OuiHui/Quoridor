@@ -6,7 +6,12 @@
     <div class="control-group logs-group">
         <div class="logs-header">
             <h3 id="logs-header-title">Match History</h3>
-            <span id="history-counter" class="history-step-badge">Start</span>
+            <div class="logs-header-right">
+                <button class="btn-export-state" id="btn-export-state" title="Export game state summary & JSON">
+                    <span class="export-icon">⤓</span> Export
+                </button>
+                <span id="history-counter" class="history-step-badge">Start</span>
+            </div>
         </div>
         <div class="history-controls-bar">
             <button class="hist-btn" id="btn-history-first" title="Jump to Start (First Move)">⏮</button>

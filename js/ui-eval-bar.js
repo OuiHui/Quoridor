@@ -128,7 +128,10 @@ export function precomputeNextMoves() {
         }
 
         state.precomputedEvaluations.currentEval = score;
-        updateEvalBarUI(score);
+        const currentItem = state.historyIndex > 0 ? state.history[state.historyIndex - 1] : null;
+        if (!currentItem || currentItem.evalScore === null || currentItem.evalScore === undefined) {
+            updateEvalBarUI(score);
+        }
 
         const hWallsArray = new Uint8Array(64);
         const vWallsArray = new Uint8Array(64);
@@ -278,13 +281,25 @@ export function updateEvalBar() {
         return;
     }
     let scoreUpdated = false;
-    if (state.previousPrecomputedEvaluations) {
+
+    if (state.historyIndex > 0 && state.historyIndex <= state.history.length) {
+        const currentMoveItem = state.history[state.historyIndex - 1];
+        if (currentMoveItem && currentMoveItem.evalScore !== undefined && currentMoveItem.evalScore !== null) {
+            updateEvalBarUI(currentMoveItem.evalScore);
+            scoreUpdated = true;
+        }
+    }
+
+    if (!scoreUpdated && state.previousPrecomputedEvaluations) {
         const lastMove = state.history[state.history.length - 1];
         if (lastMove) {
             const moveKey = lastMove.type === 'move' ? `move:${lastMove.to.x},${lastMove.to.y}` : `wall:${lastMove.x},${lastMove.y},${lastMove.wallType}`;
             const cachedScore = state.previousPrecomputedEvaluations.scores.get(moveKey);
             if (cachedScore !== undefined) {
                 updateEvalBarUI(cachedScore);
+                scoreUpdated = true;
+            } else if (state.previousPrecomputedEvaluations.currentEval !== null) {
+                updateEvalBarUI(state.previousPrecomputedEvaluations.currentEval);
                 scoreUpdated = true;
             }
         }

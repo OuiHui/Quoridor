@@ -2,6 +2,7 @@ import { state } from './state.js';
 import { formatMoveNotation } from './notation.js';
 import { evaluateBoard, minimax } from './ai.js';
 import { renderMatchHistoryUI, getBoardStateKey } from './ui-diagnostics.js';
+import { updateEvalBarUI } from './ui-eval-bar.js';
 
 export function captureStateSnapshot() {
     return {
@@ -30,7 +31,7 @@ export function isSameMove(m1, m2) {
     return false;
 }
 
-function updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextEl, historyItem = null, bestMove = null) {
+function classifyMove(chosenScore, bestScore, player, secondBestScore = null) {
     let loss = 0;
     if (player === 1) {
         if (bestScore === Infinity) {
@@ -46,30 +47,88 @@ function updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextE
         }
     }
 
-    let classification = 'optimal';
-    let text = 'Optimal';
-    
-    if (loss <= 0) {
-        classification = 'optimal';
-        text = 'Optimal';
-    } else if (loss <= 4) {
+    const playerWinning = player === 1 ? (bestScore >= 30 || bestScore === Infinity) : (bestScore <= -30 || bestScore === -Infinity);
+    const chosenWinning = player === 1 ? (chosenScore >= 15 || chosenScore === Infinity) : (chosenScore <= -15 || chosenScore === -Infinity);
+
+    let secondLoss = null;
+    if (secondBestScore !== null && secondBestScore !== undefined) {
+        secondLoss = player === 1 ? (bestScore - secondBestScore) : (secondBestScore - bestScore);
+    }
+
+    let classification = 'best';
+    let text = 'Best';
+    let symbol = '★';
+
+    if (loss <= 2) {
+        if (secondLoss !== null && secondLoss >= 20 && (chosenScore >= 30 || chosenScore === Infinity || Math.abs(chosenScore) > Math.abs(secondBestScore || 0))) {
+            classification = 'brilliant';
+            text = 'Brilliant';
+            symbol = '!!';
+        } else if (secondLoss !== null && secondLoss >= 15) {
+            classification = 'great';
+            text = 'Great Move';
+            symbol = '!';
+        } else {
+            classification = 'best';
+            text = 'Best';
+            symbol = '★';
+        }
+    } else if (loss <= 6) {
+        classification = 'excellent';
+        text = 'Excellent';
+        symbol = '✓';
+    } else if (loss <= 14) {
         classification = 'good';
-        text = 'Good Move';
-    } else if (loss <= 15) {
+        text = 'Good';
+        symbol = '👍';
+    } else if (playerWinning && !chosenWinning && loss >= 20) {
+        classification = 'miss';
+        text = 'Miss';
+        symbol = '❌';
+    } else if (loss <= 25) {
         classification = 'inaccuracy';
         text = 'Inaccuracy';
+        symbol = '?!';
+    } else if (loss <= 45) {
+        classification = 'mistake';
+        text = 'Mistake';
+        symbol = '?';
     } else {
         classification = 'blunder';
         text = 'Blunder';
+        symbol = '??';
     }
 
+    return { classification, text, symbol, loss };
+}
+
+function updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextEl, historyItem = null, bestMove = null, secondBestScore = null) {
+    const { classification, text, symbol, loss } = classifyMove(chosenScore, bestScore, player, secondBestScore);
     const bestMoveNotation = bestMove ? formatMoveNotation(bestMove) : null;
+
+    let prevEval = null;
+    if (historyItem && historyItem.id > 1) {
+        const prevItem = state.history[historyItem.id - 2];
+        if (prevItem && prevItem.evalScore !== null && prevItem.evalScore !== undefined) {
+            prevEval = prevItem.evalScore;
+        }
+    }
+
+    const isBestMove = (loss <= 2 || classification === 'best' || classification === 'great' || classification === 'brilliant');
+    let resultingEvalScore;
+    if (isBestMove) {
+        resultingEvalScore = prevEval !== null ? prevEval : (bestScore !== null ? bestScore : 0);
+    } else {
+        resultingEvalScore = chosenScore;
+    }
 
     const qualityObj = {
         classification,
         text,
+        symbol,
         player,
-        score: chosenScore,
+        score: resultingEvalScore,
+        chosenScore,
         bestScore,
         loss,
         bestMoveNotation
@@ -79,12 +138,16 @@ function updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextE
 
     if (historyItem) {
         historyItem.moveQuality = qualityObj;
+        historyItem.evalScore = resultingEvalScore;
+        if (state.historyIndex === historyItem.id) {
+            updateEvalBarUI(resultingEvalScore);
+        }
         renderMatchHistoryUI();
     }
 
     if (badgeEl && badgeTextEl) {
         badgeEl.className = `eval-move-badge ${classification}`;
-        badgeTextEl.textContent = text;
+        badgeTextEl.textContent = `${symbol} ${text}`;
         badgeEl.classList.remove('hidden');
     }
 }
@@ -111,7 +174,9 @@ export function analyzeMoveQuality(chosenMove, player, historyItem = null, state
                 state.previousPrecomputedEvaluations.currentEval;
 
             if (chosenScore !== undefined && bestScore !== null) {
-                updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextEl, historyItem);
+                const sortedScores = Array.from(state.previousPrecomputedEvaluations.scores.values()).sort((a, b) => isP1 ? b - a : a - b);
+                const secondBestScore = sortedScores.length > 1 ? sortedScores[1] : null;
+                updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextEl, historyItem, null, secondBestScore);
                 return;
             }
         }

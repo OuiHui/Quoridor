@@ -25,6 +25,7 @@ import { renderBoard, updatePawnPositions, renderPlacedWalls } from './js/ui-boa
 import { updateUI, logAction, clearLogs, setHistoryJumpCallback } from './js/ui-diagnostics.js';
 import { renderHints, clearHints } from './js/ui-hints.js';
 import { initTrainingWatch, showTrainingWatch } from './js/training-watch.js';
+import { showExportModal } from './js/ui-modal.js';
 
 // Import Board Interactions
 import {
@@ -139,6 +140,11 @@ function init() {
     const btnHistPrev = document.getElementById('btn-history-prev');
     const btnHistNext = document.getElementById('btn-history-next');
     const btnHistLatest = document.getElementById('btn-history-latest');
+
+    const btnExportState = document.getElementById('btn-export-state');
+    if (btnExportState) {
+        btnExportState.addEventListener('click', () => showExportModal());
+    }
 
     if (btnHistFirst) btnHistFirst.addEventListener('click', () => jumpToHistoryState(0));
     if (btnHistPrev) btnHistPrev.addEventListener('click', () => stepHistory(-1));

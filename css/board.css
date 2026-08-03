@@ -474,26 +474,57 @@
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
-.eval-move-badge.optimal {
+.eval-move-badge.brilliant {
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.25), rgba(45, 212, 191, 0.25));
+    border: 1px solid #2dd4bf;
+    color: #2dd4bf;
+    box-shadow: 0 0 10px rgba(45, 212, 191, 0.4);
+}
+
+.eval-move-badge.great {
+    background: rgba(59, 130, 246, 0.18);
+    border: 1px solid #3b82f6;
+    color: #60a5fa;
+}
+
+.eval-move-badge.best, .eval-move-badge.optimal {
     background: rgba(16, 185, 129, 0.15);
     border: 1px solid var(--color-success);
     color: var(--color-success);
 }
 
+.eval-move-badge.excellent {
+    background: rgba(52, 211, 153, 0.15);
+    border: 1px solid #34d399;
+    color: #34d399;
+}
+
 .eval-move-badge.good {
-    background: rgba(6, 182, 212, 0.12);
-    border: 1px solid var(--color-p1);
-    color: var(--color-p1);
+    background: rgba(34, 197, 94, 0.12);
+    border: 1px solid #22c55e;
+    color: #4ade80;
 }
 
 .eval-move-badge.inaccuracy {
     background: rgba(245, 158, 11, 0.12);
-    border: 1px solid var(--color-p2);
-    color: var(--color-p2);
+    border: 1px solid #f59e0b;
+    color: #f59e0b;
+}
+
+.eval-move-badge.mistake {
+    background: rgba(249, 115, 22, 0.15);
+    border: 1px solid #f97316;
+    color: #fb923c;
+}
+
+.eval-move-badge.miss {
+    background: rgba(244, 63, 94, 0.18);
+    border: 1px solid #f43f5e;
+    color: #fb7185;
 }
 
 .eval-move-badge.blunder {
-    background: rgba(239, 68, 68, 0.12);
+    background: rgba(239, 68, 68, 0.15);
     border: 1px solid var(--color-error);
     color: var(--color-error);
 }
