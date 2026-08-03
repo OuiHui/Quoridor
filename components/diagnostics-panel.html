@@ -1,40 +1,7 @@
 <div class="panel-header">
-    <h2>Game & Analysis</h2>
+    <h2>Match History & Analysis</h2>
 </div>
 <div class="panel-body">
-    <!-- GAME MODE SELECTOR -->
-    <div class="control-group">
-        <h3>Game Mode</h3>
-        <div class="mode-buttons">
-            <button class="mode-btn active" id="mode-sandbox" data-mode="sandbox">Sandbox / Free Play</button>
-            <button class="mode-btn" id="mode-pvp" data-mode="pvp">Pass & Play (Local)</button>
-            <button class="mode-btn" id="mode-ai" data-mode="ai">Vs AI Opponent</button>
-        </div>
-    </div>
-
-    <!-- AI SETTINGS (HIDDEN BY DEFAULT) -->
-    <div class="control-group hidden" id="ai-settings">
-        <h3>AI Settings</h3>
-        <div class="ai-controls">
-            <div class="difficulty-selector">
-                <label for="ai-difficulty">Difficulty:</label>
-                <select id="ai-difficulty">
-                    <option value="easy">Easy (Pawn Focus)</option>
-                    <option value="medium">Medium (Heuristic Defense)</option>
-                    <option value="hard">Hard (Lookahead search)</option>
-                    <option value="alphazero">AlphaZero MCTS (Policy + Value)</option>
-                </select>
-            </div>
-            <div class="ai-role-selector">
-                <label for="ai-color">Play As:</label>
-                <select id="ai-color">
-                    <option value="p1">Player 1 (Blue) - Moves First</option>
-                    <option value="p2" selected>Player 2 (Amber) - Moves Second</option>
-                </select>
-            </div>
-        </div>
-    </div>
-
     <!-- PERFORMANCE/DIAGNOSTICS ANALYZER -->
     <div class="control-group diagnostics-panel hidden">
         <!-- WALL EFFICIENCY PANEL -->
@@ -64,9 +31,5 @@
         <div class="logs-container" id="game-logs">
             <!-- Populated dynamically with formal move notation only -->
         </div>
-
-        <div class="moves-list hidden" id="playbook-moves-list">
-            <!-- Populated dynamically -->
-        </div>
     </div>
-</div>
+</div>

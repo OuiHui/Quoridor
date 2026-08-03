@@ -285,8 +285,10 @@ function init() {
         renderPlacedWalls,
         updatePawnPositions,
         logAction,
-        clearLogs
+        clearLogs,
+        jumpToHistoryState
     });
+
 
     // Wire up interaction mode buttons
     const setInteractionMode = (mode) => {
@@ -444,9 +446,10 @@ function init() {
     });
 
     // 5. Game Mode buttons
-    document.querySelectorAll('.mode-btn').forEach(btn => {
+    document.querySelectorAll('.mode-btn[data-mode]').forEach(btn => {
         btn.addEventListener('click', () => setGameMode(btn.dataset.mode));
     });
+
 
     // AI Difficulty select
     document.getElementById('ai-difficulty').addEventListener('change', (e) => {

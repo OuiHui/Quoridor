@@ -1,13 +1,47 @@
 import { state } from './state.js';
 import { playSound } from './sfx.js';
-import { parseNotation } from './notation.js';
+import { parseNotation, formatMoveNotation } from './notation.js';
 import { PLAYBOOK_DATA } from './playbook-data.js';
+import { captureStateSnapshot } from './move-analysis.js';
+
 
 let boardActions = null; // Dependency injected board actions from app.js
+
+export function showPlaybookView() {
+    const settingsView = document.getElementById('left-panel-settings');
+    const playbookView = document.getElementById('left-panel-playbook');
+    const titleEl = document.getElementById('left-panel-header-title');
+    if (settingsView) settingsView.classList.add('hidden');
+    if (playbookView) playbookView.classList.remove('hidden');
+    if (titleEl) titleEl.textContent = "Opening Playbook";
+}
+
+export function showSettingsView() {
+    const settingsView = document.getElementById('left-panel-settings');
+    const playbookView = document.getElementById('left-panel-playbook');
+    const titleEl = document.getElementById('left-panel-header-title');
+    if (playbookView) playbookView.classList.add('hidden');
+    if (settingsView) settingsView.classList.remove('hidden');
+    if (titleEl) titleEl.textContent = "Game Settings";
+}
 
 export function initPlaybook(actions) {
     boardActions = actions;
     
+    const openPlaybookBtn = document.getElementById('btn-open-playbook');
+    if (openPlaybookBtn) {
+        openPlaybookBtn.addEventListener('click', () => {
+            showPlaybookView();
+        });
+    }
+
+    const backToSettingsBtn = document.getElementById('pb-back-to-settings');
+    if (backToSettingsBtn) {
+        backToSettingsBtn.addEventListener('click', () => {
+            exitPlaybookMode();
+        });
+    }
+
     const selector = document.getElementById('playbook-select');
     if (selector) {
         selector.addEventListener('change', (e) => {
@@ -47,8 +81,101 @@ export function initPlaybook(actions) {
     if (collapsedTitle) collapsedTitle.addEventListener('click', toggleCollapse);
 }
 
+function preloadPlaybookHistory(moves) {
+    state.history = [];
+    state.historyIndex = 0;
+
+    let p1 = { x: 4, y: 0 };
+    let p2 = { x: 4, y: 8 };
+    let p1w = 10;
+    let p2w = 10;
+    let hw = new Map();
+    let vw = new Map();
+    let trn = 1;
+
+    moves.forEach((mv, idx) => {
+        const parsed = parseNotation(mv.notation);
+        if (!parsed) return;
+
+        const player = trn;
+        const stateBefore = {
+            p1Pos: { ...p1 },
+            p2Pos: { ...p2 },
+            p1Walls: p1w,
+            p2Walls: p2w,
+            hWalls: new Map(hw),
+            vWalls: new Map(vw),
+            turn: trn
+        };
+
+        if (parsed.type === 'pawn') {
+            const oldPos = player === 1 ? { ...p1 } : { ...p2 };
+            if (player === 1) p1 = { x: parsed.x, y: parsed.y };
+            else p2 = { x: parsed.x, y: parsed.y };
+
+            const stateAfter = {
+                p1Pos: { ...p1 },
+                p2Pos: { ...p2 },
+                p1Walls: p1w,
+                p2Walls: p2w,
+                hWalls: new Map(hw),
+                vWalls: new Map(vw),
+                turn: trn === 1 ? 2 : 1
+            };
+            const notation = formatMoveNotation({ type: 'move', to: { x: parsed.x, y: parsed.y } }) || mv.notation;
+
+            state.history.push({
+                id: idx + 1,
+                type: 'move',
+                player,
+                from: oldPos,
+                to: { x: parsed.x, y: parsed.y },
+                notation,
+                stateBefore,
+                stateAfter,
+                moveQuality: null
+            });
+        } else {
+            const wallKey = `${parsed.x},${parsed.y}`;
+            if (parsed.wallType === 'h') hw.set(wallKey, player);
+            else vw.set(wallKey, player);
+
+            if (player === 1) p1w--;
+            else p2w--;
+
+            const stateAfter = {
+                p1Pos: { ...p1 },
+                p2Pos: { ...p2 },
+                p1Walls: p1w,
+                p2Walls: p2w,
+                hWalls: new Map(hw),
+                vWalls: new Map(vw),
+                turn: trn === 1 ? 2 : 1
+            };
+            const notation = formatMoveNotation({ type: 'wall', x: parsed.x, y: parsed.y, wallType: parsed.wallType }) || mv.notation;
+
+            state.history.push({
+                id: idx + 1,
+                type: 'wall',
+                player,
+                x: parsed.x,
+                y: parsed.y,
+                wallType: parsed.wallType,
+                notation,
+                stateBefore,
+                stateAfter,
+                moveQuality: null
+            });
+        }
+        trn = trn === 1 ? 2 : 1;
+    });
+
+    if (boardActions && boardActions.jumpToHistoryState) {
+        boardActions.jumpToHistoryState(0);
+    }
+}
+
 export function loadPlaybook(key) {
-    // Clear autoplay
     if (state.playbookAutoplayTimer) {
         clearInterval(state.playbookAutoplayTimer);
         state.playbookAutoplayTimer = null;
@@ -62,30 +189,17 @@ export function loadPlaybook(key) {
         document.getElementById('playbook-empty').classList.remove('hidden');
         const boardEl = document.getElementById('board');
         if (boardEl) boardEl.classList.remove('playbook-locked');
-        if (boardActions && boardActions.clearLogs) {
-            boardActions.clearLogs();
+        if (boardActions && boardActions.resetBoardState) {
+            boardActions.resetBoardState();
         }
-
-        const headerTitle = document.getElementById('logs-header-title');
-        if (headerTitle) headerTitle.textContent = "Match History";
-        const gameLogs = document.getElementById('game-logs');
-        if (gameLogs) gameLogs.classList.remove('hidden');
-        const pbMovesList = document.getElementById('playbook-moves-list');
-        if (pbMovesList) pbMovesList.classList.add('hidden');
         return;
     }
     
+    showPlaybookView();
     state.activePlaybook = PLAYBOOK_DATA[key];
     state.playbookStep = 0;
     state.playbookPracticeMode = false;
 
-    const headerTitle = document.getElementById('logs-header-title');
-    if (headerTitle) headerTitle.textContent = "Playbook Sequence";
-    const gameLogs = document.getElementById('game-logs');
-    if (gameLogs) gameLogs.classList.add('hidden');
-    const pbMovesList = document.getElementById('playbook-moves-list');
-    if (pbMovesList) pbMovesList.classList.remove('hidden');
-    
     // UI details
     document.getElementById('playbook-empty').classList.add('hidden');
     document.getElementById('playbook-info').classList.remove('hidden');
@@ -98,33 +212,11 @@ export function loadPlaybook(key) {
     }
     document.getElementById('playbook-description').textContent = state.activePlaybook.description;
     
-    // Render list of moves
-    const listEl = document.getElementById('playbook-moves-list');
-    listEl.innerHTML = '';
-    
-    state.activePlaybook.moves.forEach((mv, index) => {
-        const item = document.createElement('div');
-        const playerNum = index % 2 === 0 ? 1 : 2;
-        item.className = `pb-move-item pb-move-p${playerNum}`;
-        item.dataset.index = index;
-        item.innerHTML = `
-            <span>${index + 1}. Player ${playerNum} (${mv.notation})</span>
-            <span style="font-size:0.7rem; color:var(--color-text-muted)">Info</span>
-        `;
-        item.addEventListener('click', () => jumpToPlaybookStep(index + 1));
-        listEl.appendChild(item);
-    });
-    
-    // Set board to sandbox mode when playbook is loaded
     if (boardActions) {
         boardActions.setGameMode('sandbox');
-        // Reset board to initial positions
-        boardActions.resetBoardState();
-        if (boardActions.clearLogs) {
-            boardActions.clearLogs();
-        }
     }
-    
+
+    preloadPlaybookHistory(state.activePlaybook.moves);
     updatePlaybookUI();
 }
 
@@ -148,19 +240,6 @@ export function updatePlaybookUI() {
     const step = state.playbookStep;
     document.getElementById('pb-step-counter').textContent = `Step ${step} / ${pb.moves.length}`;
     
-    // Highlight active step in sequence
-    document.querySelectorAll('.pb-move-item').forEach(el => {
-        const idx = parseInt(el.dataset.index);
-        el.classList.remove('active', 'active-p1', 'active-p2');
-        if (idx === step - 1) {
-            const playerNum = idx % 2 === 0 ? 1 : 2;
-            el.classList.add('active', `active-p${playerNum}`);
-            // Scroll to it
-            el.scrollIntoView({ block: 'nearest' });
-        }
-    });
-    
-    // Update step message description
     const statusMsg = document.getElementById('pb-practice-status');
     if (state.playbookPracticeMode) {
         if (step === pb.moves.length) {
@@ -175,17 +254,15 @@ export function updatePlaybookUI() {
         }
     } else {
         if (step === 0) {
-            statusMsg.textContent = "Click 'Next' or 'Auto Play' to step through the sequence.";
+            statusMsg.textContent = "Click 'Next' or 'Auto Play' or use Match History to step through.";
         } else {
-            statusMsg.textContent = pb.moves[step - 1].desc;
+            statusMsg.textContent = pb.moves[step - 1] ? pb.moves[step - 1].desc : '';
         }
         statusMsg.className = "playbook-status-msg";
     }
 }
 
-// Highlight the cell or joint representing the next playbook move to guide the player
 export function highlightPlaybookHint(notation) {
-    // Clear old valid moves first
     document.querySelectorAll('.board-cell').forEach(cell => {
         cell.classList.remove('valid-move');
     });
@@ -200,109 +277,28 @@ export function highlightPlaybookHint(notation) {
 }
 
 export function playbookNextStep() {
-    const pb = state.activePlaybook;
-    if (!pb || state.playbookStep >= pb.moves.length) return;
-    
-    // Apply step
-    const nextMove = pb.moves[state.playbookStep];
-    const parsed = parseNotation(nextMove.notation);
-    
-    // Apply to board state (implicitly skipping validation bypass for the sake of playbook demonstration)
-    if (parsed.type === 'pawn') {
-        const player = state.turn;
-        
-        // Push onto history stack
-        state.history.push({
-            type: 'move',
-            player,
-            from: player === 1 ? { ...state.p1Pos } : { ...state.p2Pos },
-            to: { x: parsed.x, y: parsed.y }
-        });
-        
-        if (player === 1) state.p1Pos = { x: parsed.x, y: parsed.y };
-        else state.p2Pos = { x: parsed.x, y: parsed.y };
-        
-        if (boardActions) {
-            boardActions.logAction(`Playbook Step ${state.playbookStep + 1} (P${player}): Pawn to ${nextMove.notation}`, `p${player}`);
-        }
-        playSound('move');
-        state.turn = state.turn === 1 ? 2 : 1;
-        if (boardActions) {
-            boardActions.updatePawnPositions();
-        }
-    } else {
-        const player = state.turn;
-        const wallKey = `${parsed.x},${parsed.y}`;
-        
-        state.history.push({
-            type: 'wall',
-            player,
-            x: parsed.x,
-            y: parsed.y,
-            wallType: parsed.wallType
-        });
-        
-        if (parsed.wallType === 'h') state.hWalls.set(wallKey, player);
-        else state.vWalls.set(wallKey, player);
-        
-        if (player === 1) state.p1Walls--;
-        else state.p2Walls--;
-        
-        if (boardActions) {
-            boardActions.logAction(`Playbook Step ${state.playbookStep + 1} (P${player}): Wall at ${nextMove.notation}`, `p${player}`);
-        }
-        playSound('wall');
-        state.turn = state.turn === 1 ? 2 : 1;
-        if (boardActions) {
-            boardActions.renderPlacedWalls();
-        }
-    }
-    
-    state.playbookStep++;
-    if (boardActions) {
-        boardActions.updateUI();
-    }
-    updatePlaybookUI();
+    if (!state.activePlaybook) return;
+    jumpToPlaybookStep(state.playbookStep + 1);
 }
 
 export function playbookPrevStep() {
-    const pb = state.activePlaybook;
-    if (!pb || state.playbookStep <= 0) return;
-    
-    // Perform an undo
-    if (boardActions) {
-        boardActions.undoMove();
-    }
-    state.playbookStep--;
-    
-    updatePlaybookUI();
+    if (!state.activePlaybook) return;
+    jumpToPlaybookStep(state.playbookStep - 1);
 }
 
 export function jumpToPlaybookStep(targetStep) {
     if (!state.activePlaybook) return;
     
-    // Stop autoplay
-    if (state.playbookAutoplayTimer) {
-        clearInterval(state.playbookAutoplayTimer);
-        state.playbookAutoplayTimer = null;
-        const autoplayBtn = document.getElementById('pb-autoplay');
-        if (autoplayBtn) autoplayBtn.textContent = "Auto Play";
-    }
-    
-    // If we need to go backward or reset
-    if (targetStep < state.playbookStep) {
-        while (state.playbookStep > targetStep) {
-            playbookPrevStep();
-        }
-    } else {
-        // Go forward
-        while (state.playbookStep < targetStep) {
-            playbookNextStep();
-        }
+    if (targetStep < 0) targetStep = 0;
+    if (targetStep > state.activePlaybook.moves.length) targetStep = state.activePlaybook.moves.length;
+
+    if (boardActions && boardActions.jumpToHistoryState) {
+        boardActions.jumpToHistoryState(targetStep);
     }
 }
 
 export function resetPlaybook() {
+
     jumpToPlaybookStep(0);
 }
 
@@ -440,7 +436,6 @@ export function exitPlaybookMode() {
     const boardEl = document.getElementById('board');
     if (boardEl) boardEl.classList.remove('playbook-locked');
     
-    // Stop autoplay
     if (state.playbookAutoplayTimer) {
         clearInterval(state.playbookAutoplayTimer);
         state.playbookAutoplayTimer = null;
@@ -448,11 +443,6 @@ export function exitPlaybookMode() {
         if (autoplayBtn) autoplayBtn.textContent = "Auto Play";
     }
 
-    // Restore Match History UI
-    const headerTitle = document.getElementById('logs-header-title');
-    if (headerTitle) headerTitle.textContent = "Match History";
-    const gameLogs = document.getElementById('game-logs');
-    if (gameLogs) gameLogs.classList.remove('hidden');
-    const pbMovesList = document.getElementById('playbook-moves-list');
-    if (pbMovesList) pbMovesList.classList.add('hidden');
+    showSettingsView();
 }
+

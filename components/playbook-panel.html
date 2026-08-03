@@ -1,49 +1,99 @@
 <div class="panel-header">
-    <h2>Opening Playbook</h2>
+    <h2 id="left-panel-header-title">Game Settings</h2>
     <div class="header-actions">
-        <div class="mode-indicator" id="playbook-active-badge">Active</div>
-        <button id="pb-toggle-collapse" class="panel-toggle-btn" title="Collapse Playbook">«</button>
+        <button id="pb-toggle-collapse" class="panel-toggle-btn" title="Collapse Panel">«</button>
     </div>
 </div>
-<div class="collapsed-title" id="pb-collapsed-title">Opening Playbook</div>
+<div class="collapsed-title" id="pb-collapsed-title">Settings & Playbook</div>
 <div class="panel-body">
-    <div class="playbook-selector-wrapper">
-        <label for="playbook-select">Select Opening:</label>
-        <select id="playbook-select">
-            <option value="none">-- Select an Opening --</option>
-            <option value="reed">Dr. Reed's Opening (Double Wall)</option>
-            <option value="shiller">Shiller Opening (Tempo Vertical)</option>
-            <option value="center-rush">Standard Center Rush</option>
-            <option value="mirror-defense">Mirror Defense</option>
-        </select>
-    </div>
-
-    <div id="playbook-info" class="playbook-info-card hidden">
-        <h3 id="playbook-title">Reed's Opening</h3>
-        <p id="playbook-description" class="playbook-desc">
-            Places two horizontal walls behind the opponent early on.
-        </p>
-        
-        <div class="playbook-nav">
-            <button id="pb-prev" class="btn btn-secondary" title="Previous Step">←</button>
-            <span id="pb-step-counter" class="step-counter">Step 0 / 0</span>
-            <button id="pb-next" class="btn btn-secondary" title="Next Step">→</button>
-        </div>
-        
-        <div class="playbook-controls">
-            <button id="pb-autoplay" class="btn btn-primary btn-sm">Auto Play</button>
-            <button id="pb-practice" class="btn btn-accent btn-sm">Practice Mode</button>
-            <button id="pb-reset" class="btn btn-secondary btn-sm">Reset</button>
-            <button id="pb-deactivate" class="btn btn-secondary btn-sm" title="Exit Playbook">Exit Playbook</button>
+    <!-- VIEW 1: GAME SETTINGS & MODE SELECTION -->
+    <div id="left-panel-settings" class="left-panel-view">
+        <!-- GAME MODE SELECTOR -->
+        <div class="control-group">
+            <h3>Game Mode</h3>
+            <div class="mode-buttons">
+                <button class="mode-btn active" id="mode-sandbox" data-mode="sandbox">Sandbox / Free Play</button>
+                <button class="mode-btn" id="mode-pvp" data-mode="pvp">Pass & Play (Local)</button>
+                <button class="mode-btn" id="mode-ai" data-mode="ai">Vs AI Opponent</button>
+            </div>
         </div>
 
-        <div class="playbook-status-msg" id="pb-practice-status">
-            Click 'Practice' to try the moves yourself!
+        <!-- AI SETTINGS (HIDDEN BY DEFAULT) -->
+        <div class="control-group hidden" id="ai-settings">
+            <h3>AI Settings</h3>
+            <div class="ai-controls">
+                <div class="difficulty-selector">
+                    <label for="ai-difficulty">Difficulty:</label>
+                    <select id="ai-difficulty">
+                        <option value="easy">Easy (Pawn Focus)</option>
+                        <option value="medium">Medium (Heuristic Defense)</option>
+                        <option value="hard">Hard (Lookahead search)</option>
+                        <option value="alphazero">AlphaZero MCTS (Policy + Value)</option>
+                    </select>
+                </div>
+                <div class="ai-role-selector">
+                    <label for="ai-color">Play As:</label>
+                    <select id="ai-color">
+                        <option value="p1">Player 1 (Blue) - Moves First</option>
+                        <option value="p2" selected>Player 2 (Amber) - Moves Second</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- OPENING PLAYBOOK ENTRY CARD -->
+        <div class="control-group playbook-entry-group">
+            <h3>Openings Trainer</h3>
+            <button id="btn-open-playbook" class="btn-playbook-entry">
+                <span class="entry-title">📖 Opening Playbook</span>
+                <span class="entry-desc">Study & practice essential Quoridor openings</span>
+            </button>
         </div>
     </div>
-    
-    <div class="playbook-empty-state" id="playbook-empty">
-        <div class="info-icon">💡</div>
-        <p>Select an opening above to start learning. You'll get step-by-step guidance on optimal moves and wall blockades.</p>
+
+    <!-- VIEW 2: OPENING PLAYBOOK (TAKES ENTIRETY OF LEFT PANEL) -->
+    <div id="left-panel-playbook" class="left-panel-view hidden">
+        <div class="playbook-top-bar">
+            <button id="pb-back-to-settings" class="btn btn-secondary btn-sm">← Back to Settings</button>
+            <span class="mode-indicator active">Playbook Mode</span>
+        </div>
+
+        <div class="playbook-selector-wrapper" style="margin-top: 10px;">
+            <label for="playbook-select">Select Opening Line:</label>
+            <select id="playbook-select">
+                <option value="none">-- Select an Opening --</option>
+                <option value="reed">Dr. Reed's Opening (Double Wall)</option>
+                <option value="shiller">Shiller Opening (Tempo Vertical)</option>
+                <option value="center-rush">Standard Center Rush</option>
+                <option value="mirror-defense">Mirror Defense</option>
+            </select>
+        </div>
+
+        <div id="playbook-info" class="playbook-info-card hidden" style="margin-top: 10px;">
+            <h3 id="playbook-title">Reed's Opening</h3>
+            <p id="playbook-description" class="playbook-desc">
+                Places two horizontal walls behind the opponent early on.
+            </p>
+            
+            <div class="playbook-nav">
+                <button id="pb-prev" class="btn btn-secondary" title="Previous Step">←</button>
+                <span id="pb-step-counter" class="step-counter">Step 0 / 0</span>
+                <button id="pb-next" class="btn btn-secondary" title="Next Step">→</button>
+            </div>
+            
+            <div class="playbook-controls">
+                <button id="pb-autoplay" class="btn btn-primary btn-sm" style="flex:1;">Auto Play</button>
+                <button id="pb-practice" class="btn btn-accent btn-sm" style="flex:1;">Practice Mode</button>
+            </div>
+
+            <div class="playbook-status-msg" id="pb-practice-status">
+                Click 'Practice' to try the moves yourself!
+            </div>
+        </div>
+
+        <div class="playbook-empty-state" id="playbook-empty" style="margin-top: 20px;">
+            <div class="info-icon">💡</div>
+            <p>Select an opening line above to display step-by-step instructions and practice optimal moves.</p>
+        </div>
     </div>
 </div>

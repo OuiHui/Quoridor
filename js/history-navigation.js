@@ -4,6 +4,8 @@ import { updatePawnPositions, renderPlacedWalls } from './ui-board.js';
 import { updateUI, hideWallAnalyzer, renderMatchHistoryUI } from './ui-diagnostics.js';
 import { clearHints } from './ui-hints.js';
 
+import { updatePlaybookUI } from './playbook.js';
+
 export function jumpToHistoryState(targetIndex) {
     if (targetIndex < 0) targetIndex = 0;
     if (targetIndex > state.history.length) targetIndex = state.history.length;
@@ -37,12 +39,18 @@ export function jumpToHistoryState(targetIndex) {
         state.lastMoveQuality = item.moveQuality || null;
     }
 
+    if (state.activePlaybook) {
+        state.playbookStep = targetIndex;
+        updatePlaybookUI();
+    }
+
     playSound('move');
     updatePawnPositions();
     renderPlacedWalls();
     updateUI();
     renderMatchHistoryUI();
 }
+
 
 export function stepHistory(direction) {
     jumpToHistoryState(state.historyIndex + direction);
