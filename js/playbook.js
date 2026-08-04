@@ -3,6 +3,7 @@ import { playSound } from './sfx.js';
 import { parseNotation, formatMoveNotation } from './notation.js';
 import { PLAYBOOK_DATA } from './playbook-data.js';
 import { captureStateSnapshot } from './move-analysis.js';
+import { setPresetGoalArrows } from './board-arrows.js';
 
 
 let boardActions = null; // Dependency injected board actions from app.js
@@ -25,8 +26,28 @@ export function showSettingsView() {
     if (titleEl) titleEl.textContent = "Game Settings";
 }
 
+export function populatePlaybookSelector() {
+    const selector = document.getElementById('playbook-select');
+    if (!selector) return;
+
+    const currentVal = selector.value;
+    selector.innerHTML = '<option value="none">-- Select an Opening --</option>';
+
+    for (const [key, data] of Object.entries(PLAYBOOK_DATA)) {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = data.title;
+        selector.appendChild(opt);
+    }
+
+    if (currentVal && PLAYBOOK_DATA[currentVal]) {
+        selector.value = currentVal;
+    }
+}
+
 export function initPlaybook(actions) {
     boardActions = actions;
+    populatePlaybookSelector();
     
     const openPlaybookBtn = document.getElementById('btn-open-playbook');
     if (openPlaybookBtn) {
@@ -185,6 +206,7 @@ export function loadPlaybook(key) {
     
     if (key === 'none') {
         state.activePlaybook = null;
+        setPresetGoalArrows([]);
         document.getElementById('playbook-info').classList.add('hidden');
         document.getElementById('playbook-empty').classList.remove('hidden');
         const boardEl = document.getElementById('board');
@@ -199,6 +221,7 @@ export function loadPlaybook(key) {
     state.activePlaybook = PLAYBOOK_DATA[key];
     state.playbookStep = 0;
     state.playbookPracticeMode = false;
+    setPresetGoalArrows(state.activePlaybook ? state.activePlaybook.goalArrows : []);
 
     // UI details
     document.getElementById('playbook-empty').classList.add('hidden');
@@ -426,6 +449,7 @@ export function exitPlaybookMode() {
     state.activePlaybook = null;
     state.playbookStep = 0;
     state.playbookPracticeMode = false;
+    setPresetGoalArrows([]);
     
     const select = document.getElementById('playbook-select');
     if (select) select.value = 'none';

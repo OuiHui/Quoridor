@@ -21,6 +21,7 @@ import { loadONNXModel } from './js/model-loader.js';
 import { initUIEvents, toggleHintMode, setInteractionMode } from './js/ui-events.js';
 import { initKeyboardControls } from './js/keyboard-controls.js';
 import { initCustomDropdowns } from './js/ui-dropdown.js';
+import { initBoardArrows, clearCustomArrows } from './js/board-arrows.js';
 import {
     handleCellClick,
     handleCellMouseEnter,
@@ -85,6 +86,13 @@ function init() {
         onJointMouseLeave: handleJointMouseLeave,
         onJointClick: handleJointClick
     });
+
+    initBoardArrows();
+
+    const clearArrowsBtn = document.getElementById('btn-clear-arrows');
+    if (clearArrowsBtn) {
+        clearArrowsBtn.addEventListener('click', clearCustomArrows);
+    }
 
     initPlaybook({
         executePawnMove,
