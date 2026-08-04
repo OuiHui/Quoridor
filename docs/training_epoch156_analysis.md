@@ -91,9 +91,9 @@ Cumulative Wall Mass in Target Policy = ~40% (even when Argmax = Action 0)
 
 | Component | File | Proposed Fix | Rationale |
 | :--- | :--- | :--- | :--- |
-| **Actor Sampling** | [run_actor.py](file:///c:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/run_actor.py#L161-L167) | Set `TEMP_THRESHOLD = 0` (or sample stochastically *only within pawn actions*) | Prevents cumulative wall mass (~40%) from triggering wall placements during opening turns. |
-| **Model Encoding** | [quoridor_model.py](file:///c:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/quoridor_model.py#L54) | Remove Channel 10 (`is_p1_turn`) from `scalars` (5 → 4 features) | Enforces strict perspective symmetry across active players. |
-| **MCTS Noise** | [cpp/mcts.cpp](file:///c:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/cpp/mcts.cpp#L70) | Reduce Dirichlet noise weight `dirichlet_eps` from `0.25` to `0.15` | Preserves neural network pawn priors at root nodes. |
+| **Actor Sampling** | [run_actor.py](run_actor.py#L161-L167) | Set `TEMP_THRESHOLD = 0` (or sample stochastically *only within pawn actions*) | Prevents cumulative wall mass (~40%) from triggering wall placements during opening turns. |
+| **Model Encoding** | [quoridor_model.py](quoridor_model.py#L54) | Remove Channel 10 (`is_p1_turn`) from `scalars` (5 → 4 features) | Enforces strict perspective symmetry across active players. |
+| **MCTS Noise** | [cpp/mcts.cpp](cpp/mcts.cpp#L70) | Reduce Dirichlet noise weight `dirichlet_eps` from `0.25` to `0.15` | Preserves neural network pawn priors at root nodes. |
 | **Data & Checkpoint** | Workspace Root | Clear `data/` directory & reset `quoridor_checkpoint.pth` | Purges 156 epochs of wall-spam targets and resets network weights for clean training. |
 
 ---

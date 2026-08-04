@@ -47,7 +47,7 @@ P1 plays strategically while P2 plays randomly $\rightarrow$ P1 wins 100% of the
 To fix this, unvisited children must inherit the parent's current Q-value ($node.Q$) instead of $0.0$. This ensures they start on equal footing.
 
 ### C++ MCTS Selection Fix
-In [cpp/mcts.cpp](file:///c:/Users/Huy%20Nguyen%20-%20Georgia%20Institute%20of%20Technology/Quoridor/cpp/mcts.cpp):
+In [cpp/mcts.cpp](cpp/mcts.cpp):
 ```diff
                  for (const auto& pair : node->children) {
                      MCTSNode* child = pair.second;
@@ -58,7 +58,7 @@ In [cpp/mcts.cpp](file:///c:/Users/Huy%20Nguyen%20-%20Georgia%20Institute%20of%2
 ```
 
 ### Python MCTS Selection Fix
-In [train_alphazero.py](file:///c:/Users/Huy%20Nguyen%20-%20Georgia%20Institute%20of%20Technology/Quoridor/train_alphazero.py):
+In [train_alphazero.py](train_alphazero.py):
 ```diff
                  # Calculate PUCT score for all children
                  for act_idx, child in node.children.items():

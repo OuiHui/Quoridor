@@ -270,10 +270,18 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                 // Reward from current active perspective:
                 leaf_value = (winner == 1) ? (leaf->game_state.is_p1_turn ? 1.0 : -1.0) 
                                            : (leaf->game_state.is_p1_turn ? -1.0 : 1.0);
+                leaf->proven_status = (leaf_value > 0) ? ProvenStatus::PROVEN_WIN : ProvenStatus::PROVEN_LOSS;
             } else {
                 // Fetch evaluation result from batch
                 int batch_idx = eval_counter++;
                 leaf_value = batch_values[batch_idx];
+                
+                int guaranteed = leaf->game_state.get_guaranteed_winner();
+                if (guaranteed != 0) {
+                    leaf_value = (guaranteed == 1) ? (leaf->game_state.is_p1_turn ? 1.0 : -1.0)
+                                                   : (leaf->game_state.is_p1_turn ? -1.0 : 1.0);
+                    leaf->proven_status = (leaf_value > 0) ? ProvenStatus::PROVEN_WIN : ProvenStatus::PROVEN_LOSS;
+                }
                 
                 // Get legal actions
                 std::vector<Action> valid_actions = leaf->game_state.get_valid_actions();
@@ -345,6 +353,45 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                 node->N += 1;
                 node->W += v;
                 node->Q = node->W / node->N;
+                
+                if (!node->is_leaf() && node->proven_status == ProvenStatus::UNRESOLVED) {
+                    bool all_children_proven_win = true; 
+                    bool any_child_proven_loss = false;
+                    
+                    if (node->children.empty()) {
+                        all_children_proven_win = false;
+                    } else {
+                        for (const auto& pair : node->children) {
+                            MCTSNode* child = pair.second;
+                            if (child->proven_status == ProvenStatus::PROVEN_LOSS) {
+                                any_child_proven_loss = true;
+                                break;
+                            } else if (child->proven_status != ProvenStatus::PROVEN_WIN) {
+                                all_children_proven_win = false;
+                            }
+                        }
+                    }
+                    
+                    if (any_child_proven_loss) {
+                        node->proven_status = ProvenStatus::PROVEN_WIN;
+                        node->Q = 1.0;
+                        node->W = node->N * 1.0;
+                    } else if (all_children_proven_win && node->children.size() == node->valid_actions.size()) {
+                        node->proven_status = ProvenStatus::PROVEN_LOSS;
+                        node->Q = -1.0;
+                        node->W = node->N * -1.0;
+                    }
+                }
+
+                // If node is proven, force v to be the proven value for its parent
+                if (node->proven_status == ProvenStatus::PROVEN_WIN) {
+                    v = 1.0;
+                } else if (node->proven_status == ProvenStatus::PROVEN_LOSS) {
+                    v = -1.0;
+                } else {
+                    v = node->Q; // standard PUCT backprop
+                }
+                
                 v = -v; // Flip perspective for parent
                 node = node->parent;
             }

@@ -33,14 +33,14 @@ This document outlines the performance optimization architecture implemented to 
 ---
 
 ### 4. Automatic Tree Lifecycle & Resets
-* **Tree Flushing:** `resetMCTSTree()` is invoked automatically when a new game starts or the board state is reset in [`js/game.js`](file:///c:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/js/game.js).
+* **Tree Flushing:** `resetMCTSTree()` is invoked automatically when a new game starts or the board state is reset in [`js/game.js`](js/game.js).
 * **State Mismatch Protection:** If a player undoes a move or edits the board manually, state equality verification fails cleanly, falling back to a fresh root node seamlessly.
 
 ---
 
 ## Verification & Benchmarks
 
-Automated test suite is located in [`test_mcts_optimizations.js`](file:///c:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/test_mcts_optimizations.js).
+Automated test suite is located in [`test_mcts_optimizations.js`](test_mcts_optimizations.js).
 
 To execute the verification runner:
 ```bash

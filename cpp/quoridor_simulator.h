@@ -70,6 +70,7 @@ public:
 
     void step(const Action& action);
     int is_game_over() const;
+    int get_guaranteed_winner() const;
 
     double evaluate_heuristic() const;
     

@@ -413,6 +413,34 @@ int QuoridorGame::is_game_over() const {
     return 0; // still playing
 }
 
+int QuoridorGame::get_guaranteed_winner() const {
+    if (is_game_over() != 0) return is_game_over();
+
+    std::vector<std::pair<int, int>> p1_path = get_shortest_path(p1_pos, 8, p2_pos);
+    std::vector<std::pair<int, int>> p2_path = get_shortest_path(p2_pos, 0, p1_pos);
+    
+    int l1 = p1_path.empty() ? 999 : (static_cast<int>(p1_path.size()) - 1);
+    int l2 = p2_path.empty() ? 999 : (static_cast<int>(p2_path.size()) - 1);
+    
+    if (l1 < 999 && l2 < 999) {
+        if (p2_walls_left == 0) {
+            if (is_p1_turn) {
+                if (l1 <= l2 - 1) return 1;
+            } else {
+                if (l1 <= l2 - 2) return 1;
+            }
+        }
+        if (p1_walls_left == 0) {
+            if (is_p1_turn) {
+                if (l2 <= l1 - 2) return -1;
+            } else {
+                if (l2 <= l1 - 1) return -1;
+            }
+        }
+    }
+    return 0;
+}
+
 double QuoridorGame::evaluate_heuristic() const {
     std::vector<std::pair<int, int>> p1_path = get_shortest_path(p1_pos, 8, p2_pos);
     std::vector<std::pair<int, int>> p2_path = get_shortest_path(p2_pos, 0, p1_pos);

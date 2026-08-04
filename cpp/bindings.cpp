@@ -91,6 +91,7 @@ PYBIND11_MODULE(quoridor_cpp, m) {
         .def("get_valid_actions", &QuoridorGame::get_valid_actions)
         .def("step", &QuoridorGame::step)
         .def("is_game_over", &QuoridorGame::is_game_over)
+        .def("get_guaranteed_winner", &QuoridorGame::get_guaranteed_winner)
         .def("evaluate_heuristic", &QuoridorGame::evaluate_heuristic)
         // Helper properties to fetch sets/dicts matching the python simulator behavior
         .def_property_readonly("h_walls", &QuoridorGame::get_h_walls_set)
