@@ -49,7 +49,7 @@ export function renderPlacedWalls() {
 }
 
 // Initial Board Generator
-export function renderBoard({ onCellClick, onCellMouseEnter, onEdgeMouseMove, onEdgeMouseLeave, onEdgeClick, onJointMouseMove, onJointMouseLeave, onJointClick }) {
+export function renderBoard({ onCellClick, onCellMouseEnter, onEdgeMouseMove, onEdgeMouseLeave, onEdgeClick, onEdgeContextMenu, onJointMouseMove, onJointMouseLeave, onJointClick, onJointContextMenu }) {
     const boardEl = document.getElementById('board');
     boardEl.innerHTML = '';
     
@@ -83,6 +83,9 @@ export function renderBoard({ onCellClick, onCellMouseEnter, onEdgeMouseMove, on
             joint.addEventListener('mousemove', (e) => onJointMouseMove(e, x, y));
             joint.addEventListener('mouseleave', (e) => onJointMouseLeave(e, x, y));
             joint.addEventListener('click', (e) => onJointClick(e, x, y));
+            if (onJointContextMenu) {
+                joint.addEventListener('contextmenu', (e) => onJointContextMenu(e, x, y));
+            }
             
             boardEl.appendChild(joint);
         }
@@ -102,6 +105,9 @@ export function renderBoard({ onCellClick, onCellMouseEnter, onEdgeMouseMove, on
             edge.addEventListener('mousemove', (e) => onEdgeMouseMove(e, x, y, 'h'));
             edge.addEventListener('mouseleave', (e) => onEdgeMouseLeave(e, x, y, 'h'));
             edge.addEventListener('click', (e) => onEdgeClick(e, x, y, 'h'));
+            if (onEdgeContextMenu) {
+                edge.addEventListener('contextmenu', (e) => onEdgeContextMenu(e, x, y, 'h'));
+            }
             
             boardEl.appendChild(edge);
         }
@@ -120,6 +126,9 @@ export function renderBoard({ onCellClick, onCellMouseEnter, onEdgeMouseMove, on
             edge.addEventListener('mousemove', (e) => onEdgeMouseMove(e, x, y, 'v'));
             edge.addEventListener('mouseleave', (e) => onEdgeMouseLeave(e, x, y, 'v'));
             edge.addEventListener('click', (e) => onEdgeClick(e, x, y, 'v'));
+            if (onEdgeContextMenu) {
+                edge.addEventListener('contextmenu', (e) => onEdgeContextMenu(e, x, y, 'v'));
+            }
             
             boardEl.appendChild(edge);
         }

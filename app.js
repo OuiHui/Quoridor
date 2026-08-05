@@ -28,9 +28,11 @@ import {
     handleEdgeMouseMove,
     handleEdgeMouseLeave,
     handleEdgeClick,
+    handleEdgeContextMenu,
     handleJointMouseMove,
     handleJointMouseLeave,
-    handleJointClick
+    handleJointClick,
+    handleJointContextMenu
 } from './js/board-interaction.js';
 import {
     executePawnMove,
@@ -82,9 +84,11 @@ function init() {
         onEdgeMouseMove: handleEdgeMouseMove,
         onEdgeMouseLeave: handleEdgeMouseLeave,
         onEdgeClick: handleEdgeClick,
+        onEdgeContextMenu: handleEdgeContextMenu,
         onJointMouseMove: handleJointMouseMove,
         onJointMouseLeave: handleJointMouseLeave,
-        onJointClick: handleJointClick
+        onJointClick: handleJointClick,
+        onJointContextMenu: handleJointContextMenu
     });
 
     initBoardArrows();

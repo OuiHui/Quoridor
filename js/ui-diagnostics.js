@@ -5,6 +5,7 @@ import { renderHints, clearHints } from './ui-hints.js';
 import { getWallNotation } from './notation.js';
 import { updateEvalBar } from './ui-eval-bar.js';
 import { checkGameVictory } from './ui-modal.js';
+import { setShortestPathArrows } from './board-arrows.js';
 
 export {
     getBoardStateKey,
@@ -125,20 +126,7 @@ export function updateUI() {
         cell.classList.remove('valid-move', 'p1-path', 'p2-path');
     });
 
-    if (state.showPaths) {
-        if (p1Path) {
-            p1Path.forEach(pt => {
-                const cell = document.querySelector(`.board-cell[data-x="${pt.x}"][data-y="${pt.y}"]`);
-                if (cell) cell.classList.add('p1-path');
-            });
-        }
-        if (p2Path) {
-            p2Path.forEach(pt => {
-                const cell = document.querySelector(`.board-cell[data-x="${pt.x}"][data-y="${pt.y}"]`);
-                if (cell) cell.classList.add('p2-path');
-            });
-        }
-    }
+    setShortestPathArrows(p1Path, p2Path);
 
     let isAITurn = state.gameMode === 'ai' &&
         ((state.turn === 1 && state.aiSettings.color === 'p1') ||

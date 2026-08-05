@@ -3,6 +3,7 @@ import { playSound } from './sfx.js';
 import { validateWallPlacement } from './engine.js';
 import { logAction } from './ui-history.js';
 import { executePawnMove, executeWallPlacement } from './game.js';
+import { toggleCustomSketchWall } from './board-arrows.js';
 
 export function getWallFromEdge(e, x, y, edgeType) {
     if (edgeType === 'h') {
@@ -184,4 +185,40 @@ export function handleJointClick(e, x, y) {
     }
 
     executeWallPlacement(x, y, type);
+}
+
+export function handleEdgeContextMenu(e, x, y, edgeType) {
+    if (state.trainingWatchActive) return;
+    if (state.activePlaybook !== null && !state.playbookPracticeMode) return;
+    let isAITurn = state.gameMode === 'ai' &&
+        ((state.turn === 1 && state.aiSettings.color === 'p1') ||
+            (state.turn === 2 && state.aiSettings.color === 'p2'));
+    if (isAITurn) return;
+
+    if (state.interactionMode === 'move') return;
+    if (state.interactionMode === 'wall-h' && edgeType !== 'h') return;
+    if (state.interactionMode === 'wall-v' && edgeType !== 'v') return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const { wx, wy, type } = getWallFromEdge(e, x, y, edgeType);
+    toggleCustomSketchWall(wx, wy, type, 'orange');
+}
+
+export function handleJointContextMenu(e, x, y) {
+    if (state.trainingWatchActive) return;
+    if (state.activePlaybook !== null && !state.playbookPracticeMode) return;
+    let isAITurn = state.gameMode === 'ai' &&
+        ((state.turn === 1 && state.aiSettings.color === 'p1') ||
+            (state.turn === 2 && state.aiSettings.color === 'p2'));
+    if (isAITurn) return;
+
+    if (state.interactionMode === 'move') return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const type = state.interactionMode === 'wall-h' ? 'h' : 'v';
+    toggleCustomSketchWall(x, y, type, 'orange');
 }

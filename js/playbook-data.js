@@ -152,17 +152,17 @@ export const PLAYBOOK_DATA = {
         description: "Popularized in top-level play, Player 1 places horizontal walls behind Player 2 while leaving a single-cell bottleneck. This funnels Player 2 through a controlled gap while Player 1 advances.",
         goalArrows: [
             { from: 'e1', to: 'e9', color: 'green' },
-            { from: 'e8', to: 'f8', color: 'red' }
+            { from: 'e7', to: 'f7', color: 'red' }
         ],
         moves: [
             { notation: 'e2', desc: "Player 1 steps forward to e2.", arrows: [{ from: 'e2', to: 'e9', color: 'green' }], sketchWalls: [] },
             { notation: 'e8', desc: "Player 2 advances to e8.", arrows: [{ from: 'e8', to: 'e1', color: 'blue' }], sketchWalls: [] },
             { notation: 'e3', desc: "Player 1 steps forward to e3.", arrows: [{ from: 'e3', to: 'e9', color: 'green' }], sketchWalls: ['d7h'] },
             { notation: 'e7', desc: "Player 2 advances to e7.", arrows: [{ from: 'e7', to: 'e1', color: 'blue' }], sketchWalls: [] },
-            { notation: 'd7h', desc: "Player 1 places a horizontal wall at d7h behind Player 2, leaving a gap on the f-column.", arrows: [{ from: 'e8', to: 'f8', color: 'red' }], sketchWalls: ['d7h'] },
-            { notation: 'f8', desc: "Player 2 sidesteps to f8 toward the open gap.", arrows: [{ from: 'f8', to: 'f1', color: 'blue' }], sketchWalls: ['d7h'] },
-            { notation: 'f7h', desc: "Player 1 places f7h to seal off the right side, extending the narrow funnel.", arrows: [{ from: 'f8', to: 'f6', color: 'red' }], sketchWalls: ['d7h', 'f7h'] },
-            { notation: 'f7', desc: "Player 2 steps down into the forced corridor.", arrows: [{ from: 'f7', to: 'f1', color: 'blue' }], sketchWalls: ['d7h', 'f7h'] },
+            { notation: 'd7h', desc: "Player 1 places a horizontal wall at d7h behind Player 2, leaving a gap on the f-column.", arrows: [{ from: 'e7', to: 'f7', color: 'red' }], sketchWalls: ['d7h'] },
+            { notation: 'f7', desc: "Player 2 sidesteps to f7 toward the open gap.", arrows: [{ from: 'f7', to: 'f1', color: 'blue' }], sketchWalls: ['d7h'] },
+            { notation: 'f7h', desc: "Player 1 places f7h to seal off the right side, extending the narrow funnel.", arrows: [{ from: 'f7', to: 'f6', color: 'red' }], sketchWalls: ['d7h', 'f7h'] },
+            { notation: 'f6', desc: "Player 2 steps down into the forced corridor.", arrows: [{ from: 'f6', to: 'f1', color: 'blue' }], sketchWalls: ['d7h', 'f7h'] },
             { notation: 'e4', desc: "Player 1 advances towards their own target square.", arrows: [{ from: 'e4', to: 'e9', color: 'green' }], sketchWalls: ['d7h', 'f7h'] }
         ]
     },

@@ -273,7 +273,13 @@ export function updatePlaybookUI() {
     document.getElementById('pb-step-counter').textContent = `Step ${step} / ${pb.moves.length}`;
     
     // Update step move arrow, step tactical threat arrows, and step sketch walls for current move in playbook
-    if (step > 0 && pb.moves[step - 1]) {
+    if (state.playbookPracticeMode) {
+        // Turn off pre-existing arrows and sketch walls during practice mode
+        setPresetGoalArrows([]);
+        setStepArrow(null);
+        setPresetStepArrows([]);
+        setPresetStepSketchWalls([]);
+    } else if (step > 0 && pb.moves[step - 1]) {
         // Hide overall goal arrows during step-by-step playback to prevent clutter
         setPresetGoalArrows([]);
 

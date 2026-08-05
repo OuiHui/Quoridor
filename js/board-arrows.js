@@ -1,4 +1,5 @@
 import { parseNotation } from './notation.js';
+import { state } from './state.js';
 import {
     createSVGElement,
     setupGlowFilters,
@@ -15,6 +16,7 @@ const overlayState = {
     stepArrow: null,
     presetStepArrows: [],
     presetStepSketchWalls: [],
+    pathArrows: [],
     isRightDragging: false,
     startCell: null,
     currentHoverCell: null,
@@ -99,7 +101,9 @@ function handleMouseup(e) {
     const dy = Math.abs(endCell.y - start.y);
 
     if (start.x === endCell.x && start.y === endCell.y) {
-        toggleHighlight(start, overlayState.activeColor);
+        if (state.interactionMode !== 'wall-h' && state.interactionMode !== 'wall-v') {
+            toggleHighlight(start, overlayState.activeColor);
+        }
     } else if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) {
         if (e.shiftKey || e.altKey || e.ctrlKey) {
             if (dx === 1 && dy === 0) {
@@ -266,13 +270,83 @@ export function setPresetStepSketchWalls(walls) {
     renderArrows();
 }
 
+function compressPathToContinuousArrows(path, color) {
+    if (!Array.isArray(path) || path.length < 2) return [];
+    
+    const arrows = [];
+    let startNode = path[0];
+    let curDx = path[1].x - path[0].x;
+    let curDy = path[1].y - path[0].y;
+    
+    for (let i = 1; i < path.length - 1; i++) {
+        const nextDx = path[i + 1].x - path[i].x;
+        const nextDy = path[i + 1].y - path[i].y;
+        
+        if (nextDx !== curDx || nextDy !== curDy) {
+            arrows.push({
+                from: { x: startNode.x, y: startNode.y },
+                to: { x: path[i].x, y: path[i].y },
+                color
+            });
+            startNode = path[i];
+            curDx = nextDx;
+            curDy = nextDy;
+        }
+    }
+    
+    const lastNode = path[path.length - 1];
+    arrows.push({
+        from: { x: startNode.x, y: startNode.y },
+        to: { x: lastNode.x, y: lastNode.y },
+        color
+    });
+    
+    return arrows;
+}
+
+export function setShortestPathArrows(p1Path, p2Path) {
+    if (!state.showPaths) {
+        overlayState.pathArrows = [];
+    } else {
+        const p1Arrows = compressPathToContinuousArrows(p1Path, 'green');
+        const p2Arrows = compressPathToContinuousArrows(p2Path, 'blue');
+        overlayState.pathArrows = [...p1Arrows, ...p2Arrows];
+    }
+    renderArrows();
+}
+
+function isSketchWallBlocked(w) {
+    if (!state || !state.hWalls || !state.vWalls) return false;
+    const { x, y, type } = w;
+
+    if (type === 'h') {
+        if (state.hWalls.has(`${x},${y}`)) return true;
+        if (state.hWalls.has(`${x - 1},${y}`)) return true;
+        if (state.hWalls.has(`${x + 1},${y}`)) return true;
+        if (state.vWalls.has(`${x},${y}`)) return true;
+    } else if (type === 'v') {
+        if (state.vWalls.has(`${x},${y}`)) return true;
+        if (state.vWalls.has(`${x},${y - 1}`)) return true;
+        if (state.vWalls.has(`${x},${y + 1}`)) return true;
+        if (state.hWalls.has(`${x},${y}`)) return true;
+    }
+
+    return false;
+}
+
 export function renderArrows() {
     const svgEl = document.getElementById('board-arrows-svg');
     if (!svgEl) return;
 
+    if (state && (state.hWalls || state.vWalls)) {
+        overlayState.customSketchWalls = overlayState.customSketchWalls.filter(w => !isSketchWallBlocked(w));
+        overlayState.presetStepSketchWalls = overlayState.presetStepSketchWalls.filter(w => !isSketchWallBlocked(w));
+    }
+
     svgEl.querySelectorAll('.board-arrow-item, circle').forEach(el => el.remove());
 
     overlayState.presetGoalArrows.forEach(a => renderSingleArrow(svgEl, a.from, a.to, a.color, { isPreset: true }));
+    overlayState.pathArrows.forEach(a => renderSingleArrow(svgEl, a.from, a.to, a.color, { isPreset: true }));
     overlayState.presetStepSketchWalls.forEach(w => renderSingleSketchWall(svgEl, w.x, w.y, w.type, w.color));
     overlayState.presetStepArrows.forEach(a => renderSingleArrow(svgEl, a.from, a.to, a.color, { isStep: true }));
     if (overlayState.stepArrow) renderSingleArrow(svgEl, overlayState.stepArrow.from, overlayState.stepArrow.to, overlayState.stepArrow.color, { isStep: true });

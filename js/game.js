@@ -6,6 +6,7 @@ import { verifyPlaybookPracticeMove, exitPlaybookMode, updatePlaybookUI } from '
 import { updatePawnPositions, renderPlacedWalls } from './ui-board.js';
 import { updateUI, logAction, analyzePlacedWallEfficiency, hideWallAnalyzer, clearLogs, renderMatchHistoryUI } from './ui-diagnostics.js';
 import { clearHints } from './ui-hints.js';
+import { clearCustomArrows } from './board-arrows.js';
 
 import { getValidPawnMoves, findShortestPath } from './engine.js';
 import { parseNotation } from './notation.js';
@@ -74,6 +75,7 @@ export function executePawnMove(x, y) {
     analyzeMoveQuality({ type: 'move', to: { x, y } }, player, historyItem, stateBefore);
 
     clearHints();
+    clearCustomArrows();
     hideWallAnalyzer();
 
     logAction(`Player ${player}: Pawn moved to ${getPawnNotation(x, y)}`, `p${player}`);
@@ -151,6 +153,7 @@ export function executeWallPlacement(x, y, wallType) {
     analyzeMoveQuality({ type: 'wall', x, y, wallType }, player, historyItem, stateBefore);
 
     clearHints();
+    clearCustomArrows();
 
     logAction(`Player ${player}: Placed wall at ${getWallNotation(x, y, wallType)}`, `p${player}`);
     playSound('wall');
