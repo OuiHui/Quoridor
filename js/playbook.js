@@ -4,6 +4,7 @@ import { parseNotation, formatMoveNotation } from './notation.js';
 import { PLAYBOOK_DATA } from './playbook-data.js';
 import { captureStateSnapshot } from './move-analysis.js';
 import { setPresetGoalArrows, setStepArrow, setPresetStepArrows, setPresetStepSketchWalls } from './board-arrows.js';
+import { evaluateBoard } from './ai.js';
 
 
 let boardActions = null; // Dependency injected board actions from app.js
@@ -144,6 +145,7 @@ function preloadPlaybookHistory(moves) {
                 turn: trn === 1 ? 2 : 1
             };
             const notation = formatMoveNotation({ type: 'move', to: { x: parsed.x, y: parsed.y } }) || mv.notation;
+            const evalScore = evaluateBoard(stateAfter.p1Pos, stateAfter.p2Pos, stateAfter.hWalls, stateAfter.vWalls, stateAfter.p1Walls, stateAfter.p2Walls, stateAfter.turn === 1);
 
             state.history.push({
                 id: idx + 1,
@@ -154,6 +156,7 @@ function preloadPlaybookHistory(moves) {
                 notation,
                 stateBefore,
                 stateAfter,
+                evalScore,
                 moveQuality: null
             });
         } else {
@@ -174,6 +177,7 @@ function preloadPlaybookHistory(moves) {
                 turn: trn === 1 ? 2 : 1
             };
             const notation = formatMoveNotation({ type: 'wall', x: parsed.x, y: parsed.y, wallType: parsed.wallType }) || mv.notation;
+            const evalScore = evaluateBoard(stateAfter.p1Pos, stateAfter.p2Pos, stateAfter.hWalls, stateAfter.vWalls, stateAfter.p1Walls, stateAfter.p2Walls, stateAfter.turn === 1);
 
             state.history.push({
                 id: idx + 1,
@@ -185,6 +189,7 @@ function preloadPlaybookHistory(moves) {
                 notation,
                 stateBefore,
                 stateAfter,
+                evalScore,
                 moveQuality: null
             });
         }
@@ -206,6 +211,7 @@ export function loadPlaybook(key) {
     
     if (key === 'none') {
         state.activePlaybook = null;
+        state.activeVariationIndex = 0;
         setPresetGoalArrows([]);
         setStepArrow(null);
         setPresetStepArrows([]);
@@ -222,6 +228,7 @@ export function loadPlaybook(key) {
     
     showPlaybookView();
     state.activePlaybook = PLAYBOOK_DATA[key];
+    state.activeVariationIndex = 0;
     state.playbookStep = 0;
     state.playbookPracticeMode = false;
     setPresetGoalArrows(state.activePlaybook ? state.activePlaybook.goalArrows : []);
@@ -245,9 +252,33 @@ export function loadPlaybook(key) {
         boardActions.setGameMode('sandbox');
     }
 
-    preloadPlaybookHistory(state.activePlaybook.moves);
+    const variation = state.activePlaybook.variations[state.activeVariationIndex];
+    preloadPlaybookHistory(variation.moves);
     updatePlaybookUI();
 }
+
+export function selectPlaybookVariation(index) {
+    if (!state.activePlaybook || !state.activePlaybook.variations[index]) return;
+    
+    if (state.playbookAutoplayTimer) {
+        togglePlaybookAutoplay(); // pause
+    }
+    
+    state.activeVariationIndex = index;
+    const variation = state.activePlaybook.variations[index];
+    
+    // Switch the history to the new variation's moves
+    preloadPlaybookHistory(variation.moves);
+    
+    // Jump to the divergence point if the current step is beyond it, or if changing branches
+    state.playbookStep = variation.divergencePoint || 0;
+    if (boardActions && boardActions.jumpToHistoryState) {
+        boardActions.jumpToHistoryState(state.playbookStep);
+    }
+    
+    updatePlaybookUI();
+}
+
 
 export function updatePlaybookUI() {
     const pb = state.activePlaybook;
@@ -269,8 +300,60 @@ export function updatePlaybookUI() {
         }
     }
     
+    const variation = pb.variations[state.activeVariationIndex];
     const step = state.playbookStep;
-    document.getElementById('pb-step-counter').textContent = `Step ${step} / ${pb.moves.length}`;
+    
+    // Update step counter and phase indicator
+    const stepCounterEl = document.getElementById('pb-step-counter');
+    if (stepCounterEl) {
+        let phaseHtml = '';
+        if (step > 0 && variation.moves[step - 1]) {
+            const phase = variation.moves[step - 1].phase || 'opening';
+            const phaseClass = phase === 'midgame' ? 'phase-badge-midgame' : 'phase-badge-opening';
+            const phaseText = phase === 'midgame' ? 'Midgame' : 'Opening';
+            phaseHtml = `<span class="${phaseClass}">${phaseText}</span>`;
+        }
+        stepCounterEl.innerHTML = `Step ${step} / ${variation.moves.length} ${phaseHtml}`;
+    }
+
+    // Render variations buttons
+    const variationsContainer = document.getElementById('pb-variations-container');
+    if (variationsContainer) {
+        variationsContainer.innerHTML = '';
+        pb.variations.forEach((v, index) => {
+            const btn = document.createElement('button');
+            btn.className = `variation-pill ${index === state.activeVariationIndex ? 'active' : ''}`;
+            btn.textContent = v.name;
+            btn.onclick = () => selectPlaybookVariation(index);
+            variationsContainer.appendChild(btn);
+        });
+    }
+
+    // Render Divergence Note
+    const divNoteEl = document.getElementById('pb-divergence-note');
+    if (divNoteEl) {
+        if (variation.divergencePoint > 0 && variation.divergenceNote) {
+            divNoteEl.textContent = variation.divergenceNote;
+            divNoteEl.classList.remove('hidden');
+        } else {
+            divNoteEl.classList.add('hidden');
+        }
+    }
+
+    // Render Midgame Strategy Card
+    const midgamePlanEl = document.getElementById('pb-midgame-plan');
+    const takeawaysList = document.getElementById('pb-midgame-takeaways');
+    if (midgamePlanEl && takeawaysList) {
+        midgamePlanEl.textContent = variation.midgamePlan || '';
+        takeawaysList.innerHTML = '';
+        if (variation.midgameKeyTakeaways) {
+            variation.midgameKeyTakeaways.forEach(t => {
+                const li = document.createElement('li');
+                li.textContent = t;
+                takeawaysList.appendChild(li);
+            });
+        }
+    }
     
     // Update step move arrow, step tactical threat arrows, and step sketch walls for current move in playbook
     if (state.playbookPracticeMode) {
@@ -279,11 +362,11 @@ export function updatePlaybookUI() {
         setStepArrow(null);
         setPresetStepArrows([]);
         setPresetStepSketchWalls([]);
-    } else if (step > 0 && pb.moves[step - 1]) {
+    } else if (step > 0 && variation.moves[step - 1]) {
         // Hide overall goal arrows during step-by-step playback to prevent clutter
         setPresetGoalArrows([]);
 
-        const currentMove = pb.moves[step - 1];
+        const currentMove = variation.moves[step - 1];
         const lastMove = state.history[step - 1];
         
         if (lastMove && lastMove.type === 'move') {
@@ -304,11 +387,11 @@ export function updatePlaybookUI() {
 
     const statusMsg = document.getElementById('pb-practice-status');
     if (state.playbookPracticeMode) {
-        if (step === pb.moves.length) {
+        if (step === variation.moves.length) {
             statusMsg.textContent = "🏆 Playbook successfully completed! You nailed it!";
             statusMsg.className = "playbook-status-msg success";
         } else {
-            const nextMove = pb.moves[step];
+            const nextMove = variation.moves[step];
             const playerNum = step % 2 === 0 ? 1 : 2;
             statusMsg.textContent = `Practice: Player ${playerNum}'s turn. Play move: ${nextMove.notation.toUpperCase()}`;
             statusMsg.className = "playbook-status-msg";
@@ -318,7 +401,7 @@ export function updatePlaybookUI() {
         if (step === 0) {
             statusMsg.textContent = "Click 'Next' or 'Auto Play' or use Match History to step through.";
         } else {
-            statusMsg.textContent = pb.moves[step - 1] ? pb.moves[step - 1].desc : '';
+            statusMsg.textContent = variation.moves[step - 1] ? variation.moves[step - 1].desc : '';
         }
         statusMsg.className = "playbook-status-msg";
     }
@@ -351,16 +434,14 @@ export function playbookPrevStep() {
 export function jumpToPlaybookStep(targetStep) {
     if (!state.activePlaybook) return;
     
+    const variation = state.activePlaybook.variations[state.activeVariationIndex];
     if (targetStep < 0) targetStep = 0;
-    if (targetStep > state.activePlaybook.moves.length) targetStep = state.activePlaybook.moves.length;
+    if (targetStep > variation.moves.length) targetStep = variation.moves.length;
 
     if (boardActions && boardActions.jumpToHistoryState) {
         boardActions.jumpToHistoryState(targetStep);
     }
-}
-
-export function resetPlaybook() {
-
+}export function resetPlaybook() {
     jumpToPlaybookStep(0);
 }
 
@@ -388,7 +469,8 @@ export function togglePlaybookAutoplay() {
         
         // Auto play sequence step by step
         state.playbookAutoplayTimer = setInterval(() => {
-            if (state.playbookStep < state.activePlaybook.moves.length) {
+            const variation = state.activePlaybook.variations[state.activeVariationIndex];
+            if (state.playbookStep < variation.moves.length) {
                 playbookNextStep();
             } else {
                 clearInterval(state.playbookAutoplayTimer);
@@ -399,7 +481,6 @@ export function togglePlaybookAutoplay() {
             }
         }, 1200);
     }
-    updatePlaybookUI();
 }
 
 export function togglePlaybookPractice() {
@@ -442,9 +523,11 @@ export function togglePlaybookPractice() {
 // Verifies if the move made by user matches the next move required in the playbook practice
 export function verifyPlaybookPracticeMove() {
     const pb = state.activePlaybook;
-    if (!pb || !state.playbookPracticeMode || state.playbookStep >= pb.moves.length) return;
+    if (!pb) return;
+    const variation = pb.variations[state.activeVariationIndex];
+    if (!variation || !state.playbookPracticeMode || state.playbookStep >= variation.moves.length) return;
     
-    const targetMove = pb.moves[state.playbookStep];
+    const targetMove = variation.moves[state.playbookStep];
     const lastPlayed = state.history[state.history.length - 1];
     
     let correct = false;

@@ -149,6 +149,117 @@
     font-size: 1.8rem;
 }
 
+/* PLAYBOOK VARIATIONS & MIDGAME STYLES */
+.playbook-variations {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 2px;
+}
+
+.variation-pill {
+    background: #0d1320;
+    border: 1px solid var(--border-color);
+    color: var(--color-text-muted);
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.variation-pill:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--color-text);
+}
+
+.variation-pill.active {
+    background: rgba(56, 189, 248, 0.15);
+    border-color: var(--color-p1);
+    color: var(--color-p1);
+    font-weight: 600;
+}
+
+.divergence-box {
+    background: rgba(245, 158, 11, 0.08);
+    border-left: 3px solid var(--color-p2);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: var(--color-text);
+    margin-bottom: 4px;
+}
+
+.phase-badge-opening {
+    background: rgba(56, 189, 248, 0.15);
+    color: var(--color-p1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin-left: 6px;
+}
+
+.phase-badge-midgame {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin-left: 6px;
+}
+
+.midgame-card {
+    background: #0d1320;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.midgame-card h4 {
+    color: #c084fc;
+    font-size: 0.85rem;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.midgame-plan-text {
+    font-size: 0.8rem;
+    color: var(--color-text);
+    margin-bottom: 8px;
+    line-height: 1.4;
+}
+
+.midgame-card h5 {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+}
+
+.midgame-takeaways-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.midgame-takeaways-list li {
+    font-size: 0.72rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    padding: 2px 8px;
+    border-radius: 4px;
+    color: var(--color-text);
+}
+
 /* RIGHT PANEL DETAILED STYLES */
 .control-group {
     border-bottom: 1px solid var(--border-color);
