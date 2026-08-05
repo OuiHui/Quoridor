@@ -158,7 +158,7 @@ function updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextE
     }
 }
 
-export function analyzeMoveQuality(chosenMove, player, historyItem = null, stateBefore = null) {
+export function analyzeMoveQuality(chosenMove, player, historyItem = null, stateBefore = null, options = {}) {
     const isP1 = player === 1;
     const badgeEl = document.getElementById('eval-move-badge');
     const badgeTextEl = document.getElementById('eval-move-badge-text');
@@ -188,18 +188,9 @@ export function analyzeMoveQuality(chosenMove, player, historyItem = null, state
         }
     }
 
-    if (badgeEl && badgeTextEl) {
-        badgeEl.className = 'eval-move-badge thinking';
-        badgeTextEl.textContent = 'Analyzing...';
-        badgeEl.classList.remove('hidden');
-    }
+    const depth = options.depth || 4;
 
-    const historyLenSnapshot = state.history.length;
-    const depth = 5;
-
-    setTimeout(() => {
-        if (state.history.length !== historyLenSnapshot) return;
-
+    const performAnalysis = () => {
         let bestScore = null;
         let bestCandidate = null;
 
@@ -254,7 +245,7 @@ export function analyzeMoveQuality(chosenMove, player, historyItem = null, state
             }
 
             const chosenResult = minimax(
-                depth - 1,
+                Math.max(1, depth - 1),
                 -Infinity,
                 Infinity,
                 !isP1,
@@ -269,5 +260,21 @@ export function analyzeMoveQuality(chosenMove, player, historyItem = null, state
         }
 
         updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextEl, historyItem, bestCandidate);
-    }, 50);
+    };
+
+    if (options.sync) {
+        performAnalysis();
+    } else {
+        if (badgeEl && badgeTextEl) {
+            badgeEl.className = 'eval-move-badge thinking';
+            badgeTextEl.textContent = 'Analyzing...';
+            badgeEl.classList.remove('hidden');
+        }
+
+        const targetHistoryItem = historyItem;
+        setTimeout(() => {
+            if (targetHistoryItem && !state.history.includes(targetHistoryItem)) return;
+            performAnalysis();
+        }, 50);
+    }
 }

@@ -100,9 +100,10 @@ std::vector<std::pair<int, int>> QuoridorGame::get_shortest_path(std::pair<int, 
                     // Cell occupied by opponent — resolve jump destinations
                     int jx = nx + dx;
                     int jy = ny + dy;
-                    bool straight_ok = (jx >= 0 && jx < 9 && jy >= 0 && jy < 9 && !is_move_blocked(nx, ny, jx, jy));
+                    bool straight_in_bounds = (jx >= 0 && jx < 9 && jy >= 0 && jy < 9);
+                    bool straight_blocked_by_wall = straight_in_bounds && is_move_blocked(nx, ny, jx, jy);
                     
-                    if (straight_ok) {
+                    if (straight_in_bounds && !straight_blocked_by_wall) {
                         std::pair<int, int> jump_dest = {jx, jy};
                         if (visited.find(jump_dest) == visited.end()) {
                             visited.insert(jump_dest);
@@ -110,8 +111,8 @@ std::vector<std::pair<int, int>> QuoridorGame::get_shortest_path(std::pair<int, 
                             next_path.push_back(jump_dest);
                             q.push(next_path);
                         }
-                    } else {
-                        // Diagonal jumps when straight is blocked
+                    } else if (straight_blocked_by_wall) {
+                        // Diagonal jumps when straight is blocked by a wall
                         std::vector<std::pair<int, int>> sides;
                         if (dx == 0) { // moving vertically, sides are horizontal
                             sides = {{-1, 0}, {1, 0}};
@@ -208,12 +209,13 @@ std::vector<Action> QuoridorGame::get_valid_pawn_moves(bool is_p1) const {
                     // Jump over opponent
                     int jx = nx + dx;
                     int jy = ny + dy;
-                    bool jump_blocked = (jx < 0 || jx > 8 || jy < 0 || jy > 8 || is_move_blocked(nx, ny, jx, jy));
+                    bool is_straight_in_bounds = (jx >= 0 && jx < 9 && jy >= 0 && jy < 9);
+                    bool is_straight_blocked_by_wall = is_straight_in_bounds && is_move_blocked(nx, ny, jx, jy);
                     
-                    if (!jump_blocked) {
+                    if (is_straight_in_bounds && !is_straight_blocked_by_wall) {
                         valid.push_back(Action::Move("jump_" + dir_names[i], jx, jy));
-                    } else {
-                        // Diagonal jump if straight is blocked
+                    } else if (is_straight_blocked_by_wall) {
+                        // Diagonal jump only if straight is blocked by a wall
                         if (dx == 0) { // moving vertically, check horizontal diagonals
                             std::string base_dir = (dir_names[i] == "N") ? "jump_N" : "jump_S";
                             if (nx - 1 >= 0 && !is_move_blocked(nx, ny, nx - 1, ny)) {

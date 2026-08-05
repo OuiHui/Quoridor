@@ -140,3 +140,56 @@
     border-color: #10b981 !important;
     color: #ffffff !important;
 }
+
+/* IMPORT MODAL SPECIFICS */
+.import-modal-card {
+    border-color: #c084fc;
+    box-shadow: 0 0 25px rgba(168, 85, 247, 0.3);
+}
+
+.import-modal-card .export-modal-header h3 {
+    color: #c084fc;
+}
+
+.import-file-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px dashed rgba(168, 85, 247, 0.4);
+}
+
+.import-file-label {
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+}
+
+.import-file-btn {
+    background: rgba(168, 85, 247, 0.15);
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    color: #e9d5ff;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.import-file-btn:hover {
+    background: rgba(168, 85, 247, 0.3);
+    border-color: #c084fc;
+}
+
+.import-error-banner {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    line-height: 1.4;
+}

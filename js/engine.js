@@ -47,12 +47,13 @@ export function getValidPawnMoves(px, py, ox, oy, hWalls, vWalls) {
             const jx = nx + d.dx;
             const jy = ny + d.dy;
             
-            let jumpBlocked = jx < 0 || jx > 8 || jy < 0 || jy > 8 || isMoveBlocked(nx, ny, jx, jy, hWalls, vWalls);
-            
-            if (!jumpBlocked) {
+            const isStraightInBounds = jx >= 0 && jx <= 8 && jy >= 0 && jy <= 8;
+            const isStraightBlockedByWall = isStraightInBounds && isMoveBlocked(nx, ny, jx, jy, hWalls, vWalls);
+
+            if (isStraightInBounds && !isStraightBlockedByWall) {
                 moves.push({ x: jx, y: jy });
-            } else {
-                // Standard jump blocked - diagonal jumps allowed
+            } else if (isStraightBlockedByWall) {
+                // Diagonal jumps only allowed when straight jump is blocked by a wall
                 if (d.dx === 0) {
                     // Moving vertically - diagonals are horizontal
                     const leftX = nx - 1;

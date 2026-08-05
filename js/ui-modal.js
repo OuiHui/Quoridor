@@ -1,6 +1,7 @@
 import { state } from './state.js';
 import { playSound } from './sfx.js';
 import { logAction } from './ui-history.js';
+import { importGameFromJSON } from './game.js';
 
 export function triggerGameOver(title, message) {
     playSound('win');
@@ -163,6 +164,82 @@ export function showExportModal() {
             document.execCommand('copy');
             copyBtn.textContent = '✓ Copied!';
             setTimeout(() => { copyBtn.textContent = 'Copy to Clipboard'; }, 2000);
+        }
+    });
+
+    closeBtn.addEventListener('click', () => {
+        modal.classList.add('hidden');
+    });
+
+    modal.classList.remove('hidden');
+}
+
+export function showImportModal() {
+    const modal = document.getElementById('modal-container');
+    if (!modal) return;
+
+    modal.innerHTML = `
+        <div class="modal-card export-modal-card import-modal-card">
+            <div class="export-modal-header">
+                <h3>Import Game JSON</h3>
+                <span class="export-subtitle">Paste game JSON data or select a JSON file to analyze</span>
+            </div>
+            <div class="import-file-section">
+                <span class="import-file-label" id="import-file-name">No file chosen</span>
+                <button class="import-file-btn" id="btn-browse-file">Choose File...</button>
+                <input type="file" id="input-import-file" accept=".json" style="display: none;">
+            </div>
+            <div class="export-content-container">
+                <textarea id="import-textarea" class="export-textarea" placeholder='Paste exported game JSON or moves array here, e.g. ["e2", "e8", "e3h"]...'></textarea>
+            </div>
+            <div id="import-error-container" class="import-error-banner hidden"></div>
+            <div class="modal-buttons export-modal-buttons">
+                <button class="btn btn-primary" id="btn-do-import">Import & Analyze</button>
+                <button class="btn btn-secondary" id="btn-close-import">Cancel</button>
+            </div>
+        </div>
+    `;
+
+    const textarea = document.getElementById('import-textarea');
+    const browseBtn = document.getElementById('btn-browse-file');
+    const fileInput = document.getElementById('input-import-file');
+    const fileNameSpan = document.getElementById('import-file-name');
+    const importBtn = document.getElementById('btn-do-import');
+    const closeBtn = document.getElementById('btn-close-import');
+    const errorContainer = document.getElementById('import-error-container');
+
+    browseBtn.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            fileNameSpan.textContent = file.name;
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                textarea.value = evt.target.result;
+            };
+            reader.readAsText(file);
+        }
+    });
+
+    importBtn.addEventListener('click', () => {
+        errorContainer.classList.add('hidden');
+        errorContainer.textContent = '';
+
+        const rawText = textarea.value.trim();
+        if (!rawText) {
+            errorContainer.textContent = "Please paste JSON data or select a JSON file to import.";
+            errorContainer.classList.remove('hidden');
+            return;
+        }
+
+        try {
+            const parsed = JSON.parse(rawText);
+            importGameFromJSON(parsed);
+            modal.classList.add('hidden');
+        } catch (err) {
+            errorContainer.textContent = `Import Error: ${err.message}`;
+            errorContainer.classList.remove('hidden');
         }
     });
 

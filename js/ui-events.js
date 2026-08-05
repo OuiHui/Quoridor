@@ -2,7 +2,7 @@ import { state } from './state.js';
 import { playSound } from './sfx.js';
 import { updateUI, logAction, setHistoryJumpCallback } from './ui-diagnostics.js';
 import { clearHints } from './ui-hints.js';
-import { showExportModal } from './ui-modal.js';
+import { showExportModal, showImportModal } from './ui-modal.js';
 import {
     executeWallPlacement,
     undoMove,
@@ -128,8 +128,10 @@ export function initUIEvents() {
     const btnHistNext = document.getElementById('btn-history-next');
     const btnHistLatest = document.getElementById('btn-history-latest');
     const btnExportState = document.getElementById('btn-export-state');
+    const btnImportState = document.getElementById('btn-import-state');
 
     if (btnExportState) btnExportState.addEventListener('click', () => showExportModal());
+    if (btnImportState) btnImportState.addEventListener('click', () => showImportModal());
     if (btnHistFirst) btnHistFirst.addEventListener('click', () => jumpToHistoryState(0));
     if (btnHistPrev) btnHistPrev.addEventListener('click', () => stepHistory(-1));
     if (btnHistNext) btnHistNext.addEventListener('click', () => stepHistory(1));
