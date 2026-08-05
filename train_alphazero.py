@@ -166,6 +166,22 @@ class ReplayDatasetCache:
 
         return self.dataset
 
+class QuoridorDataset(torch.utils.data.Dataset):
+    """Custom Dataset for fast memory-pinned batching in PyTorch DataLoader."""
+    def __init__(self, raw_data):
+        self.raw_data = raw_data
+
+    def __len__(self):
+        return len(self.raw_data)
+
+    def __getitem__(self, idx):
+        item = self.raw_data[idx]
+        state = item[0] if isinstance(item[0], torch.Tensor) else torch.tensor(item[0], dtype=torch.float32)
+        policy = torch.tensor(item[1], dtype=torch.float32)
+        value = torch.tensor([item[2]], dtype=torch.float32)
+        mask = torch.tensor(item[3], dtype=torch.bool)
+        return state, policy, value, mask
+
 def load_dataset_from_disk(data_dir="data", max_positions=50000, exclude_epoch_or_later=None):
     cache = ReplayDatasetCache(data_dir, max_positions)
     return cache.update(exclude_epoch_or_later)
@@ -257,18 +273,23 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
 
         epoch_start_time = time.time()
 
-        # 3. Fast Vectorized Training Pass with AMP
+        # 3. Fast Vectorized Training Pass with DataLoader & AMP
         model_gpu.train()
 
-        states_all = torch.stack([x[0] for x in dataset])
-        policies_all = torch.tensor(np.array([x[1] for x in dataset]), dtype=torch.float32)
-        values_all = torch.tensor(np.array([x[2] for x in dataset]), dtype=torch.float32).unsqueeze(1)
-        masks_all = torch.tensor(np.array([x[3] for x in dataset]), dtype=torch.bool)
-
-        num_samples = len(dataset)
-        indices = torch.randperm(num_samples)
-        num_batches = max(1, num_samples // batch_size)
-
+        replay_dataset = QuoridorDataset(dataset)
+        num_samples = len(replay_dataset)
+        use_pin_memory = (DEVICE.type == 'cuda')
+        
+        dataloader = torch.utils.data.DataLoader(
+            replay_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=0,
+            pin_memory=use_pin_memory,
+            drop_last=False
+        )
+        
+        num_batches = len(dataloader)
         use_amp = (DEVICE.type in ('cuda', 'xpu'))
         scaler = torch.amp.GradScaler(DEVICE.type, enabled=use_amp)
 
@@ -278,12 +299,11 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
         epoch_mcts_eval = 0.0
         epoch_abs_mcts_eval = 0.0
 
-        for b in range(num_batches):
-            batch_idx = indices[b * batch_size : (b + 1) * batch_size]
-            states = states_all[batch_idx].to(DEVICE, non_blocking=True)
-            target_policies = policies_all[batch_idx].to(DEVICE, non_blocking=True)
-            target_values = values_all[batch_idx].to(DEVICE, non_blocking=True)
-            valid_masks = masks_all[batch_idx].to(DEVICE, non_blocking=True)
+        for states, target_policies, target_values, valid_masks in dataloader:
+            states = states.to(DEVICE, non_blocking=True)
+            target_policies = target_policies.to(DEVICE, non_blocking=True)
+            target_values = target_values.to(DEVICE, non_blocking=True)
+            valid_masks = valid_masks.to(DEVICE, non_blocking=True)
             
             target_aux = states[:, [4, 5], 0, 0]
             
@@ -425,7 +445,7 @@ if __name__ == "__main__":
 
     print(f"[{ts}] [Learner] Spawning {num_actors} parallel self-play Actor processes...", flush=True)
     actor_processes = [
-        subprocess.Popen([sys.executable, 'run_actor.py', '--actor_id', str(i + 1), '--simulations', str(args.simulations), '--batch_size', '16'])
+        subprocess.Popen([sys.executable, 'run_actor.py', '--actor_id', str(i + 1), '--simulations', str(args.simulations), '--fast_simulations', '200', '--batch_size', '32'])
         for i in range(num_actors)
     ]
 

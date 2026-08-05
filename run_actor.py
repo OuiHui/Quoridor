@@ -33,7 +33,8 @@ from quoridor_model import flip_horizontal_state, flip_horizontal_policy, map_in
 
 # Constants matching train_alphazero.py
 TEMP_THRESHOLD = 20
-NUM_SIMULATIONS = 800  # Default simulations per move
+NUM_SIMULATIONS = 800  # Default deep simulations per move
+FAST_SIMULATIONS = 200 # Default fast simulations per move (PCR)
 GAMES_PER_EPOCH = 50   # Expected games per epoch
 DATA_DIR = os.environ.get("QUORIDOR_DATA_DIR", r"C:\quoridor_data")
 ONNX_PATH = "quoridor_model.onnx"
@@ -97,7 +98,7 @@ def get_current_epoch():
             return max(epochs)
     return 0
 
-def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=800, actor_id=1):
+def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fast_simulations=200, use_pcr=True, actor_id=1):
     mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.07, dirichlet_eps=0.15)
     
     # Initialize batch vectors
@@ -118,10 +119,17 @@ def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=800, ac
     while len(active_indices) > 0:
         active_games = [games[i] for i in active_indices]
         
+        # Playout Cap Randomization (PCR) at the batch level
+        if use_pcr:
+            is_deep_search = random.random() < 0.25
+            current_sims = num_simulations if is_deep_search else fast_simulations
+        else:
+            current_sims = num_simulations
+
         visit_counts_list, _ = mcts.run_search_batched(
             active_games,
             evaluator.evaluate_batch,
-            num_simulations
+            current_sims
         )
         
         next_active_indices = []
@@ -186,8 +194,25 @@ def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=800, ac
             state_flat = quoridor_cpp.MCTS.encode_state_cpp(game)
             trajectories[global_idx].append((state_flat, policy_probs, game.is_p1_turn, valid_mask))
             
-            if move_counts[global_idx] < TEMP_THRESHOLD:
-                # Temperature tau = 1.0 sampling across all legal actions in policy_probs
+            # Dynamic Temperature Decay
+            current_move = move_counts[global_idx]
+            if current_move < 15:
+                tau = 1.0
+            elif current_move < 30:
+                tau = 0.5
+            elif current_move < 45:
+                tau = 0.25
+            else:
+                tau = 0.0
+                
+            if tau > 0.0:
+                # Apply temperature scaling to visit counts
+                if tau != 1.0:
+                    probs = np.power(policy_probs, 1.0 / tau)
+                    prob_sum = probs.sum()
+                    if prob_sum > 1e-8:
+                        policy_probs = probs / prob_sum
+                
                 prob_sum = policy_probs.sum()
                 if prob_sum > 1e-8:
                     norm_probs = policy_probs / prob_sum
@@ -224,8 +249,10 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Self-play actor process for Quoridor AlphaZero.")
     parser.add_argument("--actor_id", type=int, default=1, help="Unique ID for this actor worker")
-    parser.add_argument("--batch_size", type=int, default=16, help="Number of games in self-play batch")
-    parser.add_argument("--simulations", type=int, default=NUM_SIMULATIONS, help="MCTS simulations per move")
+    parser.add_argument("--batch_size", type=int, default=32, help="Number of games in self-play batch")
+    parser.add_argument("--simulations", type=int, default=NUM_SIMULATIONS, help="MCTS deep simulations per move")
+    parser.add_argument("--fast_simulations", type=int, default=FAST_SIMULATIONS, help="MCTS fast simulations per move (PCR)")
+    parser.add_argument("--no_pcr", action="store_true", help="Disable Playout Cap Randomization")
     parser.add_argument("--port", type=int, default=5555, help="Port of central GPU inference server")
     parser.add_argument("--standalone", action="store_true", help="Force local ONNX evaluator instead of central server")
     args = parser.parse_args()
@@ -233,10 +260,12 @@ def main():
     actor_id = args.actor_id
     batch_size = args.batch_size
     num_simulations = args.simulations
+    fast_simulations = args.fast_simulations
+    use_pcr = not args.no_pcr
     use_central = not args.standalone
 
     ts = time.strftime("%H:%M:%S")
-    print(f"[{ts}] [Actor #{actor_id}] Started worker process (batch={batch_size}, sim={num_simulations}, central_gpu={use_central})", flush=True)
+    print(f"[{ts}] [Actor #{actor_id}] Started worker process (batch={batch_size}, deep_sim={num_simulations}, fast_sim={fast_simulations}, pcr={use_pcr}, central_gpu={use_central})", flush=True)
     
     loaded_model_path = None
     evaluator = None
@@ -277,7 +306,15 @@ def main():
             
         ts = time.strftime("%H:%M:%S")
         print(f"[{ts}] [Actor #{actor_id}] Running self-play batch for Epoch {epoch+1} ({num_completed}/{GAMES_PER_EPOCH} ready)...", flush=True)
-        run_self_play_batch(evaluator, epoch, batch_size=batch_size, num_simulations=num_simulations, actor_id=actor_id)
+        run_self_play_batch(
+            evaluator, 
+            epoch, 
+            batch_size=batch_size, 
+            num_simulations=num_simulations, 
+            fast_simulations=fast_simulations, 
+            use_pcr=use_pcr, 
+            actor_id=actor_id
+        )
 
 if __name__ == "__main__":
     main()
