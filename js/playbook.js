@@ -3,7 +3,7 @@ import { playSound } from './sfx.js';
 import { parseNotation, formatMoveNotation } from './notation.js';
 import { PLAYBOOK_DATA } from './playbook-data.js';
 import { captureStateSnapshot } from './move-analysis.js';
-import { setPresetGoalArrows } from './board-arrows.js';
+import { setPresetGoalArrows, setStepArrow, setPresetStepArrows, setPresetStepSketchWalls } from './board-arrows.js';
 
 
 let boardActions = null; // Dependency injected board actions from app.js
@@ -207,6 +207,9 @@ export function loadPlaybook(key) {
     if (key === 'none') {
         state.activePlaybook = null;
         setPresetGoalArrows([]);
+        setStepArrow(null);
+        setPresetStepArrows([]);
+        setPresetStepSketchWalls([]);
         document.getElementById('playbook-info').classList.add('hidden');
         document.getElementById('playbook-empty').classList.remove('hidden');
         const boardEl = document.getElementById('board');
@@ -222,6 +225,9 @@ export function loadPlaybook(key) {
     state.playbookStep = 0;
     state.playbookPracticeMode = false;
     setPresetGoalArrows(state.activePlaybook ? state.activePlaybook.goalArrows : []);
+    setStepArrow(null);
+    setPresetStepArrows([]);
+    setPresetStepSketchWalls([]);
 
     // UI details
     document.getElementById('playbook-empty').classList.add('hidden');
@@ -248,6 +254,9 @@ export function updatePlaybookUI() {
     if (!pb) {
         const boardEl = document.getElementById('board');
         if (boardEl) boardEl.classList.remove('playbook-locked');
+        setStepArrow(null);
+        setPresetStepArrows([]);
+        setPresetStepSketchWalls([]);
         return;
     }
     
@@ -263,6 +272,30 @@ export function updatePlaybookUI() {
     const step = state.playbookStep;
     document.getElementById('pb-step-counter').textContent = `Step ${step} / ${pb.moves.length}`;
     
+    // Update step move arrow, step tactical threat arrows, and step sketch walls for current move in playbook
+    if (step > 0 && pb.moves[step - 1]) {
+        // Hide overall goal arrows during step-by-step playback to prevent clutter
+        setPresetGoalArrows([]);
+
+        const currentMove = pb.moves[step - 1];
+        const lastMove = state.history[step - 1];
+        
+        if (lastMove && lastMove.type === 'move') {
+            setStepArrow({ from: lastMove.from, to: lastMove.to, color: 'orange' });
+        } else {
+            setStepArrow(null);
+        }
+
+        setPresetStepArrows(currentMove.arrows || []);
+        setPresetStepSketchWalls(currentMove.sketchWalls || []);
+    } else {
+        // Step 0: Show overall goal overview arrows
+        setPresetGoalArrows(pb.goalArrows || []);
+        setStepArrow(null);
+        setPresetStepArrows([]);
+        setPresetStepSketchWalls([]);
+    }
+
     const statusMsg = document.getElementById('pb-practice-status');
     if (state.playbookPracticeMode) {
         if (step === pb.moves.length) {
@@ -450,6 +483,9 @@ export function exitPlaybookMode() {
     state.playbookStep = 0;
     state.playbookPracticeMode = false;
     setPresetGoalArrows([]);
+    setStepArrow(null);
+    setPresetStepArrows([]);
+    setPresetStepSketchWalls([]);
     
     const select = document.getElementById('playbook-select');
     if (select) select.value = 'none';

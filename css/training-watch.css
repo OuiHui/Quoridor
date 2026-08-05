@@ -2,19 +2,18 @@
 
 .tw-banner {
     position: fixed;
-    top: 24px;
+    top: 20px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 1000;
-    background: rgba(15, 23, 42, 0.85);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(139, 92, 246, 0.35);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(139, 92, 246, 0.15);
-    border-radius: 12px;
-    padding: 12px 20px;
+    background: #111726;
+    border: 1px solid var(--border-color-light);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.6);
+    border-radius: 10px;
+    padding: 10px 18px;
     width: 90%;
     max-width: 680px;
-    animation: twSlideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: twSlideDown 0.3s ease;
 }
 
 .tw-banner.hidden {
@@ -23,7 +22,7 @@
 
 @keyframes twSlideDown {
     from {
-        transform: translate(-50%, -40px);
+        transform: translate(-50%, -30px);
         opacity: 0;
     }
     to {
@@ -36,33 +35,31 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 16px;
+    gap: 14px;
     flex-wrap: wrap;
 }
 
 .tw-banner-status {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
 }
 
 .tw-live-dot {
-    width: 10px;
-    height: 10px;
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
     background: #4b5563;
-    transition: all 0.3s ease;
+    transition: all 0.25s ease;
 }
 
 .tw-live-dot.active {
     background: #10b981;
-    box-shadow: 0 0 10px #10b981;
     animation: twPulse 1.4s infinite;
 }
 
 .tw-live-dot.ended {
     background: var(--color-p2);
-    box-shadow: 0 0 10px var(--color-p2-glow);
 }
 
 @keyframes twPulse {
@@ -71,19 +68,19 @@
 }
 
 .tw-banner-title {
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     font-weight: 700;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--color-text);
 }
 
 .tw-status-badge {
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 20px;
-    background: rgba(255, 255, 255, 0.06);
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: #0d1320;
     color: var(--color-text-muted);
 }
 
@@ -100,11 +97,11 @@
 .tw-banner-stats {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 16px;
 }
 
 .tw-banner-stat {
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     color: var(--color-text-muted);
 }
 
@@ -115,29 +112,29 @@
 
 /* WATCH TRAINING HEADER BUTTON */
 .btn-watch-training {
-    background: rgba(139, 92, 246, 0.1);
-    border: 1px solid rgba(139, 92, 246, 0.3);
+    background: rgba(168, 85, 247, 0.1);
+    border: 1px solid rgba(168, 85, 247, 0.25);
     color: var(--color-accent);
     font-family: var(--font-sans);
     font-weight: 600;
-    font-size: 0.8rem;
-    padding: 6px 14px;
-    border-radius: 8px;
+    font-size: 0.78rem;
+    padding: 5px 12px;
+    border-radius: 6px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.15s ease;
     display: flex;
     align-items: center;
     gap: 6px;
 }
 
 .btn-watch-training:hover {
-    background: rgba(139, 92, 246, 0.2);
-    border-color: rgba(139, 92, 246, 0.5);
+    background: rgba(168, 85, 247, 0.18);
+    border-color: rgba(168, 85, 247, 0.4);
 }
 
 .btn-watch-training.live {
     background: rgba(16, 185, 129, 0.12);
-    border-color: rgba(16, 185, 129, 0.4);
+    border-color: rgba(16, 185, 129, 0.35);
     color: #10b981;
 }
 
@@ -145,15 +142,15 @@
 .tally-box {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
+    gap: 6px;
     margin-top: 6px;
 }
 
 .tally-item {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 8px;
-    padding: 8px 4px;
+    background: #0d1320;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 6px 4px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -161,14 +158,14 @@
 }
 
 .tally-label {
-    font-size: 0.65rem;
+    font-size: 0.62rem;
     color: var(--color-text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.04em;
 }
 
 .tally-value {
-    font-size: 1.2rem;
+    font-size: 1.1rem;
     font-weight: 700;
     font-family: var(--font-mono);
 }
@@ -176,19 +173,19 @@
 .metrics-grid {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 10px;
-    padding: 12px;
+    gap: 6px;
+    background: #0d1320;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px;
 }
 
 .metric-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 5px;
 }
 
 .metric-row:last-child {
@@ -197,26 +194,27 @@
 }
 
 .metric-label {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: var(--color-text-muted);
 }
 
 .metric-value {
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     font-family: var(--font-mono);
     color: var(--color-text);
     font-weight: 600;
 }
 
 .last-move-desc {
-    margin-top: 10px;
+    margin-top: 8px;
     text-align: center;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     font-family: var(--font-mono);
     color: var(--color-text-muted);
-    background: rgba(0, 0, 0, 0.2);
+    background: #080d16;
     padding: 6px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.03);
+    border-radius: 5px;
+    border: 1px solid var(--border-color);
 }
+
 

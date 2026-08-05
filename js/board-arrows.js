@@ -1,162 +1,135 @@
-/**
- * Board Arrows & Visual Overlay Module
- * Allows drawing right-click arrows and cell highlights (chess.com style)
- * as well as rendering preset opening goal arrows for Playbook lines.
- */
-
 import { parseNotation } from './notation.js';
+import {
+    createSVGElement,
+    setupGlowFilters,
+    renderSingleHighlight,
+    renderSingleSketchWall,
+    renderSingleArrow
+} from './board-arrow-render.js';
 
-// Internal state for custom user-drawn arrows and highlights
-let customArrows = [];      // Array of { from: {x, y}, to: {x, y}, color: 'green'|'blue'|'red'|'orange' }
-let customHighlights = [];  // Array of { x, y, color: 'green'|'blue'|'red'|'orange' }
-let presetGoalArrows = [];  // Array of { from: {x, y}, to: {x, y}, color: 'green'|'blue'|'red'|'orange' }
-
-let isRightDragging = false;
-let startCell = null;
-let currentHoverCell = null;
-let activeColor = 'green';
-
-const COLOR_MAP = {
-    green:  { stroke: '#22c55e', fill: 'rgba(34, 197, 94, 0.25)',  glow: 'rgba(34, 197, 94, 0.5)' },
-    red:    { stroke: '#ef4444', fill: 'rgba(239, 68, 68, 0.25)',  glow: 'rgba(239, 68, 68, 0.5)' },
-    blue:   { stroke: '#3b82f6', fill: 'rgba(59, 130, 246, 0.25)',  glow: 'rgba(59, 130, 246, 0.5)' },
-    orange: { stroke: '#f59e0b', fill: 'rgba(245, 158, 11, 0.25)', glow: 'rgba(245, 158, 11, 0.5)' }
+const overlayState = {
+    customArrows: [],
+    customHighlights: [],
+    customSketchWalls: [],
+    presetGoalArrows: [],
+    stepArrow: null,
+    presetStepArrows: [],
+    presetStepSketchWalls: [],
+    isRightDragging: false,
+    startCell: null,
+    currentHoverCell: null,
+    activeColor: 'green'
 };
 
-/**
- * Initializes the SVG overlay layer on the board and attaches mouse event listeners.
- */
 export function initBoardArrows() {
     const boardEl = document.getElementById('board');
     if (!boardEl) return;
 
-    // Remove old SVG if exists
     let svgEl = document.getElementById('board-arrows-svg');
     if (svgEl) svgEl.remove();
 
-    // Create fresh SVG overlay
-    svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svgEl.setAttribute('id', 'board-arrows-svg');
-    svgEl.setAttribute('class', 'board-arrows-svg');
-    svgEl.style.position = 'absolute';
-    svgEl.style.top = '0';
-    svgEl.style.left = '0';
-    svgEl.style.width = '100%';
-    svgEl.style.height = '100%';
-    svgEl.style.pointerEvents = 'none';
-    svgEl.style.zIndex = '15';
+    svgEl = createSVGElement('svg', {
+        id: 'board-arrows-svg',
+        class: 'board-arrows-svg',
+        style: 'position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 15;'
+    });
 
-    // SVG Defs for glow filters
-    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-    
-    // Glow filter
-    const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
-    filter.setAttribute('id', 'arrow-glow');
-    filter.setAttribute('x', '-30%');
-    filter.setAttribute('y', '-30%');
-    filter.setAttribute('width', '160%');
-    filter.setAttribute('height', '160%');
-    filter.innerHTML = `<feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000000" flood-opacity="0.6"/>`;
-    defs.appendChild(filter);
-
+    const defs = createSVGElement('defs');
+    setupGlowFilters(defs);
     svgEl.appendChild(defs);
     boardEl.appendChild(svgEl);
 
-    // Contextmenu prevention on board and window while dragging
     boardEl.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         return false;
     });
 
     window.addEventListener('contextmenu', (e) => {
-        if (isRightDragging) {
+        if (overlayState.isRightDragging) {
             e.preventDefault();
             return false;
         }
     });
 
-    // Mousedown (right click to draw arrows)
-    boardEl.addEventListener('mousedown', (e) => {
-        if (e.button === 2) {
-            // Right click
-            e.preventDefault();
-            const cell = getCellFromEvent(e);
-            if (cell) {
-                isRightDragging = true;
-                startCell = cell;
-                currentHoverCell = cell;
-                
-                // Determine color based on modifiers
-                if (e.altKey) activeColor = 'red';
-                else if (e.shiftKey) activeColor = 'blue';
-                else if (e.ctrlKey) activeColor = 'orange';
-                else activeColor = 'green';
-                
-                renderArrows();
-            }
-        } else if (e.button === 0) {
-            // Left click clears custom arrows
-            if (customArrows.length > 0 || customHighlights.length > 0) {
-                clearCustomArrows();
-            }
-        }
-    });
-
-    // Mousemove for drag preview
-    window.addEventListener('mousemove', (e) => {
-        if (!isRightDragging || !startCell) return;
-        const cell = getCellFromEvent(e);
-        if (cell && (cell.x !== currentHoverCell?.x || cell.y !== currentHoverCell?.y)) {
-            currentHoverCell = cell;
-            renderArrows();
-        }
-    });
-
-    // Mouseup to finalize arrow or circle highlight
-    window.addEventListener('mouseup', (e) => {
-        if (e.button === 2 && isRightDragging && startCell) {
-            e.preventDefault();
-            const endCell = getCellFromEvent(e) || currentHoverCell || startCell;
-            
-            if (startCell.x === endCell.x && startCell.y === endCell.y) {
-                // Single cell right click -> toggle circle highlight
-                toggleHighlight(startCell, activeColor);
-            } else {
-                // Dragged from cell A to cell B -> toggle arrow
-                toggleArrow(startCell, endCell, activeColor);
-            }
-            
-            isRightDragging = false;
-            startCell = null;
-            currentHoverCell = null;
-            renderArrows();
-        }
-    });
-
-    // Resize handler
-    window.addEventListener('resize', () => {
-        renderArrows();
-    });
+    boardEl.addEventListener('mousedown', handleMousedown);
+    window.addEventListener('mousemove', handleMousemove);
+    window.addEventListener('mouseup', handleMouseup);
+    window.addEventListener('resize', renderArrows);
 }
 
-/**
- * Extracts board cell coordinates {x, y} from mouse event.
- * Uses Euclidean distance to all 81 cell centers for maximum precision across grid wall tracks.
- */
+function handleMousedown(e) {
+    if (e.button === 2) {
+        e.preventDefault();
+        const cell = getCellFromEvent(e);
+        if (cell) {
+            overlayState.isRightDragging = true;
+            overlayState.startCell = cell;
+            overlayState.currentHoverCell = cell;
+            
+            if (e.altKey) overlayState.activeColor = 'red';
+            else if (e.shiftKey) overlayState.activeColor = 'blue';
+            else if (e.ctrlKey) overlayState.activeColor = 'orange';
+            else overlayState.activeColor = 'green';
+            
+            renderArrows();
+        }
+    } else if (e.button === 0) {
+        if (overlayState.customArrows.length > 0 || overlayState.customHighlights.length > 0 || overlayState.customSketchWalls.length > 0) {
+            clearCustomArrows();
+        }
+    }
+}
+
+function handleMousemove(e) {
+    if (!overlayState.isRightDragging || !overlayState.startCell) return;
+    const cell = getCellFromEvent(e);
+    if (cell && (cell.x !== overlayState.currentHoverCell?.x || cell.y !== overlayState.currentHoverCell?.y)) {
+        overlayState.currentHoverCell = cell;
+        renderArrows();
+    }
+}
+
+function handleMouseup(e) {
+    if (e.button !== 2 || !overlayState.isRightDragging || !overlayState.startCell) return;
+    e.preventDefault();
+
+    const endCell = getCellFromEvent(e) || overlayState.currentHoverCell || overlayState.startCell;
+    const start = overlayState.startCell;
+    const dx = Math.abs(endCell.x - start.x);
+    const dy = Math.abs(endCell.y - start.y);
+
+    if (start.x === endCell.x && start.y === endCell.y) {
+        toggleHighlight(start, overlayState.activeColor);
+    } else if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) {
+        if (e.shiftKey || e.altKey || e.ctrlKey) {
+            if (dx === 1 && dy === 0) {
+                toggleCustomSketchWall(Math.min(start.x, endCell.x), Math.min(start.y, 7), 'v', overlayState.activeColor);
+            } else {
+                toggleCustomSketchWall(Math.min(start.x, 7), Math.min(start.y, endCell.y), 'h', overlayState.activeColor);
+            }
+        } else {
+            toggleArrow(start, endCell, overlayState.activeColor);
+        }
+    } else {
+        toggleArrow(start, endCell, overlayState.activeColor);
+    }
+
+    overlayState.isRightDragging = false;
+    overlayState.startCell = null;
+    overlayState.currentHoverCell = null;
+    renderArrows();
+}
+
 function getCellFromEvent(e) {
     const boardEl = document.getElementById('board');
     if (!boardEl) return null;
 
     const boardRect = boardEl.getBoundingClientRect();
-    const clientX = e.clientX;
-    const clientY = e.clientY;
+    const { clientX, clientY } = e;
 
-    // Check if mouse is outside board box + buffer
     if (
-        clientX < boardRect.left - 50 ||
-        clientX > boardRect.right + 50 ||
-        clientY < boardRect.top - 50 ||
-        clientY > boardRect.bottom + 50
+        clientX < boardRect.left - 50 || clientX > boardRect.right + 50 ||
+        clientY < boardRect.top - 50 || clientY > boardRect.bottom + 50
     ) {
         return null;
     }
@@ -164,8 +137,7 @@ function getCellFromEvent(e) {
     let closestCell = null;
     let minSqDist = Infinity;
 
-    const cells = boardEl.querySelectorAll('.board-cell');
-    cells.forEach(cellEl => {
+    boardEl.querySelectorAll('.board-cell').forEach(cellEl => {
         const x = parseInt(cellEl.dataset.x);
         const y = parseInt(cellEl.dataset.y);
         const rect = cellEl.getBoundingClientRect();
@@ -182,239 +154,139 @@ function getCellFromEvent(e) {
     return closestCell;
 }
 
-/**
- * Toggles a circle highlight on a single cell.
- */
 function toggleHighlight(cell, color) {
-    const idx = customHighlights.findIndex(h => h.x === cell.x && h.y === cell.y);
+    const idx = overlayState.customHighlights.findIndex(h => h.x === cell.x && h.y === cell.y);
     if (idx >= 0) {
-        if (customHighlights[idx].color === color) {
-            customHighlights.splice(idx, 1);
+        if (overlayState.customHighlights[idx].color === color) {
+            overlayState.customHighlights.splice(idx, 1);
         } else {
-            customHighlights[idx].color = color;
+            overlayState.customHighlights[idx].color = color;
         }
     } else {
-        customHighlights.push({ x: cell.x, y: cell.y, color });
+        overlayState.customHighlights.push({ x: cell.x, y: cell.y, color });
     }
 }
 
-/**
- * Toggles an arrow between two cells.
- */
 function toggleArrow(from, to, color) {
-    const idx = customArrows.findIndex(a => 
-        a.from.x === from.x && a.from.y === from.y &&
-        a.to.x === to.x && a.to.y === to.y
+    const idx = overlayState.customArrows.findIndex(a => 
+        a.from.x === from.x && a.from.y === from.y && a.to.x === to.x && a.to.y === to.y
     );
     if (idx >= 0) {
-        if (customArrows[idx].color === color) {
-            customArrows.splice(idx, 1);
+        if (overlayState.customArrows[idx].color === color) {
+            overlayState.customArrows.splice(idx, 1);
         } else {
-            customArrows[idx].color = color;
+            overlayState.customArrows[idx].color = color;
         }
     } else {
-        customArrows.push({ from: { ...from }, to: { ...to }, color });
+        overlayState.customArrows.push({ from: { ...from }, to: { ...to }, color });
     }
 }
 
-/**
- * Clears all user-drawn arrows and highlights.
- */
-export function clearCustomArrows() {
-    customArrows = [];
-    customHighlights = [];
+export function toggleCustomSketchWall(x, y, type, color = 'orange') {
+    if (x < 0 || x > 7 || y < 0 || y > 7) return;
+    const idx = overlayState.customSketchWalls.findIndex(w => w.x === x && w.y === y && w.type === type);
+    if (idx >= 0) {
+        if (overlayState.customSketchWalls[idx].color === color) {
+            overlayState.customSketchWalls.splice(idx, 1);
+        } else {
+            overlayState.customSketchWalls[idx].color = color;
+        }
+    } else {
+        overlayState.customSketchWalls.push({ x, y, type, color });
+    }
     renderArrows();
 }
 
-/**
- * Sets preset goal arrows (for Playbook opening lines).
- * Accepts array of { from: 'e1'|{x,y}, to: 'e5'|{x,y}, color: 'green' }
- */
+export function clearCustomArrows() {
+    overlayState.customArrows = [];
+    overlayState.customHighlights = [];
+    overlayState.customSketchWalls = [];
+    renderArrows();
+}
+
+function parsePoint(point) {
+    return typeof point === 'string' ? parseNotation(point) : point;
+}
+
 export function setPresetGoalArrows(arrows) {
-    if (!arrows || !Array.isArray(arrows)) {
-        presetGoalArrows = [];
+    if (!Array.isArray(arrows)) {
+        overlayState.presetGoalArrows = [];
     } else {
-        presetGoalArrows = arrows.map(a => {
-            let from = typeof a.from === 'string' ? parseNotation(a.from) : a.from;
-            let to = typeof a.to === 'string' ? parseNotation(a.to) : a.to;
+        overlayState.presetGoalArrows = arrows.map(a => {
+            const from = parsePoint(a.from);
+            const to = parsePoint(a.to);
             if (!from || !to) return null;
-            return {
-                from: { x: from.x, y: from.y },
-                to: { x: to.x, y: to.y },
-                color: a.color || 'green'
-            };
+            return { from: { x: from.x, y: from.y }, to: { x: to.x, y: to.y }, color: a.color || 'green' };
         }).filter(Boolean);
     }
     renderArrows();
 }
 
-/**
- * Gets exact pixel center of cell (x, y) relative to #board element.
- */
-function getCellCenterPixels(x, y) {
-    const boardEl = document.getElementById('board');
-    if (!boardEl) return null;
-    const cellEl = boardEl.querySelector(`.board-cell[data-x="${x}"][data-y="${y}"]`);
-    if (!cellEl) return null;
-
-    const boardRect = boardEl.getBoundingClientRect();
-    const cellRect = cellEl.getBoundingClientRect();
-
-    return {
-        x: cellRect.left + cellRect.width / 2 - boardRect.left,
-        y: cellRect.top + cellRect.height / 2 - boardRect.top,
-        width: cellRect.width,
-        height: cellRect.height
-    };
+export function setStepArrow(arrow) {
+    if (!arrow) {
+        overlayState.stepArrow = null;
+    } else {
+        const from = parsePoint(arrow.from);
+        const to = parsePoint(arrow.to);
+        if (from && to) {
+            overlayState.stepArrow = { from: { x: from.x, y: from.y }, to: { x: to.x, y: to.y }, color: arrow.color || 'orange' };
+        } else {
+            overlayState.stepArrow = null;
+        }
+    }
+    renderArrows();
 }
 
-/**
- * Re-renders all SVG arrows and highlights.
- */
+export function setPresetStepArrows(arrows) {
+    if (!Array.isArray(arrows)) {
+        overlayState.presetStepArrows = [];
+    } else {
+        overlayState.presetStepArrows = arrows.map(a => {
+            const from = parsePoint(a.from);
+            const to = parsePoint(a.to);
+            if (!from || !to) return null;
+            return { from: { x: from.x, y: from.y }, to: { x: to.x, y: to.y }, color: a.color || 'red', label: a.label || '' };
+        }).filter(Boolean);
+    }
+    renderArrows();
+}
+
+export function setPresetStepSketchWalls(walls) {
+    if (!Array.isArray(walls)) {
+        overlayState.presetStepSketchWalls = [];
+    } else {
+        overlayState.presetStepSketchWalls = walls.map(w => {
+            if (typeof w === 'string') {
+                const parsed = parseNotation(w);
+                return (parsed && parsed.type === 'wall') ? { x: parsed.x, y: parsed.y, type: parsed.wallType, color: 'orange' } : null;
+            }
+            return { x: w.x, y: w.y, type: w.type || w.wallType || 'h', color: w.color || 'orange' };
+        }).filter(Boolean);
+    }
+    renderArrows();
+}
+
 export function renderArrows() {
     const svgEl = document.getElementById('board-arrows-svg');
     if (!svgEl) return;
 
-    // Clear existing dynamic arrow/highlight items except <defs>
     svgEl.querySelectorAll('.board-arrow-item, circle').forEach(el => el.remove());
 
-    // 1. Render Preset Opening Goal Arrows
-    presetGoalArrows.forEach(arrow => {
-        renderSingleArrow(svgEl, arrow.from, arrow.to, arrow.color, { isPreset: true });
-    });
+    overlayState.presetGoalArrows.forEach(a => renderSingleArrow(svgEl, a.from, a.to, a.color, { isPreset: true }));
+    overlayState.presetStepSketchWalls.forEach(w => renderSingleSketchWall(svgEl, w.x, w.y, w.type, w.color));
+    overlayState.presetStepArrows.forEach(a => renderSingleArrow(svgEl, a.from, a.to, a.color, { isStep: true }));
+    if (overlayState.stepArrow) renderSingleArrow(svgEl, overlayState.stepArrow.from, overlayState.stepArrow.to, overlayState.stepArrow.color, { isStep: true });
 
-    // 2. Render Custom Highlights
-    customHighlights.forEach(hl => {
-        renderSingleHighlight(svgEl, hl.x, hl.y, hl.color);
-    });
+    overlayState.customHighlights.forEach(hl => renderSingleHighlight(svgEl, hl.x, hl.y, hl.color));
+    overlayState.customSketchWalls.forEach(w => renderSingleSketchWall(svgEl, w.x, w.y, w.type, w.color));
+    overlayState.customArrows.forEach(a => renderSingleArrow(svgEl, a.from, a.to, a.color, { isPreset: false }));
 
-    // 3. Render Custom User Arrows
-    customArrows.forEach(arrow => {
-        renderSingleArrow(svgEl, arrow.from, arrow.to, arrow.color, { isPreset: false });
-    });
-
-    // 4. Render Active Drag Preview Arrow
-    if (isRightDragging && startCell && currentHoverCell) {
+    if (overlayState.isRightDragging && overlayState.startCell && overlayState.currentHoverCell) {
+        const { startCell, currentHoverCell, activeColor } = overlayState;
         if (startCell.x === currentHoverCell.x && startCell.y === currentHoverCell.y) {
             renderSingleHighlight(svgEl, startCell.x, startCell.y, activeColor, true);
         } else {
             renderSingleArrow(svgEl, startCell, currentHoverCell, activeColor, { isPreview: true });
         }
     }
-}
-
-/**
- * Renders a circle highlight around a cell.
- */
-function renderSingleHighlight(svgEl, x, y, colorKey, isPreview = false) {
-    const center = getCellCenterPixels(x, y);
-    if (!center) return;
-
-    const colorData = COLOR_MAP[colorKey] || COLOR_MAP.green;
-    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    circle.setAttribute('cx', center.x);
-    circle.setAttribute('cy', center.y);
-    circle.setAttribute('r', center.width * 0.42);
-    circle.setAttribute('fill', colorData.fill);
-    circle.setAttribute('stroke', colorData.stroke);
-    circle.setAttribute('stroke-width', '3.5');
-    if (isPreview) circle.setAttribute('stroke-dasharray', '5 3');
-    circle.setAttribute('filter', 'url(#arrow-glow)');
-
-    svgEl.appendChild(circle);
-}
-
-/**
- * Renders a single arrow line with a 2D shaft polygon and SVG arrowhead polygon from (from.x, from.y) to (to.x, to.y).
- * Guarantees zero clipping bugs on horizontal (dy=0) or vertical (dx=0) line filters.
- */
-function renderSingleArrow(svgEl, from, to, colorKey, { isPreset = false, isPreview = false } = {}) {
-    const start = getCellCenterPixels(from.x, from.y);
-    const end = getCellCenterPixels(to.x, to.y);
-    if (!start || !end) return;
-
-    const colorData = COLOR_MAP[colorKey] || COLOR_MAP.green;
-
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist < 2) return;
-
-    const ux = dx / dist;
-    const uy = dy / dist;
-    const nx = -uy;
-    const ny = ux;
-
-    const headLength = isPreset ? 14 : 16;
-    const headWidth = isPreset ? 12 : 14;
-
-    const startOffset = start.width * 0.18;
-    const endOffset = end.width * 0.20;
-
-    // Start point of arrow shaft
-    const x1 = start.x + ux * startOffset;
-    const y1 = start.y + uy * startOffset;
-
-    // Tip point of arrowhead
-    const tipX = end.x - ux * endOffset;
-    const tipY = end.y - uy * endOffset;
-
-    // Base center of arrowhead
-    const baseX = tipX - ux * headLength;
-    const baseY = tipY - uy * headLength;
-
-    // Left and right corners of arrowhead base
-    const leftX = baseX + nx * (headWidth / 2);
-    const leftY = baseY + ny * (headWidth / 2);
-    const rightX = baseX - nx * (headWidth / 2);
-    const rightY = baseY - ny * (headWidth / 2);
-
-    // Group element for the arrow (attaches glow filter to combined 2D bounds of shaft + arrowhead)
-    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    g.setAttribute('class', 'board-arrow-item');
-    g.setAttribute('filter', 'url(#arrow-glow)');
-
-    const thickness = isPreset ? 5.5 : 6.5;
-    const halfThick = thickness / 2;
-
-    if (isPreset) {
-        // Dashed line shaft for preset goal arrows
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', x1);
-        line.setAttribute('y1', y1);
-        line.setAttribute('x2', baseX + ux * 2);
-        line.setAttribute('y2', baseY + uy * 2);
-        line.setAttribute('stroke', colorData.stroke);
-        line.setAttribute('stroke-width', thickness);
-        line.setAttribute('stroke-linecap', 'round');
-        line.setAttribute('opacity', isPreview ? '0.6' : '0.9');
-        line.setAttribute('stroke-dasharray', '7 4');
-        g.appendChild(line);
-    } else {
-        // 2D Polygon shaft for solid custom arrows (100% immune to 1D line SVG filter clipping bugs)
-        const x1_l = x1 + nx * halfThick;
-        const y1_l = y1 + ny * halfThick;
-        const x1_r = x1 - nx * halfThick;
-        const y1_r = y1 - ny * halfThick;
-
-        const x2_l = baseX + ux * 2 + nx * halfThick;
-        const y2_l = baseY + uy * 2 + ny * halfThick;
-        const x2_r = baseX + ux * 2 - nx * halfThick;
-        const y2_r = baseY + uy * 2 - ny * halfThick;
-
-        const shaftPoly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-        shaftPoly.setAttribute('points', `${x1_l},${y1_l} ${x2_l},${y2_l} ${x2_r},${y2_r} ${x1_r},${y1_r}`);
-        shaftPoly.setAttribute('fill', colorData.stroke);
-        shaftPoly.setAttribute('opacity', isPreview ? '0.6' : '0.9');
-        g.appendChild(shaftPoly);
-    }
-
-    // Arrowhead Polygon
-    const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-    polygon.setAttribute('points', `${tipX},${tipY} ${leftX},${leftY} ${rightX},${rightY}`);
-    polygon.setAttribute('fill', colorData.stroke);
-    polygon.setAttribute('opacity', isPreview ? '0.6' : '0.9');
-
-    g.appendChild(polygon);
-    svgEl.appendChild(g);
 }
