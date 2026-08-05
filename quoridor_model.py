@@ -73,8 +73,8 @@ class QuoridorNet(nn.Module):
         self.aux_fc = nn.Linear(2 * 9 * 9 + 4, 2)
 
     def forward(self, x, return_aux=False):
-        x_spatial = x[:, [0, 1, 2, 3, 6, 7], :, :]
-        scalars = x[:, [4, 5, 8, 9], 0, 0]
+        x_spatial = torch.cat([x[:, :4, :, :], x[:, 6:8, :, :]], dim=1)
+        scalars = torch.cat([x[:, 4:6, 0, 0], x[:, 8:10, 0, 0]], dim=1)
 
         # Trunk
         out = F.relu(self.bn_init(self.conv_init(x_spatial)))
@@ -83,20 +83,20 @@ class QuoridorNet(nn.Module):
             
         # Value Head
         v = F.relu(self.value_bn(self.value_conv(out)))
-        v = torch.flatten(v, 1)
+        v = v.view(v.size(0), -1)
         v_in = torch.cat([v, scalars], dim=1)
         v = F.relu(self.value_fc1(v_in))
         v = torch.tanh(self.value_fc2(v))
         
         # Policy Head
         p = F.relu(self.policy_bn(self.policy_conv(out)))
-        p = torch.flatten(p, 1)
+        p = p.view(p.size(0), -1)
         p_in = torch.cat([p, scalars], dim=1)
         logits = self.policy_fc(p_in)
         
         if return_aux:
             aux = F.relu(self.aux_bn(self.aux_conv(out)))
-            aux = torch.flatten(aux, 1)
+            aux = aux.view(aux.size(0), -1)
             aux_in = torch.cat([aux, scalars], dim=1)
             aux_path = torch.sigmoid(self.aux_fc(aux_in))
             return logits, v, aux_path
@@ -314,7 +314,7 @@ def export_to_onnx(model, filepath="quoridor_model.onnx"):
     model.eval()
     orig_device = next(model.parameters()).device
     model.cpu()
-    dummy_input = torch.randn(1, 11, 9, 9, dtype=torch.float32)
+    dummy_input = torch.randn(32, 11, 9, 9, dtype=torch.float32)
     try:
         # Set environment variable and reconfigure streams to force UTF-8 on Windows
         import sys
@@ -331,18 +331,20 @@ def export_to_onnx(model, filepath="quoridor_model.onnx"):
                     sys.stderr.reconfigure(encoding='utf-8')
                 except Exception:
                     pass
-        batch_dim = torch.export.Dim('batch', min=1, max=1024)
         torch.onnx.export(
             model,
             dummy_input,
             filepath,
             export_params=True,
-            opset_version=18,
+            opset_version=17,
             do_constant_folding=True,
             input_names=['input'],
             output_names=['policy', 'value'],
-            dynamic_shapes={'x': {0: batch_dim}},
-            external_data=False
+            dynamic_axes={
+                'input': {0: 'batch_size'},
+                'policy': {0: 'batch_size'},
+                'value': {0: 'batch_size'}
+            }
         )
     except Exception as e:
         print(f"Warning: ONNX export failed with exception: {e}")

@@ -20,6 +20,7 @@ if sys.platform == "win32":
     try:
         import ctypes
         ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x00000040)
+        ctypes.windll.winmm.timeBeginPeriod(1)
     except Exception:
         pass
 
@@ -255,6 +256,7 @@ def main():
     parser.add_argument("--no_pcr", action="store_true", help="Disable Playout Cap Randomization")
     parser.add_argument("--port", type=int, default=5555, help="Port of central GPU inference server")
     parser.add_argument("--standalone", action="store_true", help="Force local ONNX evaluator instead of central server")
+    parser.add_argument("--evaluator", type=str, default="auto", choices=["auto", "central", "npu"], help="Evaluator target (central=RTX GPU, npu=Intel Core Ultra NPU)")
     args = parser.parse_args()
 
     actor_id = args.actor_id
@@ -262,10 +264,10 @@ def main():
     num_simulations = args.simulations
     fast_simulations = args.fast_simulations
     use_pcr = not args.no_pcr
-    use_central = not args.standalone
+    use_central = not args.standalone and args.evaluator != "npu"
 
     ts = time.strftime("%H:%M:%S")
-    print(f"[{ts}] [Actor #{actor_id}] Started worker process (batch={batch_size}, deep_sim={num_simulations}, fast_sim={fast_simulations}, pcr={use_pcr}, central_gpu={use_central})", flush=True)
+    print(f"[{ts}] [Actor #{actor_id}] Started worker process (batch={batch_size}, deep_sim={num_simulations}, fast_sim={fast_simulations}, pcr={use_pcr}, evaluator={args.evaluator})", flush=True)
     
     loaded_model_path = None
     evaluator = None
@@ -275,12 +277,9 @@ def main():
         expected_model_path = f"quoridor_model_epoch_{epoch+1:03d}.onnx"
         
         if not os.path.exists(expected_model_path):
-            expected_model_path = f"quoridor_model_epoch_{epoch:03d}.onnx"
-            
-        if not os.path.exists(expected_model_path):
             expected_model_path = "quoridor_model.onnx"
             
-        if not os.path.exists(expected_model_path) and not use_central:
+        if not os.path.exists(expected_model_path) and not use_central and args.evaluator != "npu":
             ts = time.strftime("%H:%M:%S")
             print(f"[{ts}] [Actor #{actor_id}] Waiting for initial ONNX model file...", flush=True)
             time.sleep(5)
@@ -288,9 +287,9 @@ def main():
             
         if evaluator is None or (not use_central and expected_model_path != loaded_model_path):
             ts = time.strftime("%H:%M:%S")
-            print(f"[{ts}] [Actor #{actor_id}] Initializing evaluator (central={use_central})...", flush=True)
+            print(f"[{ts}] [Actor #{actor_id}] Initializing evaluator (type={args.evaluator}, central={use_central})...", flush=True)
             try:
-                evaluator = create_evaluator(expected_model_path, use_central_server=use_central, port=args.port)
+                evaluator = create_evaluator(expected_model_path, use_central_server=use_central, port=args.port, evaluator_type=args.evaluator)
                 loaded_model_path = expected_model_path
             except Exception as e:
                 print(f"[{ts}] [Actor #{actor_id}] Evaluator setup failed, retrying... ({e})", flush=True)
@@ -306,15 +305,26 @@ def main():
             
         ts = time.strftime("%H:%M:%S")
         print(f"[{ts}] [Actor #{actor_id}] Running self-play batch for Epoch {epoch+1} ({num_completed}/{GAMES_PER_EPOCH} ready)...", flush=True)
-        run_self_play_batch(
-            evaluator, 
-            epoch, 
-            batch_size=batch_size, 
-            num_simulations=num_simulations, 
-            fast_simulations=fast_simulations, 
-            use_pcr=use_pcr, 
-            actor_id=actor_id
-        )
+        try:
+            run_self_play_batch(
+                evaluator, 
+                epoch, 
+                batch_size=batch_size, 
+                num_simulations=num_simulations, 
+                fast_simulations=fast_simulations, 
+                use_pcr=use_pcr, 
+                actor_id=actor_id
+            )
+        except Exception as e:
+            ts = time.strftime("%H:%M:%S")
+            print(f"[{ts}] [Actor #{actor_id}] Self-play batch interrupted ({e}). Re-initializing evaluator and retrying...", flush=True)
+            if hasattr(evaluator, 'close'):
+                try:
+                    evaluator.close()
+                except Exception:
+                    pass
+            evaluator = None
+            time.sleep(3)
 
 if __name__ == "__main__":
     main()

@@ -20,6 +20,7 @@ struct MCTSNode {
     int N = 0;
     double W = 0.0;
     double Q = 0.0;
+    int virtual_loss = 0;
     ProvenStatus proven_status = ProvenStatus::UNRESOLVED;
     std::map<int, MCTSNode*> children;
     std::vector<Action> valid_actions;

@@ -212,152 +212,157 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
     std::mt19937 gen(rd());
     
     // 2. Perform simulations in lock-step
-    for (int sim = 0; sim < num_simulations; ++sim) {
-        std::vector<MCTSNode*> selected_leaves(K, nullptr);
-        std::vector<int> eval_indices; // indices in [0, K-1] needing model evaluation
-        std::vector<float> batched_inputs; // flat size: eval_indices.size() * 11 * 9 * 9
+    // 2. Perform simulations with Virtual Loss parallel batching
+    int virtual_batch_size = 4;
+    for (int sim = 0; sim < num_simulations; sim += virtual_batch_size) {
+        int current_batch_run = std::min(virtual_batch_size, num_simulations - sim);
         
-        // --- Selection Step ---
-        for (int i = 0; i < K; ++i) {
-            MCTSNode* node = roots[i];
-            
-            // Traverse PUCT down to leaf
-            while (!node->is_leaf() && node->game_state.is_game_over() == 0) {
-                MCTSNode* best_child = nullptr;
-                double best_score = -1e9;
-                
-                for (const auto& pair : node->children) {
-                    MCTSNode* child = pair.second;
-                    double q_val = (child->N > 0) ? -child->Q : node->Q;
-                    double u = q_val + c_puct * child->prior * (std::sqrt(node->N) / (1.0 + child->N));
-                    if (u > best_score) {
-                        best_score = u;
-                        best_child = child;
+        struct TraversalItem {
+            int game_idx;
+            MCTSNode* leaf;
+            std::vector<MCTSNode*> path;
+        };
+        std::vector<TraversalItem> traversals;
+        std::vector<int> eval_indices;
+        std::vector<float> batched_inputs;
+
+        // --- Selection Step with Virtual Loss ---
+        for (int v_step = 0; v_step < current_batch_run; ++v_step) {
+            for (int i = 0; i < K; ++i) {
+                MCTSNode* node = roots[i];
+                std::vector<MCTSNode*> path;
+                path.push_back(node);
+                node->virtual_loss += 1;
+
+                while (!node->is_leaf() && node->game_state.is_game_over() == 0) {
+                    MCTSNode* best_child = nullptr;
+                    double best_score = -1e9;
+                    for (const auto& pair : node->children) {
+                        MCTSNode* child = pair.second;
+                        int eff_N = child->N + child->virtual_loss;
+                        double q_val = (eff_N > 0) ? -((child->W - child->virtual_loss) / eff_N) : node->Q;
+                        double u = q_val + c_puct * child->prior * (std::sqrt(node->N + node->virtual_loss) / (1.0 + eff_N));
+                        if (u > best_score) {
+                            best_score = u;
+                            best_child = child;
+                        }
                     }
+                    node = best_child;
+                    path.push_back(node);
+                    node->virtual_loss += 1;
                 }
-                node = best_child;
-            }
-            selected_leaves[i] = node;
-            
-            // Check if leaf requires neural network expansion
-            if (node->game_state.is_game_over() == 0 && node->is_leaf()) {
-                eval_indices.push_back(i);
-                std::vector<float> enc = encode_state_cpp(node->game_state);
-                batched_inputs.insert(batched_inputs.end(), enc.begin(), enc.end());
+
+                traversals.push_back({i, node, path});
+
+                if (node->game_state.is_game_over() == 0 && node->is_leaf()) {
+                    eval_indices.push_back(static_cast<int>(traversals.size()) - 1);
+                    std::vector<float> enc = encode_state_cpp(node->game_state);
+                    batched_inputs.insert(batched_inputs.end(), enc.begin(), enc.end());
+                }
             }
         }
-        
-        // --- Expansion and Evaluation Step ---
-        std::vector<float> batch_policies; // shape: [eval_indices.size() * 140]
-        std::vector<float> batch_values;   // shape: [eval_indices.size()]
-        
+
+        // --- Model Evaluation Step ---
+        std::vector<float> batch_policies;
+        std::vector<float> batch_values;
         if (!eval_indices.empty()) {
-            int num_batch_items = static_cast<int>(eval_indices.size());
-            // Call the python callback
-            auto eval_res = eval_cb(batched_inputs, num_batch_items);
+            int num_items = static_cast<int>(eval_indices.size());
+            auto eval_res = eval_cb(batched_inputs, num_items);
             batch_policies = eval_res.first;
             batch_values = eval_res.second;
         }
-        
+
+        // --- Expansion, Un-virtual loss & Backpropagation Step ---
+        std::vector<double> traversal_values(traversals.size(), 0.0);
         int eval_counter = 0;
-        for (int i = 0; i < K; ++i) {
-            MCTSNode* leaf = selected_leaves[i];
-            double leaf_value = 0.0;
-            
+
+        for (size_t t_idx = 0; t_idx < traversals.size(); ++t_idx) {
+            MCTSNode* leaf = traversals[t_idx].leaf;
+            bool was_leaf_unexpanded = leaf->is_leaf();
+
             if (leaf->game_state.is_game_over() != 0) {
-                // Game over at leaf, reward is terminal status
                 int winner = leaf->game_state.is_game_over();
-                // Reward from current active perspective:
-                leaf_value = (winner == 1) ? (leaf->game_state.is_p1_turn ? 1.0 : -1.0) 
-                                           : (leaf->game_state.is_p1_turn ? -1.0 : 1.0);
-                leaf->proven_status = (leaf_value > 0) ? ProvenStatus::PROVEN_WIN : ProvenStatus::PROVEN_LOSS;
+                traversal_values[t_idx] = (winner == 1) ? (leaf->game_state.is_p1_turn ? 1.0 : -1.0)
+                                                         : (leaf->game_state.is_p1_turn ? -1.0 : 1.0);
+                leaf->proven_status = (traversal_values[t_idx] > 0) ? ProvenStatus::PROVEN_WIN : ProvenStatus::PROVEN_LOSS;
             } else {
-                // Fetch evaluation result from batch
-                int batch_idx = eval_counter++;
-                leaf_value = batch_values[batch_idx];
+                int batch_pos = eval_counter++;
+                traversal_values[t_idx] = batch_values[batch_pos];
                 
                 int guaranteed = leaf->game_state.get_guaranteed_winner();
                 if (guaranteed != 0) {
-                    leaf_value = (guaranteed == 1) ? (leaf->game_state.is_p1_turn ? 1.0 : -1.0)
-                                                   : (leaf->game_state.is_p1_turn ? -1.0 : 1.0);
-                    leaf->proven_status = (leaf_value > 0) ? ProvenStatus::PROVEN_WIN : ProvenStatus::PROVEN_LOSS;
+                    traversal_values[t_idx] = (guaranteed == 1) ? (leaf->game_state.is_p1_turn ? 1.0 : -1.0)
+                                                                 : (leaf->game_state.is_p1_turn ? -1.0 : 1.0);
+                    leaf->proven_status = (traversal_values[t_idx] > 0) ? ProvenStatus::PROVEN_WIN : ProvenStatus::PROVEN_LOSS;
                 }
-                
-                // Get legal actions
-                std::vector<Action> valid_actions = leaf->game_state.get_valid_actions();
-                leaf->valid_actions = valid_actions;
-                
-                std::vector<int> valid_indices;
-                for (const auto& act : valid_actions) {
-                    valid_indices.push_back(map_action_to_index_perspective(act, leaf->game_state.is_p1_turn));
-                }
-                leaf->valid_action_indices = valid_indices;
-                
-                // Parse and mask model policy
-                std::vector<double> policy_prior(140, 0.0);
-                double policy_sum = 0.0;
-                for (int idx : valid_indices) {
-                    double model_p = batch_policies[batch_idx * 140 + idx];
-                    policy_prior[idx] = model_p;
-                    policy_sum += model_p;
-                }
-                
-                // Normalize priors
-                if (policy_sum > 1e-8) {
+
+                if (was_leaf_unexpanded) {
+                    std::vector<Action> valid_actions = leaf->game_state.get_valid_actions();
+                    leaf->valid_actions = valid_actions;
+                    std::vector<int> valid_indices;
+                    for (const auto& act : valid_actions) {
+                        valid_indices.push_back(map_action_to_index_perspective(act, leaf->game_state.is_p1_turn));
+                    }
+                    leaf->valid_action_indices = valid_indices;
+
+                    std::vector<double> policy_prior(140, 0.0);
+                    double policy_sum = 0.0;
                     for (int idx : valid_indices) {
-                        policy_prior[idx] /= policy_sum;
+                        double model_p = batch_policies[batch_pos * 140 + idx];
+                        policy_prior[idx] = model_p;
+                        policy_sum += model_p;
                     }
-                } else {
-                    double uniform_p = 1.0 / valid_indices.size();
-                    for (int idx : valid_indices) {
-                        policy_prior[idx] = uniform_p;
+                    if (policy_sum > 1e-8) {
+                        for (int idx : valid_indices) policy_prior[idx] /= policy_sum;
+                    } else {
+                        double uniform_p = 1.0 / valid_indices.size();
+                        for (int idx : valid_indices) policy_prior[idx] = uniform_p;
                     }
-                }
-                
-                // Expand node children
-                for (size_t act_idx = 0; act_idx < valid_actions.size(); ++act_idx) {
-                    int global_idx = valid_indices[act_idx];
-                    QuoridorGame next_game = leaf->game_state.clone_and_step(valid_actions[act_idx]);
-                    
-                    leaf->children[global_idx] = new MCTSNode(
-                        next_game, leaf, global_idx, policy_prior[global_idx]
-                    );
-                }
-                
-                // Add Standard Dirichlet Noise at root across all legal child actions
-                if (sim == 0 && leaf == roots[i] && !leaf->children.empty()) {
-                    std::gamma_distribution<double> gamma(dirichlet_alpha, 1.0);
-                    double noise_sum = 0.0;
-                    std::vector<double> noises;
-                    noises.reserve(leaf->children.size());
-                    
-                    for (size_t c = 0; c < leaf->children.size(); ++c) {
-                        double val = gamma(gen);
-                        if (val < 1e-8) val = 1e-8;
-                        noises.push_back(val);
-                        noise_sum += val;
+
+                    for (size_t act_idx = 0; act_idx < valid_actions.size(); ++act_idx) {
+                        int global_idx = valid_indices[act_idx];
+                        QuoridorGame next_game = leaf->game_state.clone_and_step(valid_actions[act_idx]);
+                        leaf->children[global_idx] = new MCTSNode(
+                            next_game, leaf, global_idx, policy_prior[global_idx]
+                        );
                     }
-                    
-                    size_t idx = 0;
-                    for (auto& pair : leaf->children) {
-                        double n = noises[idx++] / noise_sum;
-                        pair.second->prior = (1.0 - dirichlet_eps) * pair.second->prior + dirichlet_eps * n;
+
+                    if (sim == 0 && leaf == roots[traversals[t_idx].game_idx] && !leaf->children.empty()) {
+                        std::gamma_distribution<double> gamma(dirichlet_alpha, 1.0);
+                        double noise_sum = 0.0;
+                        std::vector<double> noises;
+                        noises.reserve(leaf->children.size());
+                        for (size_t c = 0; c < leaf->children.size(); ++c) {
+                            double val = gamma(gen);
+                            if (val < 1e-8) val = 1e-8;
+                            noises.push_back(val);
+                            noise_sum += val;
+                        }
+                        size_t n_idx = 0;
+                        for (auto& pair : leaf->children) {
+                            double n = noises[n_idx++] / noise_sum;
+                            pair.second->prior = (1.0 - dirichlet_eps) * pair.second->prior + dirichlet_eps * n;
+                        }
                     }
                 }
             }
-            
-            // --- Backpropagation Step ---
+
+            // Remove Virtual Loss
+            for (MCTSNode* n : traversals[t_idx].path) {
+                n->virtual_loss -= 1;
+            }
+
+            // Backpropagate
             MCTSNode* node = leaf;
-            double v = leaf_value;
+            double v = traversal_values[t_idx];
             while (node != nullptr) {
                 node->N += 1;
                 node->W += v;
                 node->Q = node->W / node->N;
-                
+
                 if (!node->is_leaf() && node->proven_status == ProvenStatus::UNRESOLVED) {
                     bool all_children_proven_win = true; 
                     bool any_child_proven_loss = false;
-                    
                     if (node->children.empty()) {
                         all_children_proven_win = false;
                     } else {
@@ -371,7 +376,6 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                             }
                         }
                     }
-                    
                     if (any_child_proven_loss) {
                         node->proven_status = ProvenStatus::PROVEN_WIN;
                         node->Q = 1.0;
@@ -383,16 +387,14 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                     }
                 }
 
-                // If node is proven, force v to be the proven value for its parent
                 if (node->proven_status == ProvenStatus::PROVEN_WIN) {
                     v = 1.0;
                 } else if (node->proven_status == ProvenStatus::PROVEN_LOSS) {
                     v = -1.0;
                 } else {
-                    v = node->Q; // standard PUCT backprop
+                    v = node->Q;
                 }
-                
-                v = -v; // Flip perspective for parent
+                v = -v;
                 node = node->parent;
             }
         }

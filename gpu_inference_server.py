@@ -13,8 +13,17 @@ PORT = 5555
 HOST = "127.0.0.1"
 CHECKPOINT_PATH = "quoridor_checkpoint.pth"
 
-# Enable cuDNN autotuner for maximum GPU kernel performance
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.winmm.timeBeginPeriod(1)
+    except Exception:
+        pass
+
+# Enable cuDNN autotuner and TF32 for maximum GPU kernel performance
 torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 def get_latest_checkpoint_path():
     """Finds the newest available PyTorch model checkpoint."""
@@ -22,11 +31,20 @@ def get_latest_checkpoint_path():
         return CHECKPOINT_PATH
     return None
 
+class InferenceWrapper(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+    def forward(self, x):
+        logits, v = self.model(x, return_aux=False)
+        return logits, v
+
 class PyTorchCUDAInferenceEngine:
     """High-throughput PyTorch CUDA Inference Engine using FP16 Tensor Cores."""
     def __init__(self, checkpoint_path=None):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = QuoridorNet(num_residual_blocks=10, channels=128).to(self.device).eval()
+        self.traced_model = None
         self.checkpoint_path = None
         self.mtime = None
         
@@ -35,13 +53,21 @@ class PyTorchCUDAInferenceEngine:
         else:
             self.check_and_reload()
 
-        # Warmup run with FP16 Autocast
+        # Warmup run with FP16 Autocast & JIT Tracing
         dummy = torch.zeros((1, 11, 9, 9), device=self.device)
         with torch.inference_mode(), torch.amp.autocast('cuda', enabled=(self.device.type == 'cuda')):
-            _ = self.model(dummy)
+            if self.traced_model is None:
+                try:
+                    self.traced_model = torch.jit.trace(InferenceWrapper(self.model), dummy, check_trace=False)
+                except Exception:
+                    self.traced_model = None
+            if self.traced_model is not None:
+                _ = self.traced_model(dummy)
+            else:
+                _ = self.model(dummy)
         
         ts = time.strftime("%H:%M:%S")
-        print(f"[{ts}] [GPU Server] PyTorch FP16 Engine active on: {torch.cuda.get_device_name(0) if self.device.type == 'cuda' else 'CPU'}", flush=True)
+        print(f"[{ts}] [GPU Server] PyTorch FP16/TF32 JIT Engine active on: {torch.cuda.get_device_name(0) if self.device.type == 'cuda' else 'CPU'}", flush=True)
 
     def load_checkpoint(self, path):
         if not os.path.exists(path):
@@ -51,10 +77,19 @@ class PyTorchCUDAInferenceEngine:
             state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
             self.model.load_state_dict(state_dict, strict=False)
             
+            # Trace the updated model for optimized execution graph
+            dummy = torch.zeros((1, 11, 9, 9), device=self.device)
+            with torch.inference_mode(), torch.amp.autocast('cuda', enabled=(self.device.type == 'cuda')):
+                try:
+                    self.traced_model = torch.jit.trace(InferenceWrapper(self.model), dummy, check_trace=False)
+                except Exception as trace_err:
+                    print(f"Note: JIT tracing skipped ({trace_err}), using eager mode.")
+                    self.traced_model = None
+
             self.checkpoint_path = path
             self.mtime = os.path.getmtime(path)
             ts = time.strftime("%H:%M:%S")
-            print(f"[{ts}] [GPU Server] Loaded checkpoint '{path}' onto {self.device} (strict=False)", flush=True)
+            print(f"[{ts}] [GPU Server] Loaded checkpoint '{path}' onto {self.device} (strict=False, traced={self.traced_model is not None})", flush=True)
             return True
         except Exception as e:
             ts = time.strftime("%H:%M:%S")
@@ -69,8 +104,9 @@ class PyTorchCUDAInferenceEngine:
 
     def evaluate_combined(self, batch_input):
         tensor_in = torch.from_numpy(batch_input).to(self.device, non_blocking=True)
+        exec_model = self.traced_model if self.traced_model is not None else self.model
         with torch.inference_mode(), torch.amp.autocast('cuda', enabled=(self.device.type == 'cuda')):
-            logits, values = self.model(tensor_in)
+            logits, values = exec_model(tensor_in)
             policies = torch.softmax(logits, dim=1)
             
         policies_np = np.ascontiguousarray(policies.float().cpu().numpy(), dtype=np.float32)
@@ -130,13 +166,17 @@ def gpu_worker_loop(engine):
 
         items = []
         try:
-            # Block briefly for first request
-            first_item = request_queue.get(timeout=0.005)
+            # Block until at least one request arrives
+            first_item = request_queue.get(timeout=0.001)
             items.append(first_item)
-            # Pull any additional pending requests to micro-batch across actors
-            while not request_queue.empty():
+            accumulated_count = first_item[0]
+
+            # Zero-wait non-blocking queue drain: aggregate all currently available pending actor requests immediately
+            while accumulated_count < 512:
                 try:
-                    items.append(request_queue.get_nowait())
+                    next_item = request_queue.get_nowait()
+                    items.append(next_item)
+                    accumulated_count += next_item[0]
                 except queue.Empty:
                     break
         except queue.Empty:

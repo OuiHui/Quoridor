@@ -26,12 +26,12 @@ graph TD
 
 ### A. C++ Core Engine & MCTS ([cpp/](../cpp))
 - **`QuoridorGame`**: High-performance game state representation, move generator, wall placement validator, and BFS shortest pathfinder. Exposed to Python via `pybind11` in `quoridor_cpp`.
-- **`MCTS` Engine**: Implements Monte Carlo Tree Search with PUCT selection formula ($c_{\text{puct}} = 1.4$) and Dirichlet noise ($\alpha = 0.3, \epsilon = 0.15$). Supports batched search execution (`MCTS.run_search_batched`) to unlock GPU inference parallelization.
+- **`MCTS` Engine**: Implements Monte Carlo Tree Search with PUCT selection formula ($c_{\text{puct}} = 1.4$) and Dirichlet noise ($\alpha = 0.07, \epsilon = 0.15$). Supports batched search execution (`MCTS.run_search_batched`) with **Virtual Loss Parallel Batching** (4 parallel leaf traversals per game step), reducing IPC round-trips to the central GPU inference server by 4x.
 
 ### B. Centralized GPU Inference Server ([gpu_inference_server.py](../gpu_inference_server.py))
-- **Single GPU Context**: Dedicated process running an ONNX Runtime `InferenceSession` with `CUDAExecutionProvider`.
+- **Single GPU Context**: Dedicated process running PyTorch TorchScript JIT Traced execution with CUDA AMP (TF32/FP16) on RTX GPUs.
 - **Dynamic Micro-Batching**: Receives `(M, 11, 9, 9)` evaluation requests from all connected actors over TCP socket IPC, aggregates requests into larger batches (up to batch size 256–512), and runs single unified GPU forward passes.
-- **Auto Model Reloading**: Automatically polls for updated model checkpoints (`quoridor_model_epoch_XXX.onnx`) per epoch and hot-reloads model weights seamlessly.
+- **Auto Model Reloading**: Automatically polls for updated model checkpoints (`quoridor_checkpoint.pth`) per epoch and hot-reloads model weights seamlessly into the JIT execution context.
 
 ### C. Self-Play Actor Workers ([run_actor.py](../run_actor.py))
 - **Parallel Workers**: Multiple independent actor processes (`run_actor.py`) run in parallel.

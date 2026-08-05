@@ -17,6 +17,14 @@ try:
 except Exception:
     pass
 
+import sys
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.winmm.timeBeginPeriod(1)
+    except Exception:
+        pass
+
 import json
 import math
 import random
@@ -176,10 +184,10 @@ class QuoridorDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         item = self.raw_data[idx]
-        state = item[0] if isinstance(item[0], torch.Tensor) else torch.tensor(item[0], dtype=torch.float32)
-        policy = torch.tensor(item[1], dtype=torch.float32)
+        state = item[0] if isinstance(item[0], torch.Tensor) else torch.from_numpy(np.ascontiguousarray(item[0])).float()
+        policy = item[1] if isinstance(item[1], torch.Tensor) else torch.from_numpy(np.ascontiguousarray(item[1])).float()
         value = torch.tensor([item[2]], dtype=torch.float32)
-        mask = torch.tensor(item[3], dtype=torch.bool)
+        mask = item[3] if isinstance(item[3], torch.Tensor) else torch.from_numpy(np.ascontiguousarray(item[3]))
         return state, policy, value, mask
 
 def load_dataset_from_disk(data_dir="data", max_positions=50000, exclude_epoch_or_later=None):
@@ -193,6 +201,8 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
     print(f"Training device: {DEVICE}")
     if DEVICE.type == 'cuda':
         torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
     
     model_gpu = QuoridorNet(num_residual_blocks=10, channels=128).to(DEVICE)
     optimizer = optim.Adam(model_gpu.parameters(), lr=lr, weight_decay=1e-4)
@@ -280,12 +290,14 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
         num_samples = len(replay_dataset)
         use_pin_memory = (DEVICE.type == 'cuda')
         
+        num_loader_workers = 4 if use_pin_memory else 0
         dataloader = torch.utils.data.DataLoader(
             replay_dataset,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=0,
+            num_workers=num_loader_workers,
             pin_memory=use_pin_memory,
+            persistent_workers=(num_loader_workers > 0),
             drop_last=False
         )
         
@@ -411,7 +423,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AlphaZero-style training loop for Quoridor.")
     parser.add_argument("--epochs", type=int, default=200, help="Total epochs to train (continues from checkpoint)")
     parser.add_argument("--games_per_epoch", type=int, default=50, help="Number of self-play games per epoch")
-    parser.add_argument("--batch_size", type=int, default=256, help="Mini-batch size for model training")
+    parser.add_argument("--batch_size", type=int, default=512, help="Mini-batch size for model training (default: 512)")
     parser.add_argument("--lr", type=float, default=0.0003, help="Initial learning rate")
     parser.add_argument("--simulations", type=int, default=800, help="Number of MCTS simulations per turn")
     parser.add_argument("--dataset_size", type=int, default=50000, help="Max replay buffer size (recent positions kept)")
@@ -419,7 +431,8 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_path", type=str, default="quoridor_checkpoint.pth", help="Path to checkpoint file")
     parser.add_argument("--visualize", "-v", action="store_true", help="Visualize self-play games in terminal")
     parser.add_argument("--reset_lr", action="store_true", help="Reset LR and scheduler instead of loading from checkpoint")
-    parser.add_argument("--num_actors", type=int, default=8, help="Number of parallel self-play actor processes (default: 8)")
+    parser.add_argument("--num_actors", type=int, default=16, help="Number of parallel self-play actor processes (default: 16)")
+    parser.add_argument("--npu_actors", type=int, default=0, help="Number of self-play actors offloaded to Intel NPU via OpenVINO (default: 0)")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda", "xpu", "directml"], help="Execution device (default: auto)")
     args = parser.parse_args()
 
@@ -436,18 +449,43 @@ if __name__ == "__main__":
                 pass
         export_to_onnx(starting_model, "quoridor_model.onnx")
 
-    # 2. Spawn the Centralized GPU Inference Server and self-play game generator Actors
+    # 2. Spawn Centralized GPU Server & hybrid GPU/NPU self-play Actors
     num_actors = max(1, args.num_actors)
+    npu_count = min(args.npu_actors, num_actors)
+    gpu_count = num_actors - npu_count
+
     ts = time.strftime("%H:%M:%S")
     print(f"[{ts}] [Learner] Spawning Centralized GPU Inference Server...", flush=True)
     server_process = subprocess.Popen([sys.executable, 'gpu_inference_server.py'])
-    time.sleep(2)  # Allow GPU server to initialize CUDA context and load ONNX model
+    time.sleep(2)  # Allow GPU server to initialize CUDA context
 
-    print(f"[{ts}] [Learner] Spawning {num_actors} parallel self-play Actor processes...", flush=True)
-    actor_processes = [
-        subprocess.Popen([sys.executable, 'run_actor.py', '--actor_id', str(i + 1), '--simulations', str(args.simulations), '--fast_simulations', '200', '--batch_size', '32'])
-        for i in range(num_actors)
-    ]
+    print(f"[{ts}] [Learner] Spawning {num_actors} hybrid Actors ({gpu_count} on RTX GPU, {npu_count} on Intel NPU)...", flush=True)
+    actor_processes = []
+    
+    # Spawn GPU actors
+    for i in range(gpu_count):
+        p = subprocess.Popen([
+            sys.executable, 'run_actor.py',
+            '--actor_id', str(i + 1),
+            '--simulations', str(args.simulations),
+            '--fast_simulations', '200',
+            '--batch_size', '32',
+            '--evaluator', 'central'
+        ])
+        actor_processes.append(p)
+        
+    # Spawn Intel NPU actors
+    for i in range(npu_count):
+        actor_num = gpu_count + i + 1
+        p = subprocess.Popen([
+            sys.executable, 'run_actor.py',
+            '--actor_id', str(actor_num),
+            '--simulations', str(args.simulations),
+            '--fast_simulations', '200',
+            '--batch_size', '32',
+            '--evaluator', 'npu'
+        ])
+        actor_processes.append(p)
 
     # 3. Execute the learner loop
     try:
