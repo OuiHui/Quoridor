@@ -41,7 +41,7 @@ public:
     double dirichlet_alpha;
     double dirichlet_eps;
 
-    MCTS(double c_puct = 1.4, double dirichlet_alpha = 0.3, double dirichlet_eps = 0.15);
+    MCTS(double c_puct = 1.4, double dirichlet_alpha = 0.07, double dirichlet_eps = 0.15);
 
     // Parallel lock-step MCTS search for a batch of games.
     // games: list of QuoridorGame objects

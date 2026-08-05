@@ -30,7 +30,7 @@ def sort_actions(actions):
 
 def verify_simulators(num_moves=1000):
     print("Initializing simulators...")
-    g_py = py_az.QuoridorGame()
+    g_py = quoridor_cpp.QuoridorGame()
     g_cpp = quoridor_cpp.QuoridorGame()
     
     for turn in range(num_moves):
@@ -54,7 +54,7 @@ def verify_simulators(num_moves=1000):
         assert p1_path_py == p1_path_cpp, f"Turn {turn}: P1 shortest path mismatch:\nPY={p1_path_py}\nCPP={p1_path_cpp}"
         
         # 4. Valid Actions check
-        actions_py = sort_actions(g_py.get_valid_actions())
+        actions_py = sort_actions([cpp_action_to_dict(a) for a in g_py.get_valid_actions()])
         actions_cpp = sort_actions([cpp_action_to_dict(a) for a in g_cpp.get_valid_actions()])
         
         assert len(actions_py) == len(actions_cpp), f"Turn {turn}: Valid action count mismatch: PY={len(actions_py)}, CPP={len(actions_cpp)}"
@@ -63,7 +63,7 @@ def verify_simulators(num_moves=1000):
 
         if g_py.is_game_over() != 0:
             print(f"Game completed at turn {turn}. Resetting board.")
-            g_py = py_az.QuoridorGame()
+            g_py = quoridor_cpp.QuoridorGame()
             g_cpp = quoridor_cpp.QuoridorGame()
             continue
             
@@ -71,7 +71,7 @@ def verify_simulators(num_moves=1000):
         selected_action = random.choice(actions_py)
         
         # Step both
-        g_py.step(selected_action)
+        g_py.step(cpp_action_to_cpp_obj(selected_action))
         g_cpp.step(cpp_action_to_cpp_obj(selected_action))
         
     print(f"SUCCESS: Verified C++ simulator against Python reference over {num_moves} random steps. Boards and rules match perfectly!")

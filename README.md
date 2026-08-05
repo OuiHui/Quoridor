@@ -4,7 +4,7 @@ An implementation of an AlphaZero-style reinforcement learning agent for the boa
 
 > [!TIP]
 > For a detailed technical overview of system modules, data flows, and performance optimizations, see the [Architecture Documentation](docs/architecture.md).
-> For the latest training audit, red flag remediations, and metric fixes, see the [Training Pipeline Remediation](docs/training_pipeline_remediation.md).
+> For the latest training audit, red flag remediations, and metric fixes, see the [Epoch 365 Analysis and Remediation Report](docs/training_epoch365_analysis_and_remediation.md) and [Training Pipeline Remediation](docs/training_pipeline_remediation.md).
 
 ---
 

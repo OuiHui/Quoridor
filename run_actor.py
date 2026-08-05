@@ -33,7 +33,7 @@ from quoridor_model import flip_horizontal_state, flip_horizontal_policy, map_in
 
 # Constants matching train_alphazero.py
 TEMP_THRESHOLD = 20
-NUM_SIMULATIONS = 400  # Default simulations per move
+NUM_SIMULATIONS = 800  # Default simulations per move
 GAMES_PER_EPOCH = 50   # Expected games per epoch
 DATA_DIR = os.environ.get("QUORIDOR_DATA_DIR", r"C:\quoridor_data")
 ONNX_PATH = "quoridor_model.onnx"
@@ -97,8 +97,8 @@ def get_current_epoch():
             return max(epochs)
     return 0
 
-def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=100, actor_id=1):
-    mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.3, dirichlet_eps=0.15)
+def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=800, actor_id=1):
+    mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.07, dirichlet_eps=0.15)
     
     # Initialize batch vectors
     games = [quoridor_cpp.QuoridorGame() for _ in range(batch_size)]
@@ -155,7 +155,9 @@ def run_self_play_batch(evaluator, epoch, batch_size=16, num_simulations=100, ac
                         target_value = 0.0
                     else:
                         is_win = (final_winner == 1 and is_p1) or (final_winner == -1 and not is_p1)
-                        target_value = 1.0 if is_win else -1.0
+                        base_val = 1.0 if is_win else -1.0
+                        moves_from_end = total_moves - 1 - idx
+                        target_value = base_val * (0.995 ** moves_from_end)
                     
                     state_tensor = torch.tensor(state_flat, dtype=torch.float32).reshape(11, 9, 9)
                     training_examples.append((state_tensor, policy_probs, target_value, valid_mask))
