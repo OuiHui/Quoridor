@@ -34,8 +34,8 @@ from quoridor_model import flip_horizontal_state, flip_horizontal_policy, map_in
 
 # Constants matching train_alphazero.py
 TEMP_THRESHOLD = 20
-NUM_SIMULATIONS = 800  # Default deep simulations per move
-FAST_SIMULATIONS = 200 # Default fast simulations per move (PCR)
+NUM_SIMULATIONS = 800  # 800 simulations for all searches
+FAST_SIMULATIONS = 800 # 800 simulations (PCR disabled/set to 800)
 GAMES_PER_EPOCH = 50   # Expected games per epoch
 DATA_DIR = os.environ.get("QUORIDOR_DATA_DIR", r"C:\quoridor_data")
 ONNX_PATH = "quoridor_model.onnx"
@@ -52,6 +52,92 @@ def cpp_action_to_python(cpp_action):
         return {'type': 'move', 'dir': cpp_action.move_dir, 'to': (cpp_action.to_x, cpp_action.to_y)}
     else:
         return {'type': 'wall', 'wallType': cpp_action.wall_type, 'x': cpp_action.wall_x, 'y': cpp_action.wall_y}
+
+# --- Minimax Sparring Bot Helpers ---
+
+def evaluate_board(game, is_p1_turn):
+    p1_path = game.get_shortest_path(game.p1_pos, 8, opp_pos=game.p2_pos)
+    p2_path = game.get_shortest_path(game.p2_pos, 0, opp_pos=game.p1_pos)
+
+    if not p1_path: return -float('inf')
+    if not p2_path: return float('inf')
+
+    p1_dist = len(p1_path) - 1
+    p2_dist = len(p2_path) - 1
+
+    if p1_dist == 0: return float('inf')
+    if p2_dist == 0: return -float('inf')
+
+    p1_walls = game.p1_walls_left
+    p2_walls = game.p2_walls_left
+
+    if p1_walls == 0 and (p1_dist - p2_dist) >= 2: return -500.0
+    if p2_walls == 0 and (p2_dist - p1_dist) >= 2: return  500.0
+
+    score = (p2_dist - p1_dist) * 15.0
+    if p1_dist <= 3: score += (4 - p1_dist) * 8.0
+    if p2_dist <= 3: score -= (4 - p2_dist) * 8.0
+    score += (p1_walls - p2_walls) * 3.0
+    score += game.p1_pos[1] * 1.0
+    score -= (8 - game.p2_pos[1]) * 1.0
+    score += 7.5 if is_p1_turn else -7.5
+    return score
+
+def get_ordered_actions(game, player_num):
+    is_p1 = (player_num == 1)
+    my_pos  = game.p1_pos if is_p1 else game.p2_pos
+    opp_pos = game.p2_pos if is_p1 else game.p1_pos
+    my_goal_y  = 8 if is_p1 else 0
+    opp_goal_y = 0 if is_p1 else 8
+
+    my_path  = game.get_shortest_path(my_pos,  my_goal_y,  opp_pos=opp_pos)
+    opp_path = game.get_shortest_path(opp_pos, opp_goal_y, opp_pos=my_pos)
+    my_path_set  = set(my_path)  if my_path  else set()
+    opp_path_set = set(opp_path) if opp_path else set()
+
+    def score_action(act):
+        if act.type == 'move':
+            dest = (act.to_x, act.to_y)
+            y_gain = (dest[1] - my_pos[1]) if is_p1 else (my_pos[1] - dest[1])
+            return 100 + (6 if dest in my_path_set else 0) + y_gain * 3
+        wx, wy = act.wall_x, act.wall_y
+        dist = abs(wx - opp_pos[0]) + abs(wy - opp_pos[1])
+        near_path = any(abs(wx - px) <= 1 and abs(wy - py) <= 1 for px, py in opp_path_set)
+        return 10 + max(0, 10 - dist) + (20 if near_path else 0)
+
+    actions = game.get_valid_actions()
+    actions.sort(key=score_action, reverse=True)
+    return actions
+
+def minimax_search(game, depth, alpha, beta, maximizing_player):
+    p1_path = game.get_shortest_path(game.p1_pos, 8, opp_pos=game.p2_pos)
+    p2_path = game.get_shortest_path(game.p2_pos, 0, opp_pos=game.p1_pos)
+
+    if not p1_path or len(p1_path) == 1: return float('inf'),  None
+    if not p2_path or len(p2_path) == 1: return -float('inf'), None
+
+    if depth == 0:
+        return evaluate_board(game, game.is_p1_turn), None
+
+    best_move = None
+    if maximizing_player:
+        max_score = -float('inf')
+        for act in get_ordered_actions(game, 1):
+            score, _ = minimax_search(game.clone_and_step(act), depth - 1, alpha, beta, False)
+            if score > max_score:
+                max_score, best_move = score, act
+            alpha = max(alpha, score)
+            if beta <= alpha: break
+        return max_score, best_move
+    else:
+        min_score = float('inf')
+        for act in get_ordered_actions(game, 2):
+            score, _ = minimax_search(game.clone_and_step(act), depth - 1, alpha, beta, True)
+            if score < min_score:
+                min_score, best_move = score, act
+            beta = min(beta, score)
+            if beta <= alpha: break
+        return min_score, best_move
 
 def count_games_in_dir(epoch_dir):
     """Accurately count completed games in directory regardless of batching format."""
@@ -99,7 +185,7 @@ def get_current_epoch():
             return max(epochs)
     return 0
 
-def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fast_simulations=200, use_pcr=True, actor_id=1):
+def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fast_simulations=800, use_pcr=False, actor_id=1):
     mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.07, dirichlet_eps=0.15)
     
     # Initialize batch vectors
@@ -108,6 +194,15 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fa
     move_counts = [0] * batch_size
     state_histories = [{} for _ in range(batch_size)]
     active_indices = list(range(batch_size))
+
+    # Opponent Diversity (Minimax Sparring): 25% of games in batch (every 4th game)
+    # 0 = AlphaZero vs AlphaZero self-play
+    # 1 = AlphaZero (P1) vs Minimax (P2)
+    # 2 = Minimax (P1) vs AlphaZero (P2)
+    sparring_modes = [0] * batch_size
+    for i in range(batch_size):
+        if i % 4 == 0:
+            sparring_modes[i] = 1 if (i // 4) % 2 == 0 else 2
     
     batch_start_time = time.time()
     games_completed_in_batch = 0
@@ -120,12 +215,8 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fa
     while len(active_indices) > 0:
         active_games = [games[i] for i in active_indices]
         
-        # Playout Cap Randomization (PCR) at the batch level
-        if use_pcr:
-            is_deep_search = random.random() < 0.25
-            current_sims = num_simulations if is_deep_search else fast_simulations
-        else:
-            current_sims = num_simulations
+        # 800 simulations for all MCTS evaluations
+        current_sims = 800
 
         visit_counts_list, _ = mcts.run_search_batched(
             active_games,
@@ -136,6 +227,7 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fa
         next_active_indices = []
         for local_idx, global_idx in enumerate(active_indices):
             game = games[global_idx]
+            spar_mode = sparring_modes[global_idx]
             
             state_key = (
                 game.p1_pos, game.p2_pos,
@@ -195,37 +287,40 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fa
             state_flat = quoridor_cpp.MCTS.encode_state_cpp(game)
             trajectories[global_idx].append((state_flat, policy_probs, game.is_p1_turn, valid_mask))
             
-            # Dynamic Temperature Decay
-            current_move = move_counts[global_idx]
-            if current_move < 15:
-                tau = 1.0
-            elif current_move < 30:
-                tau = 0.5
-            elif current_move < 45:
-                tau = 0.25
+            # Check if this turn is played by Minimax sparring bot
+            is_minimax_turn = (spar_mode == 1 and not game.is_p1_turn) or (spar_mode == 2 and game.is_p1_turn)
+            
+            if is_minimax_turn:
+                # Use minimax search (depth 2)
+                _, mm_act = minimax_search(game, 2, -float('inf'), float('inf'), game.is_p1_turn)
+                if mm_act is not None:
+                    cpp_action = mm_act
+                else:
+                    cpp_action = valid_actions[0]
             else:
-                tau = 0.0
-                
-            if tau > 0.0:
-                # Apply temperature scaling to visit counts
-                if tau != 1.0:
+                # AlphaZero turn: Temperature Schedule with gradual decay up to turn 45
+                current_move = move_counts[global_idx]
+                if current_move < 20:
+                    tau = 1.0
+                elif current_move < 45:
+                    tau = max(0.1, 1.0 - (current_move - 20) / 25.0)
+                else:
+                    tau = 0.0
+                    
+                if tau > 0.0:
                     probs = np.power(policy_probs, 1.0 / tau)
                     prob_sum = probs.sum()
                     if prob_sum > 1e-8:
-                        policy_probs = probs / prob_sum
-                
-                prob_sum = policy_probs.sum()
-                if prob_sum > 1e-8:
-                    norm_probs = policy_probs / prob_sum
-                    action_idx = np.random.choice(140, p=norm_probs)
+                        norm_probs = probs / prob_sum
+                        action_idx = np.random.choice(140, p=norm_probs)
+                    else:
+                        action_idx = np.argmax(policy_probs)
                 else:
+                    # Exploitation: select top visit count action
                     action_idx = np.argmax(policy_probs)
-            else:
-                # Exploitation phase: choose action with highest visit count
-                action_idx = np.argmax(policy_probs)
-                
-            py_action = map_index_to_action_perspective(action_idx, game.is_p1_turn, game.p1_pos, game.p2_pos)
-            cpp_action = python_action_to_cpp(py_action)
+                    
+                py_action = map_index_to_action_perspective(action_idx, game.is_p1_turn, game.p1_pos, game.p2_pos)
+                cpp_action = python_action_to_cpp(py_action)
             
             game.step(cpp_action)
             move_counts[global_idx] += 1

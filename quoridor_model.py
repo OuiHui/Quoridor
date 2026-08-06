@@ -47,7 +47,7 @@ class QuoridorNet(nn.Module):
     Policy Head: outputs 140 action logits.
     Auxiliary Head: outputs 2 scalars in [0, 1] for active and opp path lengths.
     """
-    def __init__(self, num_residual_blocks=10, channels=128):
+    def __init__(self, num_residual_blocks=15, channels=128):
         super(QuoridorNet, self).__init__()
         self.conv_init = nn.Conv2d(6, channels, kernel_size=3, padding=1, bias=False)
         self.bn_init = nn.BatchNorm2d(channels)

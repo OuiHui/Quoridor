@@ -204,7 +204,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
     
-    model_gpu = QuoridorNet(num_residual_blocks=10, channels=128).to(DEVICE)
+    model_gpu = QuoridorNet(num_residual_blocks=15, channels=128).to(DEVICE)
     optimizer = optim.Adam(model_gpu.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.8)
     loss_val_fn = nn.MSELoss()
@@ -439,7 +439,7 @@ if __name__ == "__main__":
     # 1. Export starting model weights if quoridor_model.onnx is missing
     if not os.path.exists("quoridor_model.onnx"):
         print("Initializing model weights for self-play...")
-        starting_model = QuoridorNet(num_residual_blocks=10, channels=128)
+        starting_model = QuoridorNet(num_residual_blocks=15, channels=128)
         if os.path.exists(args.checkpoint_path):
             try:
                 ckpt = torch.load(args.checkpoint_path, map_location='cpu', weights_only=False)
@@ -468,7 +468,7 @@ if __name__ == "__main__":
             sys.executable, 'run_actor.py',
             '--actor_id', str(i + 1),
             '--simulations', str(args.simulations),
-            '--fast_simulations', '200',
+            '--fast_simulations', str(args.simulations),
             '--batch_size', '32',
             '--evaluator', 'central'
         ])
@@ -481,7 +481,7 @@ if __name__ == "__main__":
             sys.executable, 'run_actor.py',
             '--actor_id', str(actor_num),
             '--simulations', str(args.simulations),
-            '--fast_simulations', '200',
+            '--fast_simulations', str(args.simulations),
             '--batch_size', '32',
             '--evaluator', 'npu'
         ])

@@ -149,11 +149,12 @@ export function makeAIMove(executePawnMove, executeWallPlacement) {
                 state.p1Walls,
                 state.p2Walls,
                 state.turn,
-                80, // Number of MCTS simulations
+                40, // Number of MCTS simulations (reduced from 80 for speed)
                 window.quoridorONNXSession || null
             );
         } else {
-            const searchDepth = state.aiSettings.difficulty === 'medium' ? 3 : 4;
+            // Reduced depths for faster JavaScript execution
+            const searchDepth = state.aiSettings.difficulty === 'medium' ? 2 : 3;
             const isMaximizing = isP1;
 
             const result = minimax(
@@ -185,6 +186,6 @@ export function makeAIMove(executePawnMove, executeWallPlacement) {
                 executePawnMove(moves[0].x, moves[0].y);
             }
         }
-    }, 250);
+    }, 50); // Reduced artificial delay from 250ms to 50ms
 }
 

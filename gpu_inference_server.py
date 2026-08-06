@@ -43,7 +43,7 @@ class PyTorchCUDAInferenceEngine:
     """High-throughput PyTorch CUDA Inference Engine using FP16 Tensor Cores."""
     def __init__(self, checkpoint_path=None):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = QuoridorNet(num_residual_blocks=10, channels=128).to(self.device).eval()
+        self.model = QuoridorNet(num_residual_blocks=15, channels=128).to(self.device).eval()
         self.traced_model = None
         self.checkpoint_path = None
         self.mtime = None
