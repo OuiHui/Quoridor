@@ -138,6 +138,13 @@ export function initKeyboardControls({ toggleHintMode, setInteractionMode }) {
         }
 
         const key = e.key.toLowerCase();
+        const arrowMap = {
+            'arrowup': 'w',
+            'arrowdown': 's',
+            'arrowleft': 'a',
+            'arrowright': 'd'
+        };
+        const dirKey = arrowMap[key] || key;
 
         if (key === 'h') {
             toggleHintMode();
@@ -166,11 +173,11 @@ export function initKeyboardControls({ toggleHintMode, setInteractionMode }) {
             return;
         }
 
-        if (['w', 'a', 's', 'd'].includes(key)) {
+        if (['w', 'a', 's', 'd'].includes(dirKey)) {
             if (state.interactionMode === 'move') {
-                navigatePawnMoveSelection(key);
+                navigatePawnMoveSelection(dirKey);
             } else {
-                navigateBarrierSelection(key);
+                navigateBarrierSelection(dirKey);
             }
             e.preventDefault();
         }

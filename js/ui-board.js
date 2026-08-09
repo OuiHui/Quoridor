@@ -58,6 +58,11 @@ export function renderBoard({ onCellClick, onCellMouseEnter, onEdgeMouseMove, on
         for (let x = 0; x < 9; x++) {
             const cell = document.createElement('div');
             cell.className = 'board-cell';
+            if (y === 8) {
+                cell.classList.add('goal-cell', 'goal-p1');
+            } else if (y === 0) {
+                cell.classList.add('goal-cell', 'goal-p2');
+            }
             cell.dataset.x = x;
             cell.dataset.y = y;
             cell.style.gridColumn = `${2 * x + 1}`;

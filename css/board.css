@@ -139,6 +139,18 @@
     padding: 12px 0;
 }
 
+.coord-label-y span:first-child {
+    color: var(--color-p1);
+    font-weight: 700;
+    text-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+}
+
+.coord-label-y span:last-child {
+    color: var(--color-p2);
+    font-weight: 700;
+    text-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+}
+
 /* BOARD INNER GRID */
 .quoridor-board {
     width: var(--board-size);
@@ -158,15 +170,43 @@
 .board-cell {
     background: #172033;
     border-radius: 5px;
-    transition: background 0.15s ease, border-color 0.15s ease;
+    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
     position: relative;
     cursor: pointer;
     border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .board-cell:hover {
-    background: #202b42;
-    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(168, 85, 247, 0.22);
+    border-color: rgba(168, 85, 247, 0.6);
+    box-shadow: inset 0 0 10px rgba(168, 85, 247, 0.25);
+}
+
+/* GOAL ROWS (Top row y=8 for P1, Bottom row y=0 for P2) */
+.board-cell.goal-p1 {
+    background: linear-gradient(180deg, rgba(56, 189, 248, 0.14) 0%, rgba(23, 32, 51, 0.95) 100%);
+    border-top: 2px solid rgba(56, 189, 248, 0.55);
+    box-shadow: inset 0 3px 8px rgba(56, 189, 248, 0.12);
+}
+
+.board-cell.goal-p1:hover {
+    background: linear-gradient(180deg, rgba(168, 85, 247, 0.28) 0%, rgba(56, 189, 248, 0.18) 100%);
+    border-color: rgba(168, 85, 247, 0.6);
+    border-top-color: rgba(56, 189, 248, 0.85);
+    box-shadow: inset 0 3px 12px rgba(168, 85, 247, 0.3);
+}
+
+.board-cell.goal-p2 {
+    background: linear-gradient(0deg, rgba(245, 158, 11, 0.14) 0%, rgba(23, 32, 51, 0.95) 100%);
+    border-bottom: 2px solid rgba(245, 158, 11, 0.55);
+    box-shadow: inset 0 -3px 8px rgba(245, 158, 11, 0.12);
+}
+
+.board-cell.goal-p2:hover {
+    background: linear-gradient(0deg, rgba(168, 85, 247, 0.28) 0%, rgba(245, 158, 11, 0.18) 100%);
+    border-color: rgba(168, 85, 247, 0.6);
+    border-bottom-color: rgba(245, 158, 11, 0.85);
+    box-shadow: inset 0 -3px 12px rgba(168, 85, 247, 0.3);
 }
 
 /* PAWNS */
@@ -218,6 +258,30 @@
     background: rgba(16, 185, 129, 0.28);
     border-color: var(--color-success);
     box-shadow: inset 0 0 10px rgba(16, 185, 129, 0.25);
+}
+
+.board-cell.goal-p1.valid-move {
+    background: linear-gradient(180deg, rgba(56, 189, 248, 0.22) 0%, rgba(16, 185, 129, 0.22) 100%);
+    border-top-color: rgba(56, 189, 248, 0.85);
+    border-color: rgba(16, 185, 129, 0.65);
+}
+
+.board-cell.goal-p1.valid-move:hover {
+    background: linear-gradient(180deg, rgba(56, 189, 248, 0.3) 0%, rgba(16, 185, 129, 0.38) 100%);
+    border-color: var(--color-success);
+    box-shadow: inset 0 0 14px rgba(16, 185, 129, 0.35);
+}
+
+.board-cell.goal-p2.valid-move {
+    background: linear-gradient(0deg, rgba(245, 158, 11, 0.22) 0%, rgba(16, 185, 129, 0.22) 100%);
+    border-bottom-color: rgba(245, 158, 11, 0.85);
+    border-color: rgba(16, 185, 129, 0.65);
+}
+
+.board-cell.goal-p2.valid-move:hover {
+    background: linear-gradient(0deg, rgba(245, 158, 11, 0.3) 0%, rgba(16, 185, 129, 0.38) 100%);
+    border-color: var(--color-success);
+    box-shadow: inset 0 0 14px rgba(16, 185, 129, 0.35);
 }
 
 /* PATH GRAPHICS */
@@ -730,6 +794,24 @@
 }
 .quoridor-board.mode-wall-v .board-edge.horizontal::after {
     pointer-events: none;
+}
+
+.quoridor-board.mode-wall-h .board-cell.goal-p1:hover,
+.quoridor-board.mode-wall-v .board-cell.goal-p1:hover,
+.quoridor-board.mode-wall-h .board-cell.goal-p1.valid-move,
+.quoridor-board.mode-wall-v .board-cell.goal-p1.valid-move {
+    background: linear-gradient(180deg, rgba(56, 189, 248, 0.14) 0%, rgba(23, 32, 51, 0.95) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-top: 2px solid rgba(56, 189, 248, 0.55);
+}
+
+.quoridor-board.mode-wall-h .board-cell.goal-p2:hover,
+.quoridor-board.mode-wall-v .board-cell.goal-p2:hover,
+.quoridor-board.mode-wall-h .board-cell.goal-p2.valid-move,
+.quoridor-board.mode-wall-v .board-cell.goal-p2.valid-move {
+    background: linear-gradient(0deg, rgba(245, 158, 11, 0.14) 0%, rgba(23, 32, 51, 0.95) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-bottom: 2px solid rgba(245, 158, 11, 0.55);
 }
 
 .board-cell.keyboard-highlight {
