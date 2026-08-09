@@ -3,6 +3,7 @@ import { formatMoveNotation } from './notation.js';
 import { evaluateBoard, minimax } from './ai.js';
 import { renderMatchHistoryUI, getBoardStateKey } from './ui-diagnostics.js';
 import { updateEvalBarUI } from './ui-eval-bar.js';
+import { analyzeMoveInWorker } from './worker-manager.js';
 
 export function captureStateSnapshot() {
     return {
@@ -272,9 +273,25 @@ export function analyzeMoveQuality(chosenMove, player, historyItem = null, state
         }
 
         const targetHistoryItem = historyItem;
-        setTimeout(() => {
+        const currentSnapshot = stateBefore || captureStateSnapshot();
+        
+        analyzeMoveInWorker(chosenMove, player, currentSnapshot, depth).then((res) => {
+            if (targetHistoryItem && !state.history.includes(targetHistoryItem)) return;
+            if (res) {
+                updateMoveQualityUI(
+                    res.chosenScore,
+                    res.bestScore,
+                    player,
+                    badgeEl,
+                    badgeTextEl,
+                    historyItem,
+                    res.bestCandidate
+                );
+            }
+        }).catch((err) => {
+            console.error('Error during worker move quality analysis:', err);
             if (targetHistoryItem && !state.history.includes(targetHistoryItem)) return;
             performAnalysis();
-        }, 50);
+        });
     }
 }

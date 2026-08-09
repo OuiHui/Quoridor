@@ -2,6 +2,7 @@ import { state } from './state.js';
 import { findShortestPath, getValidPawnMoves } from './engine.js';
 import { evaluateBoard, generateSmartMoves } from './ai-eval.js';
 import { runMCTS } from './ai-mcts.js';
+import { calculateAIMoveInWorker } from './worker-manager.js';
 
 // Alpha-Beta Minimax Search
 export function minimax(depth, alpha, beta, maximizingPlayer, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls) {
@@ -119,73 +120,38 @@ export function makeAIMove(executePawnMove, executeWallPlacement) {
         hudTurnEl.textContent = `Thinking... (AI)`;
     }
 
-    setTimeout(async () => {
-        let bestMove = null;
+    const currentTurn = state.turn;
 
-        if (state.aiSettings.difficulty === 'easy') {
-            const oppPos = isP1 ? state.p2Pos : state.p1Pos;
-            const myPos = isP1 ? state.p1Pos : state.p2Pos;
-            const moves = getValidPawnMoves(myPos.x, myPos.y, oppPos.x, oppPos.y, state.hWalls, state.vWalls);
-            const goalY = isP1 ? 8 : 0;
+    calculateAIMoveInWorker(state, state.aiSettings)
+        .then((res) => {
+            // Check if game turn changed while thinking
+            if (state.turn !== currentTurn) return;
 
-            let bestDist = Infinity;
-            for (const m of moves) {
-                const path = findShortestPath(m.x, m.y, goalY, state.hWalls, state.vWalls);
-                if (path && path.length < bestDist) {
-                    bestDist = path.length;
-                    bestMove = { type: 'move', to: m };
+            const bestMove = res ? res.bestMove : null;
+            if (bestMove) {
+                if (bestMove.type === 'move') {
+                    executePawnMove(bestMove.to.x, bestMove.to.y);
+                } else {
+                    executeWallPlacement(bestMove.x, bestMove.y, bestMove.wallType);
+                }
+            } else {
+                const oppPos = isP1 ? state.p2Pos : state.p1Pos;
+                const myPos = isP1 ? state.p1Pos : state.p2Pos;
+                const moves = getValidPawnMoves(myPos.x, myPos.y, oppPos.x, oppPos.y, state.hWalls, state.vWalls);
+                if (moves.length > 0) {
+                    executePawnMove(moves[0].x, moves[0].y);
                 }
             }
-            if (!bestMove && moves.length > 0) {
-                bestMove = { type: 'move', to: moves[Math.floor(Math.random() * moves.length)] };
-            }
-        } else if (state.aiSettings.difficulty === 'alphazero') {
-            // AlphaZero MCTS search (fallback to heuristic-based PUCT if ONNX not loaded)
-            bestMove = await runMCTS(
-                state.p1Pos,
-                state.p2Pos,
-                state.hWalls,
-                state.vWalls,
-                state.p1Walls,
-                state.p2Walls,
-                state.turn,
-                40, // Number of MCTS simulations (reduced from 80 for speed)
-                window.quoridorONNXSession || null
-            );
-        } else {
-            // Reduced depths for faster JavaScript execution
-            const searchDepth = state.aiSettings.difficulty === 'medium' ? 2 : 3;
-            const isMaximizing = isP1;
-
-            const result = minimax(
-                searchDepth,
-                -Infinity,
-                Infinity,
-                isMaximizing,
-                state.p1Pos,
-                state.p2Pos,
-                state.hWalls,
-                state.vWalls,
-                state.p1Walls,
-                state.p2Walls
-            );
-            bestMove = result.move;
-        }
-
-        if (bestMove) {
-            if (bestMove.type === 'move') {
-                executePawnMove(bestMove.to.x, bestMove.to.y);
-            } else {
-                executeWallPlacement(bestMove.x, bestMove.y, bestMove.wallType);
-            }
-        } else {
+        })
+        .catch((err) => {
+            console.error('Error during AI move calculation in worker:', err);
+            // Fallback to basic valid move
             const oppPos = isP1 ? state.p2Pos : state.p1Pos;
             const myPos = isP1 ? state.p1Pos : state.p2Pos;
             const moves = getValidPawnMoves(myPos.x, myPos.y, oppPos.x, oppPos.y, state.hWalls, state.vWalls);
             if (moves.length > 0) {
                 executePawnMove(moves[0].x, moves[0].y);
             }
-        }
-    }, 50); // Reduced artificial delay from 250ms to 50ms
+        });
 }
 

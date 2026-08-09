@@ -2,6 +2,7 @@ import { state } from './state.js';
 import { playSound } from './sfx.js';
 import { getPawnNotation, getWallNotation, formatMoveNotation } from './notation.js';
 import { makeAIMove, resetMCTSTree } from './ai.js';
+import { resetWorkerMCTS } from './worker-manager.js';
 import { verifyPlaybookPracticeMove, exitPlaybookMode, updatePlaybookUI } from './playbook.js';
 import { updatePawnPositions, renderPlacedWalls } from './ui-board.js';
 import { updateUI, logAction, analyzePlacedWallEfficiency, hideWallAnalyzer, clearLogs, renderMatchHistoryUI } from './ui-diagnostics.js';
@@ -198,6 +199,7 @@ export function undoMove() {
 // Reset board representation state variables
 export function resetBoardState() {
     resetMCTSTree();
+    resetWorkerMCTS();
     state.p1Pos = { x: 4, y: 0 };
     state.p2Pos = { x: 4, y: 8 };
     state.p1Walls = 10;

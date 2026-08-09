@@ -17,7 +17,8 @@ graph TD
     D -->|Saves Consolidated .pt Files| E["data/epoch_XXX/"]
     E -->|Incremental Cache Update| F["ReplayDatasetCache"]
     F -->|Vectorized FP16 Batches| A
-    B -->|Browser Deployment| G["Vite Frontend Application"]
+    B -->|Browser Web Worker| G["Web Worker (js/worker.js)"]
+    G -->|Async Promise IPC| H["Vite Main UI Thread (js/game.js)"]
 ```
 
 ---
@@ -52,6 +53,11 @@ graph TD
   - **Automatic Mixed Precision (AMP / FP16)**: Uses `torch.amp.autocast('cuda')` and `GradScaler` for 2x-3x faster backpropagation on Tensor Cores.
   - **Multi-Task Loss**: Minimizes joint loss $\mathcal{L} = \mathcal{L}_{\text{policy}} + \mathcal{L}_{\text{value}} + 0.1 \cdot \mathcal{L}_{\text{aux}}$.
   - **cuDNN Autotuning**: Enables `torch.backends.cudnn.benchmark = True`.
+
+### D. Web Frontend & Background Worker ([js/worker.js](../js/worker.js) & [js/worker-manager.js](../js/worker-manager.js))
+- **Web Worker Offloading**: All heavy computations (AlphaZero MCTS lookahead, Minimax move generation, and depth-4 move quality analysis) are executed off the main UI thread in a background ES module Web Worker (`js/worker.js`).
+- **Async Promise IPC**: Managed by `js/worker-manager.js`, returning non-blocking promises for AI move generation and move quality badges, keeping the main thread (DOM rendering, animations, hover effects) perfectly smooth at 60+ FPS.
+- **WASM Multi-Threading**: Configures ONNX Runtime Web with WebAssembly multi-threading (`ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4`) inside the worker thread context, utilizing all CPU cores for parallel neural network inference.
 
 ---
 
