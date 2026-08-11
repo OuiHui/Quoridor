@@ -327,7 +327,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
                 loss_p = -torch.sum(target_policies * log_probs) / logits.size(0)
                 loss_v = loss_val_fn(values, target_values)
                 loss_aux = loss_val_fn(aux_preds, target_aux)
-                loss = loss_p + loss_v + 0.1 * loss_aux
+                loss = loss_p + loss_v + 0.5 * loss_aux
             
             if use_amp:
                 scaler.scale(loss).backward()

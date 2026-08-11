@@ -186,7 +186,7 @@ def get_current_epoch():
     return 0
 
 def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fast_simulations=800, use_pcr=False, actor_id=1):
-    mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.07, dirichlet_eps=0.15)
+    mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.20, dirichlet_eps=0.25)
     
     # Initialize batch vectors
     games = [quoridor_cpp.QuoridorGame() for _ in range(batch_size)]
@@ -195,14 +195,8 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fa
     state_histories = [{} for _ in range(batch_size)]
     active_indices = list(range(batch_size))
 
-    # Opponent Diversity (Minimax Sparring): 25% of games in batch (every 4th game)
-    # 0 = AlphaZero vs AlphaZero self-play
-    # 1 = AlphaZero (P1) vs Minimax (P2)
-    # 2 = Minimax (P1) vs AlphaZero (P2)
+    # Pure AlphaZero vs AlphaZero self-play for all games in batch
     sparring_modes = [0] * batch_size
-    for i in range(batch_size):
-        if i % 4 == 0:
-            sparring_modes[i] = 1 if (i // 4) % 2 == 0 else 2
     
     batch_start_time = time.time()
     games_completed_in_batch = 0
@@ -304,40 +298,29 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fa
             state_flat = quoridor_cpp.MCTS.encode_state_cpp(game)
             trajectories[global_idx].append((state_flat, policy_probs, game.is_p1_turn, valid_mask))
             
-            # Check if this turn is played by Minimax sparring bot
-            is_minimax_turn = (spar_mode == 1 and not game.is_p1_turn) or (spar_mode == 2 and game.is_p1_turn)
-            
-            if is_minimax_turn:
-                # Use minimax search (depth 2)
-                _, mm_act = minimax_search(game, 2, -float('inf'), float('inf'), game.is_p1_turn)
-                if mm_act is not None:
-                    cpp_action = mm_act
-                else:
-                    cpp_action = valid_actions[0]
+            # AlphaZero turn: Extended temperature schedule for midgame wall exploration
+            current_move = move_counts[global_idx]
+            if current_move < 30:
+                tau = 1.0
+            elif current_move < 60:
+                tau = max(0.1, 1.0 - (current_move - 30) / 30.0)
             else:
-                # AlphaZero turn: Temperature Schedule with gradual decay up to turn 45
-                current_move = move_counts[global_idx]
-                if current_move < 20:
-                    tau = 1.0
-                elif current_move < 45:
-                    tau = max(0.1, 1.0 - (current_move - 20) / 25.0)
+                tau = 0.1
+                
+            if tau > 0.0:
+                probs = np.power(policy_probs, 1.0 / tau)
+                prob_sum = probs.sum()
+                if prob_sum > 1e-8:
+                    norm_probs = probs / prob_sum
+                    action_idx = np.random.choice(140, p=norm_probs)
                 else:
-                    tau = 0.0
-                    
-                if tau > 0.0:
-                    probs = np.power(policy_probs, 1.0 / tau)
-                    prob_sum = probs.sum()
-                    if prob_sum > 1e-8:
-                        norm_probs = probs / prob_sum
-                        action_idx = np.random.choice(140, p=norm_probs)
-                    else:
-                        action_idx = np.argmax(policy_probs)
-                else:
-                    # Exploitation: select top visit count action
                     action_idx = np.argmax(policy_probs)
-                    
-                py_action = map_index_to_action_perspective(action_idx, game.is_p1_turn, game.p1_pos, game.p2_pos)
-                cpp_action = python_action_to_cpp(py_action)
+            else:
+                # Exploitation: select top visit count action
+                action_idx = np.argmax(policy_probs)
+                
+            py_action = map_index_to_action_perspective(action_idx, game.is_p1_turn, game.p1_pos, game.p2_pos)
+            cpp_action = python_action_to_cpp(py_action)
             
             game.step(cpp_action)
             move_counts[global_idx] += 1

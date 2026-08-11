@@ -185,8 +185,10 @@ def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_le
     # 9. Opponent walls remaining / 10.0
     tensor[9, :, :] = min(opp_walls / 10.0, 1.0)
     
-    # 10. Unused padding channel
-    tensor[10, :, :] = 0.0
+    # 10. Path advantage: (opp_dist - active_dist) / 16.0, clamped to [-1, 1].
+    # Positive means opponent has a longer path (active player is ahead).
+    path_advantage = (opp_dist - active_dist) / 16.0
+    tensor[10, :, :] = max(-1.0, min(1.0, path_advantage))
 
     return tensor
 
@@ -336,7 +338,7 @@ def export_to_onnx(model, filepath="quoridor_model.onnx"):
             dummy_input,
             filepath,
             export_params=True,
-            opset_version=17,
+            opset_version=18,
             do_constant_folding=True,
             input_names=['input'],
             output_names=['policy', 'value'],

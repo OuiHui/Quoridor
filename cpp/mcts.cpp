@@ -185,10 +185,14 @@ std::vector<float> MCTS::encode_state_cpp(const QuoridorGame& game) {
         }
     }
     
-    // 10. Unused padding channel
+    // 10. Path advantage: (opp_dist - active_dist) / 16.0, clamped to [-1, 1].
+    // Positive means opponent has a longer path (active player is ahead).
+    float opp_dist_raw = opp_path.empty() ? 20.0f : static_cast<float>(opp_path.size());
+    float active_dist_raw = active_path.empty() ? 20.0f : static_cast<float>(active_path.size());
+    float path_advantage = std::max(-1.0f, std::min(1.0f, (opp_dist_raw - active_dist_raw) / 16.0f));
     for (int x = 0; x < 9; ++x) {
         for (int y = 0; y < 9; ++y) {
-            set_val(10, x, y, 0.0f);
+            set_val(10, x, y, path_advantage);
         }
     }
     
