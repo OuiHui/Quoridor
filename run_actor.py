@@ -253,7 +253,8 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fa
                 total_moves = len(trajectories[global_idx])
                 for idx, (state_flat, policy_probs, is_p1, valid_mask) in enumerate(trajectories[global_idx]):
                     if final_winner == 0:
-                        target_value = 0.0
+                        # Repetition / max moves draw penalty: small negative target to disincentivize draws
+                        target_value = -0.2
                     else:
                         is_win = (final_winner == 1 and is_p1) or (final_winner == -1 and not is_p1)
                         base_val = 1.0 if is_win else -1.0
@@ -274,15 +275,31 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fa
                 continue
                 
             visits = np.array(visit_counts_list[local_idx], dtype=np.float32)
-            visits_sum = visits.sum()
-            policy_probs = visits / (visits_sum if visits_sum > 0 else 1.0)
-            
             valid_actions = game.get_valid_actions()
             valid_mask = np.zeros(140, dtype=np.bool_)
+            
+            # Repetition Penalty: Downweight visits for moves that step into previously seen board states
+            adjusted_visits = visits.copy()
             for act in valid_actions:
                 py_act = cpp_action_to_python(act)
                 idx = map_action_to_index_perspective(py_act, game.is_p1_turn)
                 valid_mask[idx] = True
+                
+                next_game = game.clone_and_step(act)
+                next_key = (
+                    next_game.p1_pos, next_game.p2_pos,
+                    frozenset(next_game.h_walls), frozenset(next_game.v_walls),
+                    next_game.p1_walls_left, next_game.p2_walls_left,
+                    next_game.is_p1_turn
+                )
+                seen_count = state_histories[global_idx].get(next_key, 0)
+                if seen_count >= 2:
+                    adjusted_visits[idx] = 0.0  # Zero probability for 3-fold repetition moves
+                elif seen_count == 1:
+                    adjusted_visits[idx] *= 0.1 # Heavily penalize moves returning to a state seen once
+
+            visits_sum = adjusted_visits.sum()
+            policy_probs = adjusted_visits / (visits_sum if visits_sum > 0 else 1.0)
             
             state_flat = quoridor_cpp.MCTS.encode_state_cpp(game)
             trajectories[global_idx].append((state_flat, policy_probs, game.is_p1_turn, valid_mask))

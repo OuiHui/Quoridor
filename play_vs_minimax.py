@@ -195,8 +195,28 @@ def run_battle(checkpoint_path, depth=2, simulations=100, num_games=10, visualiz
                     [game], pytorch_evaluate_batch, simulations
                 )
                 visits = np.array(visit_counts_list[0], dtype=np.float32)
-                best_idx = int(np.argmax(visits))
                 valid_actions = game.get_valid_actions()
+                
+                # Repetition Penalty: Penalize candidate moves that lead to previously visited states
+                adjusted_visits = visits.copy()
+                for act in valid_actions:
+                    py_act = _cpp_to_py(act)
+                    idx = map_action_to_index_perspective(py_act, game.is_p1_turn)
+                    
+                    next_game = game.clone_and_step(act)
+                    next_key = (
+                        next_game.p1_pos, next_game.p2_pos,
+                        frozenset(next_game.h_walls), frozenset(next_game.v_walls),
+                        next_game.p1_walls_left, next_game.p2_walls_left,
+                        next_game.is_p1_turn
+                    )
+                    seen_count = state_history.get(next_key, 0)
+                    if seen_count >= 2:
+                        adjusted_visits[idx] = -1.0  # Block moves leading to 3-fold repetition draw
+                    elif seen_count == 1:
+                        adjusted_visits[idx] *= 0.1  # Downweight moves returning to a state seen once
+                
+                best_idx = int(np.argmax(adjusted_visits))
                 selected_action = None
                 for act in valid_actions:
                     py_act = _cpp_to_py(act)
@@ -243,7 +263,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Battle AlphaZero MCTS agent against Heuristic Minimax bot.")
     parser.add_argument("--checkpoint", type=str, default="quoridor_checkpoint.pth")
     parser.add_argument("--depth", type=int, default=2, help="Minimax search depth")
-    parser.add_argument("--simulations", type=int, default=100, help="MCTS simulations per move")
+    parser.add_argument("--simulations", type=int, default=800, help="MCTS simulations per move (default: 800)")
     parser.add_argument("--games", type=int, default=10, help="Number of battle games")
     parser.add_argument("--visualize", "-v", action="store_true", help="Print boards step-by-step")
     args = parser.parse_args()
