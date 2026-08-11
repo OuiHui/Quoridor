@@ -41,7 +41,7 @@ graph TD
 
 ### C. Neural Network & Learner ([train_alphazero.py](../train_alphazero.py) & [quoridor_model.py](../quoridor_model.py))
 - **Network Topology ([QuoridorNet](../quoridor_model.py))**:
-  - Input: `(11, 9, 9)` spatial board tensor (including active/opponent positions, wall maps, BFS path masks, normalized shortest path distances, and wall counts).
+  - Input: `(11, 9, 9)` spatial board tensor (including active/opponent positions, wall maps, BFS path masks, normalized shortest path distances, wall counts, and path advantage scalar).
   - Perspective Rotation: State rotated by 180° on P2 turn to maintain active-player symmetry.
   - Convolutional Trunk: 10 Residual Blocks with Squeeze-and-Excitation (SE) channel attention and 128 channels.
   - Policy Head: Outputs 140 raw action logits (12 move/jumps + 64 horizontal walls + 64 vertical walls).

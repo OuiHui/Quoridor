@@ -291,11 +291,11 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
         }
     }
     
-    // Channel 10: Absolute player identity: 1.0 if active player is P1, 0.0 if P2.
-    const identityVal = isP1Turn ? 1.0 : 0.0;
+    // Channel 10: Path advantage: (oppDist - activeDist) / 16.0, clamped to [-1, 1]
+    const pathAdvantage = Math.max(-1.0, Math.min(1.0, (oppDist - activeDist) / 16.0));
     for (let x = 0; x < 9; x++) {
         for (let y = 0; y < 9; y++) {
-            write(10, x, y, identityVal);
+            write(10, x, y, pathAdvantage);
         }
     }
     

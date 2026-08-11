@@ -36,7 +36,16 @@ def run_tests():
     assert tensor[7, 4, 4] == 1.0, "P2 path cell incorrect in channel 7"
     assert abs(tensor[8, 0, 0] - 8.0/10.0) < 1e-5, "P1 walls left incorrect in channel 8"
     assert abs(tensor[9, 0, 0] - 9.0/10.0) < 1e-5, "P2 walls left incorrect in channel 9"
-    assert tensor[10, 0, 0] == 0.0, "Channel 10 padding incorrect"
+    assert abs(tensor[10, 0, 0] - 0.0) < 1e-5, "Channel 10 path advantage incorrect for equal path lengths"
+
+    # Test unequal path length advantage calculation in Channel 10:
+    # Active path len 5, Opponent path len 9 -> (9 - 5) / 16.0 = 0.25
+    short_p1_path = [(4, 0), (4, 1), (4, 2), (4, 3), (4, 4)]
+    tensor_adv = encode_state(
+        p1_pos, p2_pos, h_walls, v_walls, short_p1_path, p2_path,
+        p1_walls_left, p2_walls_left, True
+    )
+    assert abs(tensor_adv[10, 0, 0] - 0.25) < 1e-5, f"Channel 10 path advantage calculation failed: expected 0.25, got {tensor_adv[10, 0, 0]}"
 
     # Test P2 turn (rotated state encoding)
     tensor_p2 = encode_state(
@@ -60,7 +69,7 @@ def run_tests():
     # Walls count check
     assert abs(tensor_p2[8, 0, 0] - 9.0/10.0) < 1e-5, "Active walls (P2) left incorrect in channel 8"
     assert abs(tensor_p2[9, 0, 0] - 8.0/10.0) < 1e-5, "Opponent walls (P1) left incorrect in channel 9"
-    assert tensor_p2[10, 0, 0] == 0.0, "Turn indicator incorrect in channel 10"
+    assert abs(tensor_p2[10, 0, 0] - 0.0) < 1e-5, "Channel 10 path advantage incorrect for P2 perspective"
     print("PASS: P2 rotated state encoding verified")
     
     print("PASS: Input feature mapping values verified")

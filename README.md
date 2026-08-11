@@ -41,7 +41,7 @@ The game board is represented as an $11 \times 9 \times 9$ tensor. The 11 channe
 * **Channel 7**: Binary mask of the cells on the opponent's shortest path (1.0 on path cells, 0.0 elsewhere).
 * **Channel 8**: Active player's remaining walls (normalized: `walls_left / 10.0`).
 * **Channel 9**: Opponent's remaining walls (normalized: `walls_left / 10.0`).
-* **Channel 10**: Absolute player identity indicator (1.0 if P1, 0.0 if P2).
+* **Channel 10**: Path advantage scalar (`(opp_dist - active_dist) / 16.0`, clamped to $[-1.0, 1.0]$). Positive values indicate the active player has a shorter path (ahead in racing distance).
 
 > [!NOTE]
 > **Perspective Symmetry**: To simplify learning, the input state tensor is rotated by 180 degrees whenever it is Player 2's turn. Consequently, the network always evaluates the board from the perspective of the "active player", whose objective is always to move forward towards the goal row ($y = 8$).
