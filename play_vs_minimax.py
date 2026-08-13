@@ -1,7 +1,9 @@
 import os
 import argparse
+import numpy as np
 import torch
 from quoridor_model import QuoridorNet, map_action_to_index_perspective
+from onnx_inference import ONNXModelEvaluator
 import quoridor_cpp
 
 
@@ -126,18 +128,64 @@ def print_game_board(game):
     print(f"V-Walls: {list(v_walls)}\n")
 
 
-def run_battle(checkpoint_path, depth=2, simulations=100, num_games=10, visualize=False):
-    print("=" * 60)
-    print("             QUORIDOR BOT BATTLE ARENA")
-    print(f"       AlphaZero MCTS ({simulations} sims) vs Minimax (depth {depth})")
-    print("=" * 60)
+TEMP_MOVES = 20
+TEMP = 0.5
 
-    import numpy as np
 
-    model = QuoridorNet(num_residual_blocks=15, channels=128)
+def _sample_action(adjusted_visits, valid_actions, game):
+    """Select action via temperature sampling for first moves, then greedy argmax."""
+    best_idx = int(np.argmax(adjusted_visits))
+    selected = None
+    for act in valid_actions:
+        py_act = _cpp_to_py(act)
+        if map_action_to_index_perspective(py_act, game.is_p1_turn) == best_idx:
+            selected = act
+            break
+    return selected
+
+
+def _sample_action_with_temp(adjusted_visits, valid_actions, game, move_count):
+    """Temperature-sampled action selection for evaluation diversity."""
+    if move_count >= TEMP_MOVES:
+        return _sample_action(adjusted_visits, valid_actions, game)
+
+    valid_indices = []
+    for act in valid_actions:
+        py_act = _cpp_to_py(act)
+        idx = map_action_to_index_perspective(py_act, game.is_p1_turn)
+        if adjusted_visits[idx] > 0:
+            valid_indices.append((idx, act))
+
+    if not valid_indices:
+        return _sample_action(adjusted_visits, valid_actions, game)
+
+    counts = np.array([adjusted_visits[i] for i, _ in valid_indices], dtype=np.float64)
+    counts = counts ** (1.0 / TEMP)
+    probs = counts / counts.sum()
+    chosen = valid_indices[np.random.choice(len(valid_indices), p=probs)][1]
+    return chosen
+
+
+def _load_evaluator(checkpoint_path, onnx_path):
+    """Load ONNX evaluator if available, otherwise fall back to PyTorch."""
+    if onnx_path and os.path.exists(onnx_path):
+        print(f"Loading ONNX model from {onnx_path}")
+        evaluator = ONNXModelEvaluator(onnx_path)
+        epoch = "(ONNX)"
+        if os.path.exists(checkpoint_path):
+            try:
+                ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+                epoch = f"(epoch {ckpt.get('epoch', '?')})"
+            except Exception:
+                pass
+        print(f"AlphaZero model ready {epoch}")
+        return evaluator.evaluate_batch
+
+    print(f"Loading PyTorch checkpoint from {checkpoint_path}")
+    model = QuoridorNet(num_residual_blocks=20, channels=192)
     if os.path.exists(checkpoint_path):
         try:
-            checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=False)
+            checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
             model.load_state_dict(checkpoint['model_state_dict'])
             epoch = checkpoint.get('epoch', '?')
             print(f"Loaded AlphaZero model from {checkpoint_path} (epoch {epoch})")
@@ -148,7 +196,6 @@ def run_battle(checkpoint_path, depth=2, simulations=100, num_games=10, visualiz
     model.eval()
 
     def pytorch_evaluate_batch(input_array):
-        """Local PyTorch evaluator for C++ MCTS."""
         with torch.no_grad():
             x = torch.from_numpy(input_array).float()
             logits, values = model(x)
@@ -158,7 +205,18 @@ def run_battle(checkpoint_path, depth=2, simulations=100, num_games=10, visualiz
             policies = e_x / np.sum(e_x, axis=1, keepdims=True)
             return policies.astype(np.float32), values.numpy().ravel().astype(np.float32)
 
-    mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.07, dirichlet_eps=0.0)
+    return pytorch_evaluate_batch
+
+
+def run_battle(checkpoint_path, onnx_path=None, depth=2, simulations=100, num_games=10, visualize=False):
+    print("=" * 60)
+    print("             QUORIDOR BOT BATTLE ARENA")
+    print(f"       AlphaZero MCTS ({simulations} sims) vs Minimax (depth {depth})")
+    print("=" * 60)
+
+    evaluate_batch = _load_evaluator(checkpoint_path, onnx_path)
+
+    mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.3, dirichlet_eps=0.25)
 
     az_wins = mm_wins = draws = 0
 
@@ -192,7 +250,7 @@ def run_battle(checkpoint_path, depth=2, simulations=100, num_games=10, visualiz
 
             if is_az_turn:
                 visit_counts_list, _ = mcts.run_search_batched(
-                    [game], pytorch_evaluate_batch, simulations
+                    [game], evaluate_batch, simulations
                 )
                 visits = np.array(visit_counts_list[0], dtype=np.float32)
                 valid_actions = game.get_valid_actions()
@@ -216,13 +274,7 @@ def run_battle(checkpoint_path, depth=2, simulations=100, num_games=10, visualiz
                     elif seen_count == 1:
                         adjusted_visits[idx] *= 0.1  # Downweight moves returning to a state seen once
                 
-                best_idx = int(np.argmax(adjusted_visits))
-                selected_action = None
-                for act in valid_actions:
-                    py_act = _cpp_to_py(act)
-                    if map_action_to_index_perspective(py_act, game.is_p1_turn) == best_idx:
-                        selected_action = act
-                        break
+                selected_action = _sample_action_with_temp(adjusted_visits, valid_actions, game, move_count)
                 if selected_action is None:
                     selected_action = valid_actions[0]
             else:
@@ -262,6 +314,7 @@ def run_battle(checkpoint_path, depth=2, simulations=100, num_games=10, visualiz
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Battle AlphaZero MCTS agent against Heuristic Minimax bot.")
     parser.add_argument("--checkpoint", type=str, default="quoridor_checkpoint.pth")
+    parser.add_argument("--onnx", type=str, default="quoridor_model.onnx", help="ONNX model path (faster than PyTorch, default: quoridor_model.onnx)")
     parser.add_argument("--depth", type=int, default=2, help="Minimax search depth")
     parser.add_argument("--simulations", type=int, default=800, help="MCTS simulations per move (default: 800)")
     parser.add_argument("--games", type=int, default=10, help="Number of battle games")
@@ -270,6 +323,7 @@ if __name__ == "__main__":
 
     run_battle(
         checkpoint_path=args.checkpoint,
+        onnx_path=args.onnx,
         depth=args.depth,
         simulations=args.simulations,
         num_games=args.games,

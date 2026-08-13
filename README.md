@@ -108,10 +108,10 @@ python train_alphazero.py --batch_size 256 --num_actors 8 --device cuda
 ### CLI Arguments
 * `--epochs`: Total target epochs (default: `200`).
 * `--games_per_epoch`: Self-play games per epoch (default: `50`).
-* `--simulations`: MCTS searches per move (default: `400`).
-* `--batch_size`: Mini-batch size for model training (default: `64`).
-* `--dataset_size`: Maximum training positions stored in the replay buffer (default: `50000`).
-* `--num_actors`: Number of parallel self-play actor processes (default: `6`).
+* `--simulations`: MCTS searches per move (default: `800`).
+* `--batch_size`: Mini-batch size for model training (default: `512`).
+* `--dataset_size`: Maximum training positions stored in the replay buffer (default: `100000`).
+* `--num_actors`: Number of parallel self-play actor processes (default: `16`).
 * `--device`: Execution device (`"auto"`, `"cuda"`, `"xpu"`, `"directml"`, `"cpu"`).
 * `--data_dir`: Directory to save/load structured game files (default: `"data"`).
 * `--checkpoint_path`: Path to check-in/load weights (default: `"quoridor_checkpoint.pth"`).
@@ -125,7 +125,7 @@ The training pipeline runs in a loop across a user-specified number of epochs. E
 
 ### 1. Self-Play (Data Generation)
 * **Match Simulation**: The current neural network plays against itself for a set number of games per epoch (`games_per_epoch`, default: 50).
-* **MCTS Guidance**: During each turn, Monte Carlo Tree Search (MCTS) executes a deep lookahead (`simulations`, default: 400). It uses the model's **Policy Head** as prior probabilities to narrow down candidate branches and the **Value Head** to immediately evaluate leaf nodes.
+* **MCTS Guidance**: During each turn, Monte Carlo Tree Search (MCTS) executes a deep lookahead (`simulations`, default: 800). It uses the model's **Policy Head** as prior probabilities to narrow down candidate branches and the **Value Head** to immediately evaluate leaf nodes.
 * **C++ Acceleration**: Self-play games are simulated in parallel batches by [run_actor.py](run_actor.py) using the compiled C++ simulator and MCTS engine, leveraging ONNX Runtime for fast batched neural network inference.
 * **Exploration vs. Exploitation**: 
   - For the first 6 moves of each game, pawn moves are sampled proportionally to MCTS visit counts to guarantee diverse openings.
@@ -154,20 +154,6 @@ As the model trains, you can monitor its progress via the real-time CLI output o
 * **Policy Entropy (`0.8` to `1.3`)**: Entropy represents the spread of the model's move predictions. A target of `0.8 - 1.3` means the model is sharp and decisive (evaluating 2 to 3 strong choices per turn) without collapsing to a single move or exploring randomly.
 * **Mean Absolute MCTS Eval (`Mean(|Q|)`: `0.4` to `0.7`)**: In early training, this metric is high (~0.8+) because players blunder early, leading to highly lopsided evaluations. As play becomes highly competent, players defend optimally, resulting in closer, competitive mid-games with more balanced evaluations.
 
----
-
-
-## AlphaZero vs. Minimax
-
-To test your trained model's performance against a traditional alpha-beta search Minimax bot, run the battle script:
-
-```powershell
-# Run a 10-game tournament
-python play_vs_minimax.py
-
-# Run a visualized tournament with depth-3 Minimax and 150 MCTS simulations
-python play_vs_minimax.py --depth 3 --simulations 150 --games 5 --visualize
-```
 
 ### CLI Arguments
 * `--checkpoint`: Path to your AlphaZero weights (default: `"quoridor_checkpoint.pth"`).

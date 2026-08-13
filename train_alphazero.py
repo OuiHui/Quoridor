@@ -195,7 +195,7 @@ def load_dataset_from_disk(data_dir="data", max_positions=50000, exclude_epoch_o
     return cache.update(exclude_epoch_or_later)
 
 
-def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, num_simulations=1200, dataset_size=50000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, device="auto"):
+def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.00015, num_simulations=800, dataset_size=100000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, device="auto"):
     global DEVICE
     DEVICE = select_device(device)
     print(f"Training device: {DEVICE}")
@@ -204,7 +204,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
     
-    model_gpu = QuoridorNet(num_residual_blocks=15, channels=128).to(DEVICE)
+    model_gpu = QuoridorNet(num_residual_blocks=20, channels=192).to(DEVICE)
     optimizer = optim.Adam(model_gpu.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.8)
     loss_val_fn = nn.MSELoss()
@@ -214,28 +214,54 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.0003, n
     if os.path.exists(checkpoint_path):
         try:
             checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=False)
-            model_gpu.load_state_dict(checkpoint['model_state_dict'], strict=False)
-            if not reset_lr and 'optimizer_state_dict' in checkpoint:
-                try:
-                    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                    if 'scheduler_state_dict' in checkpoint:
-                        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-                except Exception as opt_err:
-                    print(f"Note: Re-initializing optimizer for updated architecture layers ({opt_err}).")
-                
-                scheduler.step_size = 50
-                scheduler.gamma = 0.8
-                scheduler.base_lrs = [lr]
-                decay_count = checkpoint.get('epoch', 0) // 50
-                current_scheduled_lr = lr * (0.8 ** decay_count)
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = current_scheduled_lr
-                print(f"Adjusted learning rate to {current_scheduled_lr:.6f} based on new schedule (decayed {decay_count} times).")
-            start_epoch = checkpoint.get('epoch', 0)
-            lr_note = ' (LR reset to initial)' if reset_lr else ''
-            print(f"Loaded existing network weights from {checkpoint_path} (strict=False). Resuming from epoch {start_epoch+1}{lr_note}")
+            ckpt_state = checkpoint['model_state_dict']
+            
+            # Check for shape mismatches before loading
+            model_state = model_gpu.state_dict()
+            shape_mismatch = False
+            for k, v in ckpt_state.items():
+                if k in model_state and model_state[k].shape != v.shape:
+                    shape_mismatch = True
+                    break
+
+            if shape_mismatch:
+                print(f"[Info] Detected model capacity upgrade (e.g. 128->192 channels / 15->20 blocks). Initializing fresh 20-block model weights while retaining all replay buffer positions.")
+                start_epoch = 0
+            else:
+                missing, unexpected = model_gpu.load_state_dict(ckpt_state, strict=False)
+                arch_changed = len(missing) > 0 or len(unexpected) > 0
+
+                if arch_changed:
+                    print(f"Detected architecture change ({len(missing)} missing keys). Resetting optimizer/LR to {lr}.")
+                    reset_lr = True
+
+                if not reset_lr and 'optimizer_state_dict' in checkpoint:
+                    try:
+                        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                        if 'scheduler_state_dict' in checkpoint:
+                            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                        scheduler.step_size = 50
+                        scheduler.gamma = 0.8
+                        scheduler.base_lrs = [lr]
+                        decay_count = checkpoint.get('epoch', 0) // 50
+                        current_scheduled_lr = lr * (0.8 ** decay_count)
+                        for param_group in optimizer.param_groups:
+                            param_group['lr'] = current_scheduled_lr
+                        print(f"Adjusted learning rate to {current_scheduled_lr:.6f} based on schedule.")
+                    except Exception as opt_err:
+                        print(f"Re-initializing optimizer for updated architecture ({opt_err}). LR = {lr}.")
+                        for param_group in optimizer.param_groups:
+                            param_group['lr'] = lr
+                else:
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = lr
+                    print(f"Learning rate set to fresh baseline: {lr}")
+
+                start_epoch = checkpoint.get('epoch', 0)
+                lr_note = ' (LR reset to initial)' if reset_lr else ''
+                print(f"Loaded existing network weights from {checkpoint_path}. Resuming from epoch {start_epoch+1}{lr_note}")
         except Exception as e:
-            print(f"Failed to load checkpoint ({e}). Starting from scratch.")
+            print(f"Initializing new model architecture weights from scratch ({e}).")
             
     # Initialize incremental replay buffer cache
     replay_cache = ReplayDatasetCache(data_dir, dataset_size)
@@ -424,9 +450,9 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=200, help="Total epochs to train (continues from checkpoint)")
     parser.add_argument("--games_per_epoch", type=int, default=50, help="Number of self-play games per epoch")
     parser.add_argument("--batch_size", type=int, default=512, help="Mini-batch size for model training (default: 512)")
-    parser.add_argument("--lr", type=float, default=0.0003, help="Initial learning rate")
-    parser.add_argument("--simulations", type=int, default=800, help="Number of MCTS simulations per turn")
-    parser.add_argument("--dataset_size", type=int, default=50000, help="Max replay buffer size (recent positions kept)")
+    parser.add_argument("--lr", type=float, default=0.00015, help="Initial learning rate (default: 0.00015)")
+    parser.add_argument("--simulations", type=int, default=800, help="Number of MCTS simulations per turn (default: 800)")
+    parser.add_argument("--dataset_size", type=int, default=100000, help="Max replay buffer size (recent positions kept, default: 100000)")
     parser.add_argument("--data_dir", type=str, default=r"C:\quoridor_data", help="Directory to save/load training games")
     parser.add_argument("--checkpoint_path", type=str, default="quoridor_checkpoint.pth", help="Path to checkpoint file")
     parser.add_argument("--visualize", "-v", action="store_true", help="Visualize self-play games in terminal")
@@ -436,18 +462,17 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda", "xpu", "directml"], help="Execution device (default: auto)")
     args = parser.parse_args()
 
-    # 1. Export starting model weights if quoridor_model.onnx is missing
-    if not os.path.exists("quoridor_model.onnx"):
-        print("Initializing model weights for self-play...")
-        starting_model = QuoridorNet(num_residual_blocks=15, channels=128)
-        if os.path.exists(args.checkpoint_path):
-            try:
-                ckpt = torch.load(args.checkpoint_path, map_location='cpu', weights_only=False)
-                starting_model.load_state_dict(ckpt['model_state_dict'])
-                print("Loaded existing checkpoint weights.")
-            except Exception:
-                pass
-        export_to_onnx(starting_model, "quoridor_model.onnx")
+    # 1. Export starting model weights to ONNX for self-play workers
+    print("Exporting 20-block / 192-channel model weights to ONNX for self-play actors...")
+    starting_model = QuoridorNet(num_residual_blocks=20, channels=192)
+    if os.path.exists(args.checkpoint_path):
+        try:
+            ckpt = torch.load(args.checkpoint_path, map_location='cpu', weights_only=False)
+            starting_model.load_state_dict(ckpt['model_state_dict'])
+            print("Loaded existing checkpoint weights for ONNX export.")
+        except Exception:
+            pass
+    export_to_onnx(starting_model, "quoridor_model.onnx")
 
     # 2. Spawn Centralized GPU Server & hybrid GPU/NPU self-play Actors
     num_actors = max(1, args.num_actors)

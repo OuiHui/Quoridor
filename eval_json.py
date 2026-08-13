@@ -146,7 +146,7 @@ def evaluate_json_state(json_input, checkpoint_path="quoridor_checkpoint.pth", m
     intersection = [pos_to_algebraic(x, y) for (x, y) in p1_path_set.intersection(p2_path_set)]
 
     # 2. Neural Network Evaluation
-    model = QuoridorNet(num_residual_blocks=15, channels=128)
+    model = QuoridorNet(num_residual_blocks=20, channels=192)
     if os.path.exists(checkpoint_path):
         ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         model.load_state_dict(ckpt['model_state_dict'])

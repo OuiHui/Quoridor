@@ -43,7 +43,7 @@ class PyTorchCUDAInferenceEngine:
     """High-throughput PyTorch CUDA Inference Engine using FP16 Tensor Cores."""
     def __init__(self, checkpoint_path=None):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = QuoridorNet(num_residual_blocks=15, channels=128).to(self.device).eval()
+        self.model = QuoridorNet(num_residual_blocks=20, channels=192).to(self.device).eval()
         self.traced_model = None
         self.checkpoint_path = None
         self.mtime = None
@@ -75,6 +75,22 @@ class PyTorchCUDAInferenceEngine:
         try:
             ckpt = torch.load(path, map_location=self.device, weights_only=False)
             state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
+            
+            # Check for shape mismatches (e.g. 128->192 channels / 15->20 blocks)
+            model_state = self.model.state_dict()
+            shape_mismatch = False
+            for k, v in state_dict.items():
+                if k in model_state and model_state[k].shape != v.shape:
+                    shape_mismatch = True
+                    break
+
+            if shape_mismatch:
+                self.checkpoint_path = path
+                self.mtime = os.path.getmtime(path)
+                ts = time.strftime("%H:%M:%S")
+                print(f"[{ts}] [GPU Server] Checkpoint '{path}' uses old architecture (128 ch/15 blocks). GPU Server running on fresh 20-block weights until new checkpoint is saved.", flush=True)
+                return False
+
             self.model.load_state_dict(state_dict, strict=False)
             
             # Trace the updated model for optimized execution graph
