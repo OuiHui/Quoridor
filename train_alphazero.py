@@ -195,7 +195,7 @@ def load_dataset_from_disk(data_dir="data", max_positions=50000, exclude_epoch_o
     return cache.update(exclude_epoch_or_later)
 
 
-def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.00015, num_simulations=800, dataset_size=100000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, device="auto"):
+def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.00015, num_simulations=800, dataset_size=100000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, device="auto", num_workers=0):
     global DEVICE
     DEVICE = select_device(device)
     print(f"Training device: {DEVICE}")
@@ -316,7 +316,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.00015, 
         num_samples = len(replay_dataset)
         use_pin_memory = (DEVICE.type == 'cuda')
         
-        num_loader_workers = 4 if use_pin_memory else 0
+        num_loader_workers = num_workers
         dataloader = torch.utils.data.DataLoader(
             replay_dataset,
             batch_size=batch_size,
@@ -460,6 +460,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_actors", type=int, default=16, help="Number of parallel self-play actor processes (default: 16)")
     parser.add_argument("--npu_actors", type=int, default=0, help="Number of self-play actors offloaded to Intel NPU via OpenVINO (default: 0)")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda", "xpu", "directml"], help="Execution device (default: auto)")
+    parser.add_argument("--num_workers", type=int, default=0, help="Number of PyTorch DataLoader worker subprocesses (default: 0 to prevent Windows process crashes)")
     args = parser.parse_args()
 
     # 1. Export starting model weights to ONNX for self-play workers
@@ -526,6 +527,7 @@ if __name__ == "__main__":
             visualize=args.visualize,
             reset_lr=args.reset_lr,
             device=args.device,
+            num_workers=args.num_workers,
         )
     finally:
         print(f"Stopping {len(actor_processes)} background self-play Actor processes and GPU server...")
