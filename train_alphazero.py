@@ -190,12 +190,12 @@ class QuoridorDataset(torch.utils.data.Dataset):
         mask = item[3] if isinstance(item[3], torch.Tensor) else torch.from_numpy(np.ascontiguousarray(item[3]))
         return state, policy, value, mask
 
-def load_dataset_from_disk(data_dir="data", max_positions=50000, exclude_epoch_or_later=None):
+def load_dataset_from_disk(data_dir="data", max_positions=100000, exclude_epoch_or_later=None):
     cache = ReplayDatasetCache(data_dir, max_positions)
     return cache.update(exclude_epoch_or_later)
 
 
-def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.00015, num_simulations=800, dataset_size=100000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, device="auto", num_workers=0):
+def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.00015, num_simulations=1200, dataset_size=100000, data_dir="data", checkpoint_path="quoridor_checkpoint.pth", visualize=False, reset_lr=False, device="auto", num_workers=0):
     global DEVICE
     DEVICE = select_device(device)
     print(f"Training device: {DEVICE}")
@@ -451,7 +451,7 @@ if __name__ == "__main__":
     parser.add_argument("--games_per_epoch", type=int, default=50, help="Number of self-play games per epoch")
     parser.add_argument("--batch_size", type=int, default=512, help="Mini-batch size for model training (default: 512)")
     parser.add_argument("--lr", type=float, default=0.00015, help="Initial learning rate (default: 0.00015)")
-    parser.add_argument("--simulations", type=int, default=800, help="Number of MCTS simulations per turn (default: 800)")
+    parser.add_argument("--simulations", type=int, default=1200, help="Number of MCTS simulations per turn (default: 1200)")
     parser.add_argument("--dataset_size", type=int, default=100000, help="Max replay buffer size (recent positions kept, default: 100000)")
     parser.add_argument("--data_dir", type=str, default=r"C:\quoridor_data", help="Directory to save/load training games")
     parser.add_argument("--checkpoint_path", type=str, default="quoridor_checkpoint.pth", help="Path to checkpoint file")

@@ -34,8 +34,8 @@ from quoridor_model import flip_horizontal_state, flip_horizontal_policy, map_in
 
 # Constants matching train_alphazero.py
 TEMP_THRESHOLD = 20
-NUM_SIMULATIONS = 800  # 800 simulations for all searches
-FAST_SIMULATIONS = 800 # 800 simulations (PCR disabled/set to 800)
+NUM_SIMULATIONS = 1200  # 1200 simulations for all searches
+FAST_SIMULATIONS = 1200 # 1200 simulations (PCR disabled/set to 1200)
 GAMES_PER_EPOCH = 50   # Expected games per epoch
 DATA_DIR = os.environ.get("QUORIDOR_DATA_DIR", r"C:\quoridor_data")
 ONNX_PATH = "quoridor_model.onnx"
@@ -185,7 +185,7 @@ def get_current_epoch():
             return max(epochs)
     return 0
 
-def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fast_simulations=800, use_pcr=False, actor_id=1):
+def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=1200, fast_simulations=1200, use_pcr=False, actor_id=1):
     mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.20, dirichlet_eps=0.25)
     
     # Initialize batch vectors
@@ -209,8 +209,8 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=800, fa
     while len(active_indices) > 0:
         active_games = [games[i] for i in active_indices]
         
-        # 800 simulations for all MCTS evaluations
-        current_sims = 800
+        # Simulations for all MCTS evaluations
+        current_sims = num_simulations
 
         visit_counts_list, _ = mcts.run_search_batched(
             active_games,
