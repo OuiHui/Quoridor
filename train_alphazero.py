@@ -128,7 +128,7 @@ def count_games_in_dir(epoch_dir):
     return total
 
 class ReplayDatasetCache:
-    """Incremental dataset loader maintaining an in-memory buffer across epochs."""
+    """Memory-bounded incremental dataset loader maintaining an in-memory buffer across epochs."""
     def __init__(self, data_dir="data", max_positions=50000):
         self.data_dir = data_dir
         self.max_positions = max_positions
@@ -139,31 +139,96 @@ class ReplayDatasetCache:
         if not os.path.exists(self.data_dir):
             return self.dataset
 
-        pt_files = []
-        for root_dir, _, files in os.walk(self.data_dir):
-            folder_name = os.path.basename(root_dir)
-            if folder_name.startswith("epoch_"):
+        # Initial load on empty cache: scan epoch folders in reverse order (newest first)
+        # to load only the most recent files needed to fill max_positions.
+        if not self.dataset:
+            epoch_dirs = []
+            for d in os.listdir(self.data_dir):
+                if d.startswith("epoch_"):
+                    try:
+                        num = int(d.split("_")[1])
+                        if exclude_epoch_or_later is not None and num >= exclude_epoch_or_later:
+                            continue
+                        epoch_dirs.append((num, os.path.join(self.data_dir, d)))
+                    except (ValueError, IndexError):
+                        pass
+
+            epoch_dirs.sort(key=lambda x: x[0], reverse=True)
+            loaded_chunks = []
+            total_loaded = 0
+
+            for epoch_num, edir in epoch_dirs:
                 try:
-                    epoch_num = int(folder_name.split("_")[1])
-                    if exclude_epoch_or_later is not None and epoch_num >= exclude_epoch_or_later:
+                    files = [os.path.join(edir, f) for f in os.listdir(edir) if f.endswith('.pt')]
+                    files.sort(reverse=True)
+                except OSError:
+                    continue
+
+                for fpath in files:
+                    try:
+                        game_data = torch.load(fpath, map_location=torch.device('cpu'), weights_only=False)
+                        if isinstance(game_data, list) and len(game_data) > 0:
+                            loaded_chunks.append(game_data)
+                            self.loaded_files.add(fpath)
+                            total_loaded += len(game_data)
+                            if total_loaded >= self.max_positions:
+                                break
+                    except Exception as e:
+                        print(f"Warning: Skipping unreadable/incomplete dataset file {fpath}: {e}")
+
+                if total_loaded >= self.max_positions:
+                    break
+
+            # Re-assemble chunks in chronological order (oldest to newest)
+            loaded_chunks.reverse()
+            for chunk in loaded_chunks:
+                self.dataset.extend(chunk)
+
+            if len(self.dataset) > self.max_positions:
+                self.dataset = self.dataset[-self.max_positions:]
+
+            if len(self.dataset) > 0:
+                ts = time.strftime("%H:%M:%S")
+                print(f"[{ts}] [Learner] Replay buffer initialized with {len(self.dataset)} recent positions from {len(self.loaded_files)} files.", flush=True)
+
+            return self.dataset
+
+        # Incremental update during training: only scan recent/relevant epoch directories for new files
+        epoch_dirs = []
+        for d in os.listdir(self.data_dir):
+            if d.startswith("epoch_"):
+                try:
+                    num = int(d.split("_")[1])
+                    if exclude_epoch_or_later is not None and num >= exclude_epoch_or_later:
                         continue
+                    epoch_dirs.append((num, os.path.join(self.data_dir, d)))
                 except (ValueError, IndexError):
                     pass
-            for f in files:
-                if f.endswith('.pt'):
-                    full_path = os.path.join(root_dir, f)
-                    if full_path not in self.loaded_files:
-                        pt_files.append(full_path)
 
-        pt_files.sort()
-        new_count = len(pt_files)
-        for filepath in pt_files:
+        epoch_dirs.sort(key=lambda x: x[0])
+        new_files = []
+        for epoch_num, edir in epoch_dirs:
             try:
-                game_data = torch.load(filepath, map_location=torch.device('cpu'), weights_only=False)
-                self.dataset.extend(game_data)
-                self.loaded_files.add(filepath)
+                for f in os.listdir(edir):
+                    if f.endswith('.pt'):
+                        full_path = os.path.join(edir, f)
+                        if full_path not in self.loaded_files:
+                            new_files.append(full_path)
+            except OSError:
+                continue
+
+        new_count = 0
+        for fpath in new_files:
+            try:
+                game_data = torch.load(fpath, map_location=torch.device('cpu'), weights_only=False)
+                if isinstance(game_data, list) and len(game_data) > 0:
+                    self.dataset.extend(game_data)
+                    self.loaded_files.add(fpath)
+                    new_count += 1
+                    if len(self.dataset) > self.max_positions * 1.2:
+                        self.dataset = self.dataset[-self.max_positions:]
             except Exception as e:
-                print(f"Warning: Failed to load dataset file {filepath}: {e}")
+                print(f"Warning: Skipping unreadable/incomplete dataset file {fpath}: {e}")
 
         if len(self.dataset) > self.max_positions:
             self.dataset = self.dataset[-self.max_positions:]
@@ -394,19 +459,29 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.00015, 
         ts = time.strftime("%H:%M:%S")
         print(f"[{ts}] [Learner] Epoch {epoch+1} Complete ({elapsed:.1f}s, {pos_per_sec:.0f} pos/s) | Policy Loss: {_METRICS['policy_loss']:.4f} | Value Loss: {_METRICS['value_loss']:.4f} | Policy Entropy: {_METRICS['entropy']:.4f} | LR: {current_lr:.6f}", flush=True)
         
+        # Free batch references and release GPU/host memory after training pass
+        del dataloader
+        del replay_dataset
+        import gc
+        gc.collect()
+        if DEVICE.type == 'cuda':
+            torch.cuda.empty_cache()
+
         try:
             write_training_state(None, 0, '-', 'epoch_complete', f'Epoch {epoch+1} finished')
         except Exception:
             pass
         
-        # Save checkpoint after each epoch
+        # Save checkpoint atomically after each epoch
         try:
+            tmp_checkpoint_path = f"{checkpoint_path}.tmp"
             torch.save({
                 'epoch': epoch + 1,
                 'model_state_dict': model_gpu.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
-            }, checkpoint_path)
+            }, tmp_checkpoint_path)
+            os.replace(tmp_checkpoint_path, checkpoint_path)
             print(f"  Checkpoint saved to {checkpoint_path}")
         except Exception as e:
             print(f"  Failed to save checkpoint: {e}")

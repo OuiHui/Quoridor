@@ -328,13 +328,15 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=1200, f
             
         active_indices = next_active_indices
 
-    # Save consolidated batch file to disk
+    # Save consolidated batch file to disk atomically
     if all_batch_examples:
         epoch_dir = os.path.join(DATA_DIR, f"epoch_{epoch+1:03d}")
         os.makedirs(epoch_dir, exist_ok=True)
         file_id = f"{uuid.uuid4().hex[:8]}"
         filepath = os.path.join(epoch_dir, f"games_{games_completed_in_batch}_{time.time():.3f}_{file_id}.pt")
-        torch.save(all_batch_examples, filepath)
+        tmp_filepath = f"{filepath}.tmp"
+        torch.save(all_batch_examples, tmp_filepath)
+        os.replace(tmp_filepath, filepath)
 
     elapsed = time.time() - batch_start_time
     pos_per_sec = total_positions_generated / max(0.001, elapsed)

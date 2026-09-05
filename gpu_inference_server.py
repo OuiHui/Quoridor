@@ -113,10 +113,14 @@ class PyTorchCUDAInferenceEngine:
             return False
 
     def check_and_reload(self):
-        latest = get_latest_checkpoint_path()
-        if latest:
-            if self.checkpoint_path != latest or os.path.getmtime(latest) > (self.mtime or 0):
-                self.load_checkpoint(latest)
+        try:
+            latest = get_latest_checkpoint_path()
+            if latest:
+                if self.checkpoint_path != latest or os.path.getmtime(latest) > (self.mtime or 0):
+                    self.load_checkpoint(latest)
+        except Exception as e:
+            ts = time.strftime("%H:%M:%S")
+            print(f"[{ts}] [GPU Server] Checkpoint check error: {e}", flush=True)
 
     def evaluate_combined(self, batch_input):
         tensor_in = torch.from_numpy(batch_input).to(self.device, non_blocking=True)
@@ -204,19 +208,34 @@ def gpu_worker_loop(engine):
         batch_inputs = [item[1] for item in items]
         combined_input = np.concatenate(batch_inputs, axis=0)
 
-        policies, values = engine.evaluate_combined(combined_input)
+        try:
+            policies, values = engine.evaluate_combined(combined_input)
 
-        total_evals += len(combined_input)
-        total_batches += 1
+            total_evals += len(combined_input)
+            total_batches += 1
 
-        offset = 0
-        for m_count, _, res_dict, done_evt in items:
-            res_dict['policies'] = policies[offset:offset + m_count]
-            res_dict['values'] = values[offset:offset + m_count]
-            offset += m_count
-            done_evt.set()
+            offset = 0
+            for m_count, _, res_dict, done_evt in items:
+                res_dict['policies'] = policies[offset:offset + m_count]
+                res_dict['values'] = values[offset:offset + m_count]
+                offset += m_count
+                done_evt.set()
 
-        if total_batches % 500 == 0:
+        except Exception as e:
+            ts = time.strftime("%H:%M:%S")
+            print(f"[{ts}] [GPU Server] Worker loop evaluation error: {e}", flush=True)
+            if torch.cuda.is_available():
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+            # Ensure waiting actors are never left hanging
+            for m_count, _, res_dict, done_evt in items:
+                res_dict['policies'] = np.full((m_count, 140), 1.0 / 140.0, dtype=np.float32)
+                res_dict['values'] = np.zeros(m_count, dtype=np.float32)
+                done_evt.set()
+
+        if total_batches > 0 and total_batches % 500 == 0:
             elapsed = time.time() - start_time
             rate = total_evals / max(0.001, elapsed)
             avg_b = total_evals / total_batches
