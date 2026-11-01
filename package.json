@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "predeploy": "vite build",
+    "predeploy": "python deploy_model.py && vite build",
     "deploy": "gh-pages -d dist"
   },
   "devDependencies": {
