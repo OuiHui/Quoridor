@@ -193,12 +193,16 @@ class ReplayDatasetCache:
 
             return self.dataset
 
-        # Incremental update during training: only scan recent/relevant epoch directories for new files
+        # Incremental update during training: only scan recent active epoch directories for new files
+        # (avoid rescanning thousands of historical epoch folders from older sessions)
+        min_epoch_scan = max(1, (exclude_epoch_or_later - 3) if exclude_epoch_or_later is not None else 1)
         epoch_dirs = []
         for d in os.listdir(self.data_dir):
             if d.startswith("epoch_"):
                 try:
                     num = int(d.split("_")[1])
+                    if num < min_epoch_scan:
+                        continue
                     if exclude_epoch_or_later is not None and num >= exclude_epoch_or_later:
                         continue
                     epoch_dirs.append((num, os.path.join(self.data_dir, d)))
