@@ -35,25 +35,14 @@ export function executePawnMove(x, y) {
     const stateAfter = captureStateSnapshot();
     const notation = formatMoveNotation({ type: 'move', to: { x, y } });
 
-    let prevEval = 0;
-    if (state.history.length > 0) {
-        const last = state.history[state.history.length - 1];
-        if (last && last.evalScore !== null && last.evalScore !== undefined) {
-            prevEval = last.evalScore;
-        }
-    }
-
-    let initialPawnEval = prevEval;
+    let initialPawnEval = null;
     if (state.previousPrecomputedEvaluations) {
         const moveKey = `move:${x},${y}`;
         const chosen = state.previousPrecomputedEvaluations.scores.get(moveKey);
-        const best = state.previousPrecomputedEvaluations.bestScore !== null ? 
-            state.previousPrecomputedEvaluations.bestScore : 
-            state.previousPrecomputedEvaluations.currentEval;
-
-        if (chosen !== undefined && best !== null) {
-            const loss = player === 1 ? (best - chosen) : (chosen - best);
-            initialPawnEval = loss <= 2 ? prevEval : chosen;
+        if (chosen !== undefined) {
+            initialPawnEval = chosen;
+        } else if (state.previousPrecomputedEvaluations.currentEval !== null) {
+            initialPawnEval = state.previousPrecomputedEvaluations.currentEval;
         }
     }
 
@@ -112,25 +101,14 @@ export function executeWallPlacement(x, y, wallType) {
     const stateAfter = captureStateSnapshot();
     const notation = formatMoveNotation({ type: 'wall', x, y, wallType });
 
-    let prevWallEval = 0;
-    if (state.history.length > 0) {
-        const last = state.history[state.history.length - 1];
-        if (last && last.evalScore !== null && last.evalScore !== undefined) {
-            prevWallEval = last.evalScore;
-        }
-    }
-
-    let initialWallEval = prevWallEval;
+    let initialWallEval = null;
     if (state.previousPrecomputedEvaluations) {
         const moveKey = `wall:${x},${y},${wallType}`;
         const chosen = state.previousPrecomputedEvaluations.scores.get(moveKey);
-        const best = state.previousPrecomputedEvaluations.bestScore !== null ? 
-            state.previousPrecomputedEvaluations.bestScore : 
-            state.previousPrecomputedEvaluations.currentEval;
-
-        if (chosen !== undefined && best !== null) {
-            const loss = player === 1 ? (best - chosen) : (chosen - best);
-            initialWallEval = loss <= 2 ? prevWallEval : chosen;
+        if (chosen !== undefined) {
+            initialWallEval = chosen;
+        } else if (state.previousPrecomputedEvaluations.currentEval !== null) {
+            initialWallEval = state.previousPrecomputedEvaluations.currentEval;
         }
     }
 

@@ -113,21 +113,9 @@ function updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextE
     const { classification, text, symbol, loss } = classifyMove(chosenScore, bestScore, player, secondBestScore);
     const bestMoveNotation = bestMove ? formatMoveNotation(bestMove) : null;
 
-    let prevEval = null;
-    if (historyItem && historyItem.id > 1) {
-        const prevItem = state.history[historyItem.id - 2];
-        if (prevItem && prevItem.evalScore !== null && prevItem.evalScore !== undefined) {
-            prevEval = prevItem.evalScore;
-        }
-    }
-
-    const isBestMove = (loss <= 2 || classification === 'best' || classification === 'great' || classification === 'brilliant');
-    let resultingEvalScore;
-    if (isBestMove) {
-        resultingEvalScore = prevEval !== null ? prevEval : (bestScore !== null ? bestScore : 0);
-    } else {
-        resultingEvalScore = chosenScore;
-    }
+    const resultingEvalScore = (chosenScore !== null && chosenScore !== undefined) ? 
+        chosenScore : 
+        (bestScore !== null && bestScore !== undefined ? bestScore : 0);
 
     const qualityObj = {
         classification,

@@ -87,9 +87,9 @@ export function getValidPawnMoves(px, py, ox, oy, hWalls, vWalls) {
 
 // BFS shortest pathfinding to goal row
 // Returns the full coordinates array of the path, or null if blocked
-export function findShortestPath(startX, startY, targetY, hWalls, vWalls) {
+export function findShortestPath(startX, startY, targetY, hWalls, vWalls, oppPos = null) {
     if (!(hWalls instanceof Map)) {
-        return findShortestPathFast(startX, startY, targetY, hWalls, vWalls);
+        return findShortestPathFast(startX, startY, targetY, hWalls, vWalls, oppPos ? oppPos.x : -1, oppPos ? oppPos.y : -1);
     }
     const queue = [ { x: startX, y: startY, path: [] } ];
     const visited = new Set();
@@ -113,10 +113,36 @@ export function findShortestPath(startX, startY, targetY, hWalls, vWalls) {
             const nx = x + d.dx;
             const ny = y + d.dy;
             
-            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9) {
-                const key = `${nx},${ny}`;
-                if (!visited.has(key)) {
-                    if (!isMoveBlocked(x, y, nx, ny, hWalls, vWalls)) {
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9 && !isMoveBlocked(x, y, nx, ny, hWalls, vWalls)) {
+                if (oppPos && nx === oppPos.x && ny === oppPos.y) {
+                    const jx = nx + d.dx;
+                    const jy = ny + d.dy;
+                    const straightInBounds = (jx >= 0 && jx < 9 && jy >= 0 && jy < 9);
+                    const straightBlocked = straightInBounds && isMoveBlocked(nx, ny, jx, jy, hWalls, vWalls);
+
+                    if (straightInBounds && !straightBlocked) {
+                        const key = `${jx},${jy}`;
+                        if (!visited.has(key)) {
+                            visited.add(key);
+                            queue.push({ x: jx, y: jy, path: path.concat([{ x, y }]) });
+                        }
+                    } else if (straightBlocked || !straightInBounds) {
+                        const sides = d.dx === 0 ? [{ dx: -1, dy: 0 }, { dx: 1, dy: 0 }] : [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }];
+                        for (const s of sides) {
+                            const dix = nx + s.dx;
+                            const diy = ny + s.dy;
+                            if (dix >= 0 && dix < 9 && diy >= 0 && diy < 9 && !isMoveBlocked(nx, ny, dix, diy, hWalls, vWalls)) {
+                                const key = `${dix},${diy}`;
+                                if (!visited.has(key)) {
+                                    visited.add(key);
+                                    queue.push({ x: dix, y: diy, path: path.concat([{ x, y }]) });
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    const key = `${nx},${ny}`;
+                    if (!visited.has(key)) {
                         visited.add(key);
                         queue.push({ x: nx, y: ny, path: path.concat([{ x, y }]) });
                     }
@@ -207,7 +233,7 @@ export function isMoveBlockedFast(x1, y1, x2, y2, hWallsArray, vWallsArray) {
     return true;
 }
 
-export function findShortestPathFast(startX, startY, targetY, hWallsArray, vWallsArray) {
+export function findShortestPathFast(startX, startY, targetY, hWallsArray, vWallsArray, oppX = -1, oppY = -1) {
     const startIdx = startY * 9 + startX;
     if (startY === targetY) {
         return [{ x: startX, y: startY }];
@@ -226,6 +252,13 @@ export function findShortestPathFast(startX, startY, targetY, hWallsArray, vWall
 
     let targetIdx = -1;
 
+    const dirs = [
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 },
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 }
+    ];
+
     while (head < tail) {
         const curr = queue[head++];
         const cx = curr % 9;
@@ -236,37 +269,49 @@ export function findShortestPathFast(startX, startY, targetY, hWallsArray, vWall
             break;
         }
 
-        // Neighbors: Up, Down, Right, Left
-        if (cy + 1 < 9) {
-            const nextIdx = (cy + 1) * 9 + cx;
-            if (!visited[nextIdx] && !isMoveBlockedFast(cx, cy, cx, cy + 1, hWallsArray, vWallsArray)) {
-                visited[nextIdx] = 1;
-                parent[nextIdx] = curr;
-                queue[tail++] = nextIdx;
-            }
-        }
-        if (cy - 1 >= 0) {
-            const nextIdx = (cy - 1) * 9 + cx;
-            if (!visited[nextIdx] && !isMoveBlockedFast(cx, cy, cx, cy - 1, hWallsArray, vWallsArray)) {
-                visited[nextIdx] = 1;
-                parent[nextIdx] = curr;
-                queue[tail++] = nextIdx;
-            }
-        }
-        if (cx + 1 < 9) {
-            const nextIdx = cy * 9 + (cx + 1);
-            if (!visited[nextIdx] && !isMoveBlockedFast(cx, cy, cx + 1, cy, hWallsArray, vWallsArray)) {
-                visited[nextIdx] = 1;
-                parent[nextIdx] = curr;
-                queue[tail++] = nextIdx;
-            }
-        }
-        if (cx - 1 >= 0) {
-            const nextIdx = cy * 9 + (cx - 1);
-            if (!visited[nextIdx] && !isMoveBlockedFast(cx, cy, cx - 1, cy, hWallsArray, vWallsArray)) {
-                visited[nextIdx] = 1;
-                parent[nextIdx] = curr;
-                queue[tail++] = nextIdx;
+        for (let i = 0; i < 4; i++) {
+            const dx = dirs[i].dx;
+            const dy = dirs[i].dy;
+            const nx = cx + dx;
+            const ny = cy + dy;
+
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9 && !isMoveBlockedFast(cx, cy, nx, ny, hWallsArray, vWallsArray)) {
+                if (oppX !== -1 && nx === oppX && ny === oppY) {
+                    const jx = nx + dx;
+                    const jy = ny + dy;
+                    const straightInBounds = (jx >= 0 && jx < 9 && jy >= 0 && jy < 9);
+                    const straightBlocked = straightInBounds && isMoveBlockedFast(nx, ny, jx, jy, hWallsArray, vWallsArray);
+
+                    if (straightInBounds && !straightBlocked) {
+                        const nextIdx = jy * 9 + jx;
+                        if (!visited[nextIdx]) {
+                            visited[nextIdx] = 1;
+                            parent[nextIdx] = curr;
+                            queue[tail++] = nextIdx;
+                        }
+                    } else if (straightBlocked || !straightInBounds) {
+                        const sides = dx === 0 ? [{ sx: -1, sy: 0 }, { sx: 1, sy: 0 }] : [{ sx: 0, sy: -1 }, { sx: 0, sy: 1 }];
+                        for (let s = 0; s < 2; s++) {
+                            const dix = nx + sides[s].sx;
+                            const diy = ny + sides[s].sy;
+                            if (dix >= 0 && dix < 9 && diy >= 0 && diy < 9 && !isMoveBlockedFast(nx, ny, dix, diy, hWallsArray, vWallsArray)) {
+                                const nextIdx = diy * 9 + dix;
+                                if (!visited[nextIdx]) {
+                                    visited[nextIdx] = 1;
+                                    parent[nextIdx] = curr;
+                                    queue[tail++] = nextIdx;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    const nextIdx = ny * 9 + nx;
+                    if (!visited[nextIdx]) {
+                        visited[nextIdx] = 1;
+                        parent[nextIdx] = curr;
+                        queue[tail++] = nextIdx;
+                    }
+                }
             }
         }
     }
@@ -283,7 +328,7 @@ export function findShortestPathFast(startX, startY, targetY, hWallsArray, vWall
     return path;
 }
 
-export function findShortestPathLengthFast(startX, startY, targetY, hWallsArray, vWallsArray) {
+export function findShortestPathLengthFast(startX, startY, targetY, hWallsArray, vWallsArray, oppX = -1, oppY = -1) {
     const startIdx = startY * 9 + startX;
     if (startY === targetY) {
         return 1;
@@ -300,6 +345,13 @@ export function findShortestPathLengthFast(startX, startY, targetY, hWallsArray,
     visited[startIdx] = 1;
     dist[startIdx] = 1;
 
+    const dirs = [
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 },
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 }
+    ];
+
     while (head < tail) {
         const curr = queue[head++];
         const cx = curr % 9;
@@ -310,36 +362,49 @@ export function findShortestPathLengthFast(startX, startY, targetY, hWallsArray,
             return currDist;
         }
 
-        if (cy + 1 < 9) {
-            const nextIdx = (cy + 1) * 9 + cx;
-            if (!visited[nextIdx] && !isMoveBlockedFast(cx, cy, cx, cy + 1, hWallsArray, vWallsArray)) {
-                visited[nextIdx] = 1;
-                dist[nextIdx] = currDist + 1;
-                queue[tail++] = nextIdx;
-            }
-        }
-        if (cy - 1 >= 0) {
-            const nextIdx = (cy - 1) * 9 + cx;
-            if (!visited[nextIdx] && !isMoveBlockedFast(cx, cy, cx, cy - 1, hWallsArray, vWallsArray)) {
-                visited[nextIdx] = 1;
-                dist[nextIdx] = currDist + 1;
-                queue[tail++] = nextIdx;
-            }
-        }
-        if (cx + 1 < 9) {
-            const nextIdx = cy * 9 + (cx + 1);
-            if (!visited[nextIdx] && !isMoveBlockedFast(cx, cy, cx + 1, cy, hWallsArray, vWallsArray)) {
-                visited[nextIdx] = 1;
-                dist[nextIdx] = currDist + 1;
-                queue[tail++] = nextIdx;
-            }
-        }
-        if (cx - 1 >= 0) {
-            const nextIdx = cy * 9 + (cx - 1);
-            if (!visited[nextIdx] && !isMoveBlockedFast(cx, cy, cx - 1, cy, hWallsArray, vWallsArray)) {
-                visited[nextIdx] = 1;
-                dist[nextIdx] = currDist + 1;
-                queue[tail++] = nextIdx;
+        for (let i = 0; i < 4; i++) {
+            const dx = dirs[i].dx;
+            const dy = dirs[i].dy;
+            const nx = cx + dx;
+            const ny = cy + dy;
+
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9 && !isMoveBlockedFast(cx, cy, nx, ny, hWallsArray, vWallsArray)) {
+                if (oppX !== -1 && nx === oppX && ny === oppY) {
+                    const jx = nx + dx;
+                    const jy = ny + dy;
+                    const straightInBounds = (jx >= 0 && jx < 9 && jy >= 0 && jy < 9);
+                    const straightBlocked = straightInBounds && isMoveBlockedFast(nx, ny, jx, jy, hWallsArray, vWallsArray);
+
+                    if (straightInBounds && !straightBlocked) {
+                        const nextIdx = jy * 9 + jx;
+                        if (!visited[nextIdx]) {
+                            visited[nextIdx] = 1;
+                            dist[nextIdx] = currDist + 1;
+                            queue[tail++] = nextIdx;
+                        }
+                    } else if (straightBlocked || !straightInBounds) {
+                        const sides = dx === 0 ? [{ sx: -1, sy: 0 }, { sx: 1, sy: 0 }] : [{ sx: 0, sy: -1 }, { sx: 0, sy: 1 }];
+                        for (let s = 0; s < 2; s++) {
+                            const dix = nx + sides[s].sx;
+                            const diy = ny + sides[s].sy;
+                            if (dix >= 0 && dix < 9 && diy >= 0 && diy < 9 && !isMoveBlockedFast(nx, ny, dix, diy, hWallsArray, vWallsArray)) {
+                                const nextIdx = diy * 9 + dix;
+                                if (!visited[nextIdx]) {
+                                    visited[nextIdx] = 1;
+                                    dist[nextIdx] = currDist + 1;
+                                    queue[tail++] = nextIdx;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    const nextIdx = ny * 9 + nx;
+                    if (!visited[nextIdx]) {
+                        visited[nextIdx] = 1;
+                        dist[nextIdx] = currDist + 1;
+                        queue[tail++] = nextIdx;
+                    }
+                }
             }
         }
     }
