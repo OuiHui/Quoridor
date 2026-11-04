@@ -1,6 +1,36 @@
 import { state } from './state.js';
 import { minimax, evaluateBoard, generateSmartMoves } from './ai.js';
 import { findShortestPathLengthFast } from './engine.js';
+import { tensorizeBoardState } from './ai-mcts.js';
+import { evaluatePositionInWorker } from './worker-manager.js';
+
+export async function evaluatePositionWithNN(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn) {
+    if (window.quoridorONNXSession && window.ort) {
+        try {
+            const tensorData = tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn);
+            const inputTensor = new window.ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
+            const results = await window.quoridorONNXSession.run({ input: inputTensor });
+            const rawValue = results.value.data[0];
+            const p1Value = turn === 1 ? rawValue : -rawValue;
+            return p1Value * 100;
+        } catch (e) {
+            console.warn('Main thread ONNX eval error:', e);
+        }
+    }
+
+    try {
+        const res = await evaluatePositionInWorker({
+            p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn
+        });
+        if (res && res.score !== undefined && res.score !== null) {
+            return res.score;
+        }
+    } catch (e) {
+        // Fallback to minimax handled by caller
+    }
+
+    return null;
+}
 
 export function getBoardStateKey(st) {
     const hKeys = Array.from(st.hWalls.keys()).sort().join(';');
@@ -94,21 +124,33 @@ export function precomputeNextMoves() {
         currentEval: null
     };
 
+    evaluatePositionWithNN(p1PosSnapshot, p2PosSnapshot, hWallsSnapshot, vWallsSnapshot, p1WallsSnapshot, p2WallsSnapshot, turnSnapshot).then(nnScore => {
+        if (nnScore !== null && getBoardStateKey(state) === key) {
+            state.precomputedEvaluations.currentEval = nnScore;
+            const currentItem = state.historyIndex > 0 ? state.history[state.historyIndex - 1] : null;
+            if (!currentItem || currentItem.evalScore === null || currentItem.evalScore === undefined) {
+                updateEvalBarUI(nnScore);
+            }
+        }
+    });
+
     const depth = 5;
 
     setTimeout(() => {
         if (getBoardStateKey(state) !== key) return;
 
-        let score;
-        if (state.previousPrecomputedEvaluations) {
-            const lastMove = state.history[state.history.length - 1];
-            if (lastMove) {
-                const moveKey = lastMove.type === 'move' ? `move:${lastMove.to.x},${lastMove.to.y}` : `wall:${lastMove.x},${lastMove.y},${lastMove.wallType}`;
-                score = state.previousPrecomputedEvaluations.scores.get(moveKey);
+        let score = state.precomputedEvaluations.currentEval;
+        if (score === null || score === undefined) {
+            if (state.previousPrecomputedEvaluations) {
+                const lastMove = state.history[state.history.length - 1];
+                if (lastMove) {
+                    const moveKey = lastMove.type === 'move' ? `move:${lastMove.to.x},${lastMove.to.y}` : `wall:${lastMove.x},${lastMove.y},${lastMove.wallType}`;
+                    score = state.previousPrecomputedEvaluations.scores.get(moveKey);
+                }
             }
         }
 
-        if (score === undefined) {
+        if (score === undefined || score === null) {
             const result = minimax(
                 depth,
                 -Infinity,
@@ -174,8 +216,8 @@ export function precomputeNextMoves() {
                 else vWallsArray[idx] = 1;
             }
 
-            const p1Len = findShortestPathLengthFast(nextP1Pos.x, nextP1Pos.y, 8, hWallsArray, vWallsArray);
-            const p2Len = findShortestPathLengthFast(nextP2Pos.x, nextP2Pos.y, 0, hWallsArray, vWallsArray);
+            const p1Len = findShortestPathLengthFast(nextP1Pos.x, nextP1Pos.y, 8, hWallsArray, vWallsArray, nextP2Pos.x, nextP2Pos.y);
+            const p2Len = findShortestPathLengthFast(nextP2Pos.x, nextP2Pos.y, 0, hWallsArray, vWallsArray, nextP1Pos.x, nextP1Pos.y);
 
             if (move.type === 'wall') {
                 if (move.wallType === 'h') hWallsArray[idx] = 0;
@@ -303,6 +345,11 @@ export function updateEvalBar() {
                 scoreUpdated = true;
             }
         }
+    }
+
+    if (!scoreUpdated && state.precomputedEvaluations && state.precomputedEvaluations.currentEval !== null) {
+        updateEvalBarUI(state.precomputedEvaluations.currentEval);
+        scoreUpdated = true;
     }
 
     if (!scoreUpdated) {

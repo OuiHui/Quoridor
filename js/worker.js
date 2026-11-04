@@ -1,7 +1,7 @@
 import { findShortestPath, getValidPawnMoves } from './engine.js';
 import { evaluateBoard } from './ai-eval.js';
 import { minimax } from './ai-search.js';
-import { runMCTS, resetMCTSTree } from './ai-mcts.js';
+import { runMCTS, resetMCTSTree, tensorizeBoardState } from './ai-mcts.js';
 
 let modelSession = null;
 
@@ -65,6 +65,56 @@ self.onmessage = async function (e) {
     if (type === 'reset_mcts') {
         resetMCTSTree();
         self.postMessage({ type: 'reset_mcts_result', requestId });
+        return;
+    }
+
+    if (type === 'evaluate_state') {
+        const { stateObj } = data;
+        const p1Pos = stateObj.p1Pos;
+        const p2Pos = stateObj.p2Pos;
+        const p1Walls = stateObj.p1Walls;
+        const p2Walls = stateObj.p2Walls;
+        const turn = stateObj.turn;
+        const hWalls = deserializeMap(stateObj.hWalls);
+        const vWalls = deserializeMap(stateObj.vWalls);
+
+        let evalScore = null;
+        let isNN = false;
+
+        if (modelSession && self.ort) {
+            try {
+                const tensorData = tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn);
+                const inputTensor = new self.ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
+                const results = await modelSession.run({ input: inputTensor });
+                const rawValue = results.value.data[0];
+                const p1Value = turn === 1 ? rawValue : -rawValue;
+                evalScore = p1Value * 100;
+                isNN = true;
+            } catch (err) {
+                console.warn('Worker ONNX inference error:', err);
+            }
+        }
+
+        if (evalScore === null) {
+            const result = minimax(
+                4,
+                -Infinity,
+                Infinity,
+                turn === 1,
+                p1Pos,
+                p2Pos,
+                hWalls,
+                vWalls,
+                p1Walls,
+                p2Walls
+            );
+            evalScore = result.score;
+            if (evalScore === undefined || evalScore === null) {
+                evalScore = evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn === 1);
+            }
+        }
+
+        self.postMessage({ type: 'evaluate_state_result', requestId, data: { score: evalScore, isNN } });
         return;
     }
 

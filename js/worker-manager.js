@@ -75,3 +75,16 @@ export function calculateAIMoveInWorker(stateObj, aiSettings) {
         aiSettings
     });
 }
+
+export function evaluatePositionInWorker(stateObj) {
+    const serializedState = {
+        p1Pos: stateObj.p1Pos,
+        p2Pos: stateObj.p2Pos,
+        p1Walls: stateObj.p1Walls,
+        p2Walls: stateObj.p2Walls,
+        hWalls: Array.from(stateObj.hWalls.entries()),
+        vWalls: Array.from(stateObj.vWalls.entries()),
+        turn: stateObj.turn
+    };
+    return sendWorkerRequest('evaluate_state', { stateObj: serializedState });
+}
