@@ -1,10 +1,14 @@
 import { state } from './state.js';
 import { minimax, evaluateBoard, generateSmartMoves } from './ai.js';
-import { findShortestPathLengthFast } from './engine.js';
+import { findShortestPathLengthFast, getGuaranteedWinner } from './engine.js';
 import { tensorizeBoardState } from './ai-mcts.js';
 import { evaluatePositionInWorker } from './worker-manager.js';
 
 export async function evaluatePositionWithNN(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn) {
+    const gw = getGuaranteedWinner(p1Pos, p2Pos, p1Walls, p2Walls, turn === 1, hWalls, vWalls);
+    if (gw === 1) return Infinity;
+    if (gw === -1) return -Infinity;
+
     if (window.quoridorONNXSession && window.ort) {
         try {
             const tensorData = tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn);
@@ -63,16 +67,20 @@ export function updateEvalBarUI(score) {
         bubbleEl.classList.remove('loading');
     }
 
+    const unitEl = document.querySelector('.eval-score-unit');
     let percent;
-    if (score === Infinity) {
+    if (score === Infinity || score >= 500) {
         percent = 100;
         valEl.textContent = '#1';
         valEl.style.color = 'var(--color-p1)';
-    } else if (score === -Infinity) {
+        if (unitEl) unitEl.style.display = 'none';
+    } else if (score === -Infinity || score <= -500) {
         percent = 0;
         valEl.textContent = '#2';
         valEl.style.color = 'var(--color-p2)';
+        if (unitEl) unitEl.style.display = 'none';
     } else {
+        if (unitEl) unitEl.style.display = 'inline';
         const limit = 120;
         const clamped = Math.max(-limit, Math.min(limit, score));
         percent = 50 + (clamped / limit) * 50;

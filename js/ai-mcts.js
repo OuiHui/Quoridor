@@ -29,7 +29,7 @@ export function mapActionToIndex(action, px, py) {
         const ty = action.to.y;
         const dx = tx - px;
         const dy = ty - py;
-        
+
         let moveDir;
         if (dx === 0 && dy === 1) moveDir = 'N';
         else if (dx === 0 && dy === -1) moveDir = 'S';
@@ -43,7 +43,7 @@ export function mapActionToIndex(action, px, py) {
         else if (dx === -1 && dy === 1) moveDir = 'jump_NW';
         else if (dx === 1 && dy === -1) moveDir = 'jump_SE';
         else moveDir = 'jump_SW';
-        
+
         return MOVE_DIR_TO_IDX[moveDir];
     } else if (action.type === 'wall') {
         const wx = action.x;
@@ -138,28 +138,28 @@ export function mapIndexToActionPerspective(index, turn, p1Pos, p2Pos) {
  */
 export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn) {
     const data = new Float32Array(11 * 9 * 9);
-    
+
     // Helper to write to 3D tensor index (c, x, y)
     function write(c, x, y, val) {
         data[c * 81 + x * 9 + y] = val;
     }
-    
-    // Find shortest paths for path cells & length channels
-    const p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls) || [];
-    const p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls) || [];
-    
+
+    0   // Find shortest paths for path cells & length channels (opponent-aware, matching C++ tensorize)
+    const p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, p2Pos) || [];
+    const p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, p1Pos) || [];
+
     const p1Dist = p1Path.length > 0 ? p1Path.length : 20;
     const p2Dist = p2Path.length > 0 ? p2Path.length : 20;
-    
+
     // Turn is 1 (P1) or 2 (P2)
     const isP1Turn = turn === 1;
-    
+
     // Determine active vs inactive player positions and paths with perspective rotation
     let activeX, activeY, oppX, oppY;
     let activePathCells = [], oppPathCells = [];
     let activeDist, oppDist;
     let activeWallsLeft, oppWallsLeft;
-    
+
     if (isP1Turn) {
         activeX = p1Pos.x; activeY = p1Pos.y;
         oppX = p2Pos.x; oppY = p2Pos.y;
@@ -180,14 +180,14 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
         activeWallsLeft = p2Walls;
         oppWallsLeft = p1Walls;
     }
-    
+
     // Fill channels 0-10
     // Channel 0: Your pawn position (active player)
     write(0, activeX, activeY, 1.0);
-    
+
     // Channel 1: Opponent pawn position
     write(1, oppX, oppY, 1.0);
-    
+
     // Channel 2: Horizontal walls (8x8 grid mapped to 9x9 by padding last row/col)
     // Supports hWalls as either Map or Array representation
     if (hWalls instanceof Map) {
@@ -218,7 +218,7 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
             }
         }
     }
-    
+
     // Channel 3: Vertical walls (8x8 mapped to 9x9)
     if (vWalls instanceof Map) {
         for (const key of vWalls.keys()) {
@@ -248,7 +248,7 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
             }
         }
     }
-    
+
     // Channel 4: Your shortest path length (normalized by 20.0)
     const normActivePathLen = Math.min(activeDist / 20.0, 1.0);
     for (let x = 0; x < 9; x++) {
@@ -256,7 +256,7 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
             write(4, x, y, normActivePathLen);
         }
     }
-    
+
     // Channel 5: Opponent shortest path length (normalized by 20.0)
     const normOppPathLen = Math.min(oppDist / 20.0, 1.0);
     for (let x = 0; x < 9; x++) {
@@ -264,17 +264,17 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
             write(5, x, y, normOppPathLen);
         }
     }
-    
+
     // Channel 6: Your path cells
     for (const cell of activePathCells) {
         write(6, cell.x, cell.y, 1.0);
     }
-    
+
     // Channel 7: Opponent path cells
     for (const cell of oppPathCells) {
         write(7, cell.x, cell.y, 1.0);
     }
-    
+
     // Channel 8: Your walls remaining (normalized by 10.0)
     const normActiveWalls = Math.min(activeWallsLeft / 10.0, 1.0);
     for (let x = 0; x < 9; x++) {
@@ -282,7 +282,7 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
             write(8, x, y, normActiveWalls);
         }
     }
-    
+
     // Channel 9: Opponent walls remaining (normalized by 10.0)
     const normOppWalls = Math.min(oppWallsLeft / 10.0, 1.0);
     for (let x = 0; x < 9; x++) {
@@ -290,7 +290,7 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
             write(9, x, y, normOppWalls);
         }
     }
-    
+
     // Channel 10: Path advantage: (oppDist - activeDist) / 16.0, clamped to [-1, 1]
     const pathAdvantage = Math.max(-1.0, Math.min(1.0, (oppDist - activeDist) / 16.0));
     for (let x = 0; x < 9; x++) {
@@ -298,7 +298,7 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
             write(10, x, y, pathAdvantage);
         }
     }
-    
+
     return data;
 }
 
@@ -313,11 +313,11 @@ class MCTSNode {
         this.N = 0;   // Visit count
         this.W = 0.0; // Total value
     }
-    
+
     get Q() {
         return this.N > 0 ? this.W / this.N : 0.0;
     }
-    
+
     isLeaf() {
         return this.children.size === 0;
     }
@@ -329,13 +329,13 @@ function getValidMCTSActions(state) {
     const isP1 = state.turn === 1;
     const myPos = isP1 ? state.p1Pos : state.p2Pos;
     const oppPos = isP1 ? state.p2Pos : state.p1Pos;
-    
+
     // 1. Pawn moves
     const pawnMoves = getValidPawnMoves(myPos.x, myPos.y, oppPos.x, oppPos.y, state.hWalls, state.vWalls);
     for (const m of pawnMoves) {
         actions.push({ type: 'move', to: m });
     }
-    
+
     // 2. Wall moves
     const wallsLeft = isP1 ? state.p1Walls : state.p2Walls;
     if (wallsLeft > 0) {
@@ -350,7 +350,7 @@ function getValidMCTSActions(state) {
             }
         }
     }
-    
+
     return actions;
 }
 
@@ -365,7 +365,7 @@ function transitionState(state, action) {
         p2Walls: state.p2Walls,
         turn: state.turn === 1 ? 2 : 1
     };
-    
+
     const isP1 = state.turn === 1;
     if (action.type === 'move') {
         if (isP1) nextState.p1Pos = action.to; else nextState.p2Pos = action.to;
@@ -375,7 +375,7 @@ function transitionState(state, action) {
         else nextState.vWalls.set(key, true);
         if (isP1) nextState.p1Walls--; else nextState.p2Walls--;
     }
-    
+
     return nextState;
 }
 
@@ -453,7 +453,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         p2Walls,
         turn
     };
-    
+
     // Subtree reuse: check if we can reuse node from previous search
     let root = findMatchingNodeInTree(activeMCTSRoot, rootState);
     if (!root) {
@@ -464,15 +464,15 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
 
     const cPuct = 1.4;
     const PRUNING_THRESHOLD = 0.005;
-    
+
     for (let sim = 0; sim < numSimulations; sim++) {
         let node = root;
-        
+
         // 1. SELECTION
         while (!node.isLeaf()) {
             let bestChild = null;
             let bestScore = -Infinity;
-            
+
             for (const child of node.children.values()) {
                 // Node stores Q value from the perspective of active player at child node.
                 // Parent's active player values child value as opponent outcome (-Q).
@@ -486,7 +486,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             if (!bestChild) break;
             node = bestChild;
         }
-        
+
         // Check terminal state
         const outcome = checkGameOver(node.state);
         if (outcome !== 0) {
@@ -496,17 +496,17 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             backpropagate(node, winnerVal);
             continue;
         }
-        
+
         // 2. EXPANSION & EVALUATION
         let policy, value;
         const validActions = getValidMCTSActions(node.state);
-        
+
         if (validActions.length === 0) {
             // Draw / terminal block check
             backpropagate(node, 0);
             continue;
         }
-        
+
         if (!modelSession) {
             throw new Error("AlphaZero ONNX model is not loaded. Cannot run AlphaZero MCTS without the model session.");
         }
@@ -521,10 +521,10 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             );
             const inputTensor = new ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
             const results = await modelSession.run({ input: inputTensor });
-            
+
             const policyData = results.policy.data;
             const rawValue = results.value.data[0];
-            
+
             // Softmax on policy output
             const expPolicy = policyData.map(Math.exp);
             const sumExp = expPolicy.reduce((a, b) => a + b, 0);
@@ -534,7 +534,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             console.error("ONNX evaluation error during MCTS:", e);
             throw e;
         }
-        
+
         // Extract valid action indices & apply Policy Prior Pruning
         const validActionPairs = validActions.map(action => {
             const idx = mapActionToIndexPerspective(action, node.state.turn, node.state.p1Pos, node.state.p2Pos);
@@ -559,7 +559,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             const normalizedPrior = policySum > 1e-8 ? priorProb / policySum : 1.0 / filteredPairs.length;
             node.children.set(idx, new MCTSNode(nextState, node, idx, normalizedPrior));
         }
-        
+
         // 3. BACKPROPAGATION
         backpropagate(node, value);
 
@@ -582,7 +582,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             }
         }
     }
-    
+
     // Choose best move based on maximum visit counts (robust policy)
     let bestActionIdx = -1;
     let maxVisits = -1;
@@ -592,7 +592,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             bestActionIdx = idx;
         }
     }
-    
+
     if (bestActionIdx === -1) {
         activeMCTSRoot = null;
         const actions = getValidMCTSActions(rootState);
@@ -607,7 +607,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
     } else {
         activeMCTSRoot = null;
     }
-    
+
     return mapIndexToActionPerspective(bestActionIdx, turn, p1Pos, p2Pos);
 }
 
@@ -622,7 +622,7 @@ function backpropagate(node, value) {
     while (curr !== null) {
         curr.N += 1;
         curr.W += tempValue;
-        
+
         // Negate the value for the parent (since parent wants to minimize active child's score)
         tempValue = -tempValue;
         curr = curr.parent;
@@ -633,17 +633,17 @@ function backpropagate(node, value) {
 function fallbackEvaluate(state, validActions) {
     const isP1 = state.turn === 1;
     const playerNum = isP1 ? 1 : 2;
-    
+
     // Estimate board value (mapped to [-1, 1] using tanh)
     // evaluateBoard yields positive score for P1, negative for P2.
     // We adjust the score so it is positive for current player.
     const score = evaluateBoard(state.p1Pos, state.p2Pos, state.hWalls, state.vWalls, state.p1Walls, state.p2Walls, isP1);
     const multiplier = isP1 ? 1.0 : -1.0;
     const value = Math.tanh((score * multiplier) / 50.0);
-    
+
     // Build simulated policy probabilities
     const policy = new Float32Array(TOTAL_ACTIONS);
-    
+
     // Fetch smart candidate moves from our heuristic generator
     const smartCandidates = generateSmartMoves(
         playerNum,
@@ -654,7 +654,7 @@ function fallbackEvaluate(state, validActions) {
         state.p1Walls,
         state.p2Walls
     );
-    
+
     // Convert smartCandidates list to a set of keys for fast lookup
     const smartSet = new Set();
     for (const sc of smartCandidates) {
@@ -664,17 +664,17 @@ function fallbackEvaluate(state, validActions) {
             smartSet.add(`wall:${sc.x},${sc.y},${sc.wallType}`);
         }
     }
-    
+
     const myPos = isP1 ? state.p1Pos : state.p2Pos;
     let scores = [];
     let sumExp = 0.0;
-    
+
     for (const action of validActions) {
         const idx = mapActionToIndexPerspective(action, state.turn, state.p1Pos, state.p2Pos);
-        
+
         // Baseline action score
         let actionScore = 1.0;
-        
+
         // Identify if this is a smart candidate
         let key = '';
         if (action.type === 'move') {
@@ -682,9 +682,9 @@ function fallbackEvaluate(state, validActions) {
         } else if (action.type === 'wall') {
             key = `wall:${action.x},${action.y},${action.wallType}`;
         }
-        
+
         const isSmart = smartSet.has(key);
-        
+
         if (action.type === 'move') {
             const forwardGain = isP1 ? (action.to.y - myPos.y) : (myPos.y - action.to.y);
             // Boost smart moves and moves that go forward
@@ -693,14 +693,14 @@ function fallbackEvaluate(state, validActions) {
             // Boost smart wall placements (barricades) significantly so MCTS evaluates them
             actionScore = isSmart ? 3.5 : 0.5;
         }
-        
+
         scores.push({ idx, expVal: Math.exp(actionScore) });
         sumExp += Math.exp(actionScore);
     }
-    
+
     for (const item of scores) {
         policy[item.idx] = item.expVal / sumExp;
     }
-    
+
     return { policy, value };
 }

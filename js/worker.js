@@ -1,4 +1,4 @@
-import { findShortestPath, getValidPawnMoves } from './engine.js';
+import { findShortestPath, getValidPawnMoves, getGuaranteedWinner } from './engine.js';
 import { evaluateBoard } from './ai-eval.js';
 import { minimax } from './ai-search.js';
 import { runMCTS, resetMCTSTree, tensorizeBoardState } from './ai-mcts.js';
@@ -77,6 +77,16 @@ self.onmessage = async function (e) {
         const turn = stateObj.turn;
         const hWalls = deserializeMap(stateObj.hWalls);
         const vWalls = deserializeMap(stateObj.vWalls);
+
+        const gw = getGuaranteedWinner(p1Pos, p2Pos, p1Walls, p2Walls, turn === 1, hWalls, vWalls);
+        if (gw === 1) {
+            self.postMessage({ type: 'evaluate_state_result', requestId, data: { score: Infinity, isNN: true } });
+            return;
+        }
+        if (gw === -1) {
+            self.postMessage({ type: 'evaluate_state_result', requestId, data: { score: -Infinity, isNN: true } });
+            return;
+        }
 
         let evalScore = null;
         let isNN = false;

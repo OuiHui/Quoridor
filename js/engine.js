@@ -126,7 +126,7 @@ export function findShortestPath(startX, startY, targetY, hWalls, vWalls, oppPos
                             visited.add(key);
                             queue.push({ x: jx, y: jy, path: path.concat([{ x, y }]) });
                         }
-                    } else if (straightBlocked || !straightInBounds) {
+                    } else if (straightBlocked) {
                         const sides = d.dx === 0 ? [{ dx: -1, dy: 0 }, { dx: 1, dy: 0 }] : [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }];
                         for (const s of sides) {
                             const dix = nx + s.dx;
@@ -289,7 +289,7 @@ export function findShortestPathFast(startX, startY, targetY, hWallsArray, vWall
                             parent[nextIdx] = curr;
                             queue[tail++] = nextIdx;
                         }
-                    } else if (straightBlocked || !straightInBounds) {
+                    } else if (straightBlocked) {
                         const sides = dx === 0 ? [{ sx: -1, sy: 0 }, { sx: 1, sy: 0 }] : [{ sx: 0, sy: -1 }, { sx: 0, sy: 1 }];
                         for (let s = 0; s < 2; s++) {
                             const dix = nx + sides[s].sx;
@@ -382,7 +382,7 @@ export function findShortestPathLengthFast(startX, startY, targetY, hWallsArray,
                             dist[nextIdx] = currDist + 1;
                             queue[tail++] = nextIdx;
                         }
-                    } else if (straightBlocked || !straightInBounds) {
+                    } else if (straightBlocked) {
                         const sides = dx === 0 ? [{ sx: -1, sy: 0 }, { sx: 1, sy: 0 }] : [{ sx: 0, sy: -1 }, { sx: 0, sy: 1 }];
                         for (let s = 0; s < 2; s++) {
                             const dix = nx + sides[s].sx;
@@ -507,4 +507,28 @@ export function validateWallPlacementFast(wx, wy, type, p1Pos, p2Pos, hWallsArra
     else vWallsArray[wallIdx] = 0;
     
     return p1Possible && p2Possible;
+}
+
+// Guaranteed winner solver check: returns 1 for P1 win, -1 for P2 win, 0 for ongoing.
+// Mirrors C++ QuoridorGame::get_guaranteed_winner().
+export function getGuaranteedWinner(p1Pos, p2Pos, p1Walls, p2Walls, isP1Turn, hWalls, vWalls) {
+    if (p1Pos.y === 8) return 1;
+    if (p2Pos.y === 0) return -1;
+
+    const p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, p2Pos);
+    const p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, p1Pos);
+
+    if (!p1Path || !p2Path) return 0;
+    const l1 = p1Path.length - 1;
+    const l2 = p2Path.length - 1;
+
+    if (p2Walls === 0) {
+        if (isP1Turn && l1 <= l2 - 1) return 1;
+        if (!isP1Turn && l1 <= l2 - 2) return 1;
+    }
+    if (p1Walls === 0) {
+        if (isP1Turn && l2 <= l1 - 2) return -1;
+        if (!isP1Turn && l2 <= l1 - 1) return -1;
+    }
+    return 0;
 }
