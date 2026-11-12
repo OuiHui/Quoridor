@@ -1,0 +1,58 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "AlphaZero: Start Training (Fresh)",
+      "type": "shell",
+      "command": "python start_training.py --fresh",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      }
+    },
+    {
+      "label": "AlphaZero: Start Training (Resume)",
+      "type": "shell",
+      "command": "python start_training.py",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      }
+    },
+    {
+      "label": "AlphaZero: GPU Server",
+      "type": "shell",
+      "command": "python gpu_inference_server.py",
+      "problemMatcher": [],
+      "presentation": {
+        "group": "quoridor-training",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "AlphaZero: Self-Play Actor #1",
+      "type": "shell",
+      "command": "python run_actor.py --actor_id 1 --batch_size 32",
+      "problemMatcher": [],
+      "presentation": {
+        "group": "quoridor-training",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "AlphaZero: Learner (No Spawn)",
+      "type": "shell",
+      "command": "python train_alphazero.py --no_spawn",
+      "problemMatcher": [],
+      "presentation": {
+        "group": "quoridor-training",
+        "reveal": "always"
+      }
+    }
+  ]
+}
+

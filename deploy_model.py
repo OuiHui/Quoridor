@@ -37,7 +37,15 @@ def main():
     print(f"Detected architecture: {num_blocks} blocks, {channels} channels (epoch {epoch})")
 
     model = QuoridorNet(num_residual_blocks=num_blocks, channels=channels)
-    model.load_state_dict(state_dict, strict=False)
+    model_state = model.state_dict()
+    filtered_state = {
+        k: v for k, v in state_dict.items()
+        if k in model_state and model_state[k].shape == v.shape
+    }
+    mismatched = len(state_dict) - len(filtered_state)
+    if mismatched > 0:
+        print(f"Note: {mismatched} layer(s) had shape mismatches and will use fresh v2 initialization.")
+    model.load_state_dict(filtered_state, strict=False)
 
     os.makedirs("public", exist_ok=True)
     export_to_onnx(model, OUTPUT_PATH)

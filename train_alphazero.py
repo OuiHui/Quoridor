@@ -530,7 +530,8 @@ if __name__ == "__main__":
     parser.add_argument("--games_per_epoch", type=int, default=50, help="Number of self-play games per epoch")
     parser.add_argument("--batch_size", type=int, default=512, help="Mini-batch size for model training (default: 512)")
     parser.add_argument("--lr", type=float, default=0.00015, help="Initial learning rate (default: 0.00015)")
-    parser.add_argument("--simulations", type=int, default=1200, help="Number of MCTS simulations per turn (default: 1200)")
+    parser.add_argument("--simulations", type=int, default=800, help="Number of deep MCTS simulations per turn (default: 800)")
+    parser.add_argument("--fast_simulations", type=int, default=120, help="Number of fast-cap MCTS simulations per turn (PCR, default: 120)")
     parser.add_argument("--dataset_size", type=int, default=100000, help="Max replay buffer size (recent positions kept, default: 100000)")
     parser.add_argument("--data_dir", type=str, default=r"C:\quoridor_data", help="Directory to save/load training games")
     parser.add_argument("--checkpoint_path", type=str, default="quoridor_checkpoint.pth", help="Path to checkpoint file")
@@ -538,6 +539,7 @@ if __name__ == "__main__":
     parser.add_argument("--reset_lr", action="store_true", help="Reset LR and scheduler instead of loading from checkpoint")
     parser.add_argument("--num_actors", type=int, default=16, help="Number of parallel self-play actor processes (default: 16)")
     parser.add_argument("--npu_actors", type=int, default=0, help="Number of self-play actors offloaded to Intel NPU via OpenVINO (default: 0)")
+    parser.add_argument("--no_spawn", action="store_true", help="Do not spawn background GPU server or actors (run learner only)")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda", "xpu", "directml"], help="Execution device (default: auto)")
     parser.add_argument("--num_workers", type=int, default=0, help="Number of PyTorch DataLoader worker subprocesses (default: 0 to prevent Windows process crashes)")
     args = parser.parse_args()
@@ -554,43 +556,46 @@ if __name__ == "__main__":
             pass
     export_to_onnx(starting_model, "quoridor_model.onnx")
 
-    # 2. Spawn Centralized GPU Server & hybrid GPU/NPU self-play Actors
-    num_actors = max(1, args.num_actors)
-    npu_count = min(args.npu_actors, num_actors)
-    gpu_count = num_actors - npu_count
-
-    ts = time.strftime("%H:%M:%S")
-    print(f"[{ts}] [Learner] Spawning Centralized GPU Inference Server...", flush=True)
-    server_process = subprocess.Popen([sys.executable, 'gpu_inference_server.py'])
-    time.sleep(2)  # Allow GPU server to initialize CUDA context
-
-    print(f"[{ts}] [Learner] Spawning {num_actors} hybrid Actors ({gpu_count} on RTX GPU, {npu_count} on Intel NPU)...", flush=True)
+    # 2. Optionally spawn Centralized GPU Server & self-play Actors
+    server_process = None
     actor_processes = []
     
-    # Spawn GPU actors
-    for i in range(gpu_count):
-        p = subprocess.Popen([
-            sys.executable, 'run_actor.py',
-            '--actor_id', str(i + 1),
-            '--simulations', str(args.simulations),
-            '--fast_simulations', str(args.simulations),
-            '--batch_size', '32',
-            '--evaluator', 'central'
-        ])
-        actor_processes.append(p)
+    if not args.no_spawn:
+        num_actors = max(1, args.num_actors)
+        npu_count = min(args.npu_actors, num_actors)
+        gpu_count = num_actors - npu_count
+
+        ts = time.strftime("%H:%M:%S")
+        print(f"[{ts}] [Learner] Spawning Centralized GPU Inference Server...", flush=True)
+        server_process = subprocess.Popen([sys.executable, 'gpu_inference_server.py'])
+        time.sleep(2)  # Allow GPU server to initialize CUDA context
+
+        print(f"[{ts}] [Learner] Spawning {num_actors} hybrid Actors ({gpu_count} on RTX GPU, {npu_count} on Intel NPU)...", flush=True)
         
-    # Spawn Intel NPU actors
-    for i in range(npu_count):
-        actor_num = gpu_count + i + 1
-        p = subprocess.Popen([
-            sys.executable, 'run_actor.py',
-            '--actor_id', str(actor_num),
-            '--simulations', str(args.simulations),
-            '--fast_simulations', str(args.simulations),
-            '--batch_size', '32',
-            '--evaluator', 'npu'
-        ])
-        actor_processes.append(p)
+        # Spawn GPU actors
+        for i in range(gpu_count):
+            p = subprocess.Popen([
+                sys.executable, 'run_actor.py',
+                '--actor_id', str(i + 1),
+                '--simulations', str(args.simulations),
+                '--fast_simulations', str(args.fast_simulations),
+                '--batch_size', '32',
+                '--evaluator', 'central'
+            ])
+            actor_processes.append(p)
+            
+        # Spawn Intel NPU actors
+        for i in range(npu_count):
+            actor_num = gpu_count + i + 1
+            p = subprocess.Popen([
+                sys.executable, 'run_actor.py',
+                '--actor_id', str(actor_num),
+                '--simulations', str(args.simulations),
+                '--fast_simulations', str(args.fast_simulations),
+                '--batch_size', '32',
+                '--evaluator', 'npu'
+            ])
+            actor_processes.append(p)
 
     # 3. Execute the learner loop
     try:
@@ -609,10 +614,13 @@ if __name__ == "__main__":
             num_workers=args.num_workers,
         )
     finally:
-        print(f"Stopping {len(actor_processes)} background self-play Actor processes and GPU server...")
-        for p in actor_processes:
-            p.terminate()
-        server_process.terminate()
-        for p in actor_processes:
-            p.wait()
-        server_process.wait()
+        if actor_processes:
+            print(f"Stopping {len(actor_processes)} background self-play Actor processes...")
+            for p in actor_processes:
+                p.terminate()
+            for p in actor_processes:
+                p.wait()
+        if server_process is not None:
+            print("Stopping GPU inference server...")
+            server_process.terminate()
+            server_process.wait()
