@@ -1,4 +1,4 @@
-import { findShortestPath, getValidPawnMoves, validateWallPlacement } from './engine.js';
+import { findShortestPath, getValidPawnMoves, validateWallPlacement, getGuaranteedWinner, isMoveBlockedFast, getCanonicalStateHash } from './engine.js';
 import { evaluateBoard, generateSmartMoves } from './ai-eval.js';
 
 // ACTION SPACE CONSTANTS
@@ -7,6 +7,143 @@ const WALL_GRID_SIZE = 8;
 const HORIZONTAL_WALLS_START = 12;
 const VERTICAL_WALLS_START = 76;
 const TOTAL_ACTIONS = 140;
+
+export function mirrorPolicy(policy) {
+    const mirrored = new Float32Array(140);
+    if (!policy) return mirrored;
+    mirrored[0] = policy[0];
+    mirrored[1] = policy[1];
+    mirrored[2] = policy[3];
+    mirrored[3] = policy[2];
+    mirrored[4] = policy[4];
+    mirrored[5] = policy[5];
+    mirrored[6] = policy[7];
+    mirrored[7] = policy[6];
+    mirrored[8] = policy[9];
+    mirrored[9] = policy[8];
+    mirrored[10] = policy[11];
+    mirrored[11] = policy[10];
+
+    for (let wy = 0; wy < 8; wy++) {
+        for (let wx = 0; wx < 8; wx++) {
+            mirrored[12 + wy * 8 + (7 - wx)] = policy[12 + wy * 8 + wx];
+            mirrored[76 + wy * 8 + (7 - wx)] = policy[76 + wy * 8 + wx];
+        }
+    }
+    return mirrored;
+}
+
+export function computeReverseBFSDistancesJS(hWallsArray, vWallsArray, targetY) {
+    const dist = new Int32Array(81);
+    dist.fill(20);
+    const queue = new Int32Array(81);
+    let head = 0, tail = 0;
+    for (let x = 0; x < 9; x++) {
+        const idx = x * 9 + targetY;
+        dist[idx] = 0;
+        queue[tail++] = idx;
+    }
+    const dirs = [{ dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 }];
+    while (head < tail) {
+        const curr = queue[head++];
+        const cx = Math.floor(curr / 9);
+        const cy = curr % 9;
+        const nextD = dist[curr] + 1;
+        for (let i = 0; i < 4; i++) {
+            const nx = cx + dirs[i].dx;
+            const ny = cy + dirs[i].dy;
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9 && !isMoveBlockedFast(cx, cy, nx, ny, hWallsArray, vWallsArray)) {
+                const nidx = nx * 9 + ny;
+                if (dist[nidx] > nextD) {
+                    dist[nidx] = nextD;
+                    queue[tail++] = nidx;
+                }
+            }
+        }
+    }
+    return dist;
+}
+
+export function computeDAGCriticalityJS(hWallsArray, vWallsArray, sx, sy, targetY, R) {
+    const crit = new Float32Array(81);
+    const startIdx = sx * 9 + sy;
+    const L = R[startIdx];
+    if (L >= 20) return crit;
+    if (L === 0) {
+        crit[startIdx] = 1.0;
+        return crit;
+    }
+
+    const D = new Int32Array(81);
+    D.fill(-1);
+    const numFwd = new Float64Array(81);
+    D[startIdx] = 0;
+    numFwd[startIdx] = 1.0;
+
+    const queue = new Int32Array(81);
+    let head = 0, tail = 0;
+    queue[tail++] = startIdx;
+
+    const dirs = [{ dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 }];
+    while (head < tail) {
+        const curr = queue[head++];
+        const cx = Math.floor(curr / 9);
+        const cy = curr % 9;
+        for (let i = 0; i < 4; i++) {
+            const nx = cx + dirs[i].dx;
+            const ny = cy + dirs[i].dy;
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9 && !isMoveBlockedFast(cx, cy, nx, ny, hWallsArray, vWallsArray)) {
+                const nidx = nx * 9 + ny;
+                if (D[nidx] === -1) {
+                    D[nidx] = D[curr] + 1;
+                    numFwd[nidx] = numFwd[curr];
+                    queue[tail++] = nidx;
+                } else if (D[nidx] === D[curr] + 1) {
+                    numFwd[nidx] += numFwd[curr];
+                }
+            }
+        }
+    }
+
+    const numRev = new Float64Array(81);
+    for (let x = 0; x < 9; x++) {
+        const idx = x * 9 + targetY;
+        if (R[idx] === 0) numRev[idx] = 1.0;
+    }
+
+    for (let d = 1; d <= L; d++) {
+        for (let x = 0; x < 9; x++) {
+            for (let y = 0; y < 9; y++) {
+                const uidx = x * 9 + y;
+                if (R[uidx] === d) {
+                    for (let i = 0; i < 4; i++) {
+                        const nx = x + dirs[i].dx;
+                        const ny = y + dirs[i].dy;
+                        if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9 && !isMoveBlockedFast(x, y, nx, ny, hWallsArray, vWallsArray)) {
+                            const vidx = nx * 9 + ny;
+                            if (R[vidx] === d - 1) {
+                                numRev[uidx] += numRev[vidx];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    const totalPaths = numRev[startIdx];
+    if (totalPaths <= 0) return crit;
+
+    for (let x = 0; x < 9; x++) {
+        for (let y = 0; y < 9; y++) {
+            const idx = x * 9 + y;
+            if (D[idx] >= 0 && (D[idx] + R[idx] === L)) {
+                crit[idx] = (numFwd[idx] * numRev[idx]) / totalPaths;
+            }
+        }
+    }
+    return crit;
+}
 
 const MOVE_DIR_TO_IDX = {
     'N': 0, 'S': 1, 'E': 2, 'W': 3,
@@ -181,101 +318,106 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
         oppWallsLeft = p1Walls;
     }
 
-    // Fill channels 0-10
-    // Channel 0: Your pawn position (active player)
-    write(0, activeX, activeY, 1.0);
-
-    // Channel 1: Opponent pawn position
-    write(1, oppX, oppY, 1.0);
-
-    // Channel 2: Horizontal walls (8x8 grid mapped to 9x9 by padding last row/col)
-    // Supports hWalls as either Map or Array representation
+    // Build perspective-rotated flat 8x8 wall arrays
+    const viewHWalls = new Uint8Array(64);
+    const viewVWalls = new Uint8Array(64);
     if (hWalls instanceof Map) {
         for (const key of hWalls.keys()) {
             const [wx, wy] = key.split(',').map(Number);
             if (isP1Turn) {
-                if (wx >= 0 && wx < 8 && wy >= 0 && wy < 8) {
-                    write(2, wx, wy, 1.0);
-                }
+                if (wx >= 0 && wx < 8 && wy >= 0 && wy < 8) viewHWalls[wy * 8 + wx] = 1;
             } else {
                 const rx = 7 - wx;
                 const ry = 7 - wy;
-                if (rx >= 0 && rx < 8 && ry >= 0 && ry < 8) {
-                    write(2, rx, ry, 1.0);
-                }
+                if (rx >= 0 && rx < 8 && ry >= 0 && ry < 8) viewHWalls[ry * 8 + rx] = 1;
             }
         }
     } else {
         for (let wy = 0; wy < 8; wy++) {
             for (let wx = 0; wx < 8; wx++) {
                 if (hWalls[wy * 8 + wx]) {
-                    if (isP1Turn) {
-                        write(2, wx, wy, 1.0);
-                    } else {
-                        write(2, 7 - wx, 7 - wy, 1.0);
-                    }
+                    if (isP1Turn) viewHWalls[wy * 8 + wx] = 1;
+                    else viewHWalls[(7 - wy) * 8 + (7 - wx)] = 1;
                 }
             }
         }
     }
 
-    // Channel 3: Vertical walls (8x8 mapped to 9x9)
     if (vWalls instanceof Map) {
         for (const key of vWalls.keys()) {
             const [wx, wy] = key.split(',').map(Number);
             if (isP1Turn) {
-                if (wx >= 0 && wx < 8 && wy >= 0 && wy < 8) {
-                    write(3, wx, wy, 1.0);
-                }
+                if (wx >= 0 && wx < 8 && wy >= 0 && wy < 8) viewVWalls[wy * 8 + wx] = 1;
             } else {
                 const rx = 7 - wx;
                 const ry = 7 - wy;
-                if (rx >= 0 && rx < 8 && ry >= 0 && ry < 8) {
-                    write(3, rx, ry, 1.0);
-                }
+                if (rx >= 0 && rx < 8 && ry >= 0 && ry < 8) viewVWalls[ry * 8 + rx] = 1;
             }
         }
     } else {
         for (let wy = 0; wy < 8; wy++) {
             for (let wx = 0; wx < 8; wx++) {
                 if (vWalls[wy * 8 + wx]) {
-                    if (isP1Turn) {
-                        write(3, wx, wy, 1.0);
-                    } else {
-                        write(3, 7 - wx, 7 - wy, 1.0);
-                    }
+                    if (isP1Turn) viewVWalls[wy * 8 + wx] = 1;
+                    else viewVWalls[(7 - wy) * 8 + (7 - wx)] = 1;
                 }
             }
         }
     }
 
-    // Channel 4: Your shortest path length (normalized by 20.0)
-    const normActivePathLen = Math.min(activeDist / 20.0, 1.0);
-    for (let x = 0; x < 9; x++) {
-        for (let y = 0; y < 9; y++) {
-            write(4, x, y, normActivePathLen);
+    // Channel 0: Active pawn position
+    write(0, activeX, activeY, 1.0);
+
+    // Channel 1: Opponent pawn position
+    write(1, oppX, oppY, 1.0);
+
+    // Channel 2: Horizontal walls (8x8 in 9x9)
+    for (let wy = 0; wy < 8; wy++) {
+        for (let wx = 0; wx < 8; wx++) {
+            if (viewHWalls[wy * 8 + wx]) write(2, wx, wy, 1.0);
         }
     }
 
-    // Channel 5: Opponent shortest path length (normalized by 20.0)
-    const normOppPathLen = Math.min(oppDist / 20.0, 1.0);
-    for (let x = 0; x < 9; x++) {
-        for (let y = 0; y < 9; y++) {
-            write(5, x, y, normOppPathLen);
+    // Channel 3: Vertical walls (8x8 in 9x9)
+    for (let wy = 0; wy < 8; wy++) {
+        for (let wx = 0; wx < 8; wx++) {
+            if (viewVWalls[wy * 8 + wx]) write(3, wx, wy, 1.0);
         }
     }
 
-    // Channel 6: Your path cells
-    for (const cell of activePathCells) {
-        write(6, cell.x, cell.y, 1.0);
+    // Channel 4: Active player 2D Reverse-BFS Distance Map (to target row 8)
+    const rActive = computeReverseBFSDistancesJS(viewHWalls, viewVWalls, 8);
+    for (let x = 0; x < 9; x++) {
+        for (let y = 0; y < 9; y++) {
+            write(4, x, y, Math.min(rActive[x * 9 + y] / 20.0, 1.0));
+        }
     }
 
-    // Channel 7: Opponent path cells
-    for (const cell of oppPathCells) {
-        write(7, cell.x, cell.y, 1.0);
+    // Channel 5: Opponent player 2D Reverse-BFS Distance Map (to target row 0)
+    const rOpp = computeReverseBFSDistancesJS(viewHWalls, viewVWalls, 0);
+    for (let x = 0; x < 9; x++) {
+        for (let y = 0; y < 9; y++) {
+            write(5, x, y, Math.min(rOpp[x * 9 + y] / 20.0, 1.0));
+        }
     }
 
-    // Channel 8: Your walls remaining (normalized by 10.0)
+    // Channel 6: Active player All-Shortest-Paths DAG Criticality Mask
+    const critActive = computeDAGCriticalityJS(viewHWalls, viewVWalls, activeX, activeY, 8, rActive);
+    for (let x = 0; x < 9; x++) {
+        for (let y = 0; y < 9; y++) {
+            write(6, x, y, critActive[x * 9 + y]);
+        }
+    }
+
+    // Channel 7: Opponent player All-Shortest-Paths DAG Criticality Mask
+    const critOpp = computeDAGCriticalityJS(viewHWalls, viewVWalls, oppX, oppY, 0, rOpp);
+    for (let x = 0; x < 9; x++) {
+        for (let y = 0; y < 9; y++) {
+            write(7, x, y, critOpp[x * 9 + y]);
+        }
+    }
+
+    // Channel 8: Active walls remaining / 10.0
     const normActiveWalls = Math.min(activeWallsLeft / 10.0, 1.0);
     for (let x = 0; x < 9; x++) {
         for (let y = 0; y < 9; y++) {
@@ -283,7 +425,7 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
         }
     }
 
-    // Channel 9: Opponent walls remaining (normalized by 10.0)
+    // Channel 9: Opponent walls remaining / 10.0
     const normOppWalls = Math.min(oppWallsLeft / 10.0, 1.0);
     for (let x = 0; x < 9; x++) {
         for (let y = 0; y < 9; y++) {
@@ -292,10 +434,17 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
     }
 
     // Channel 10: Path advantage: (oppDist - activeDist) / 16.0, clamped to [-1, 1]
-    const pathAdvantage = Math.max(-1.0, Math.min(1.0, (oppDist - activeDist) / 16.0));
+    // alongside jump-parity tempo: even Manhattan distance gives active player straight jump initiative (+1.0),
+    // odd gives opponent jump initiative (-1.0). Arranged in checkerboard ((x+y)%2 == 0: pathAdvantage, odd: jumpParity)
+    // preserving horizontal symmetry and 180-degree perspective invariance.
+    const actDistRaw = rActive[activeX * 9 + activeY];
+    const oppDistRaw = rOpp[oppX * 9 + oppY];
+    const pathAdvantage = Math.max(-1.0, Math.min(1.0, (oppDistRaw - actDistRaw) / 16.0));
+    const mDist = Math.abs(activeX - oppX) + Math.abs(activeY - oppY);
+    const jumpParity = (mDist % 2 === 0) ? 1.0 : -1.0;
     for (let x = 0; x < 9; x++) {
         for (let y = 0; y < 9; y++) {
-            write(10, x, y, pathAdvantage);
+            write(10, x, y, ((x + y) % 2 === 0) ? pathAdvantage : jumpParity);
         }
     }
 
@@ -339,12 +488,14 @@ function getValidMCTSActions(state) {
     // 2. Wall moves
     const wallsLeft = isP1 ? state.p1Walls : state.p2Walls;
     if (wallsLeft > 0) {
+        const p1Path = findShortestPath(state.p1Pos.x, state.p1Pos.y, 8, state.hWalls, state.vWalls, state.p2Pos) || [];
+        const p2Path = findShortestPath(state.p2Pos.x, state.p2Pos.y, 0, state.hWalls, state.vWalls, state.p1Pos) || [];
         for (let wx = 0; wx < 8; wx++) {
             for (let wy = 0; wy < 8; wy++) {
-                if (validateWallPlacement(wx, wy, 'h', state.p1Pos, state.p2Pos, state.hWalls, state.vWalls)) {
+                if (validateWallPlacement(wx, wy, 'h', state.p1Pos, state.p2Pos, state.hWalls, state.vWalls, p1Path, p2Path)) {
                     actions.push({ type: 'wall', wallType: 'h', x: wx, y: wy });
                 }
-                if (validateWallPlacement(wx, wy, 'v', state.p1Pos, state.p2Pos, state.hWalls, state.vWalls)) {
+                if (validateWallPlacement(wx, wy, 'v', state.p1Pos, state.p2Pos, state.hWalls, state.vWalls, p1Path, p2Path)) {
                     actions.push({ type: 'wall', wallType: 'v', x: wx, y: wy });
                 }
             }
@@ -389,11 +540,31 @@ function checkGameOver(state) {
 // Module-level tree cache for subtree preservation across turns
 let activeMCTSRoot = null;
 
+// Transposition Table cache (canonical hash -> { policy, value, provenStatus })
+const transpositionTable = new Map();
+const MAX_TT_ENTRIES = 20000;
+
+export function getTTSize() {
+    return transpositionTable.size;
+}
+
+export function clearTT() {
+    transpositionTable.clear();
+}
+
+function storeTT(hash, policy, value, provenStatus = 0) {
+    if (transpositionTable.size >= MAX_TT_ENTRIES) {
+        transpositionTable.clear();
+    }
+    transpositionTable.set(hash, { policy, value, provenStatus });
+}
+
 /**
- * Resets the active MCTS tree cache.
+ * Resets the active MCTS tree cache and Transposition Table.
  */
 export function resetMCTSTree() {
     activeMCTSRoot = null;
+    transpositionTable.clear();
 }
 
 /**
@@ -463,9 +634,119 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
     }
 
     const cPuct = 1.4;
+    const cFpu = 0.20;
     const PRUNING_THRESHOLD = 0.005;
+    const isGumbel = numSimulations <= 128;
+    const gumbelCandidates = [];
+
+    // Ensure root is expanded
+    if (root.isLeaf()) {
+        const rootGameOver = checkGameOver(root.state);
+        if (rootGameOver !== 0) return null;
+        const validActions = getValidMCTSActions(root.state);
+        if (validActions.length === 0) return null;
+        if (validActions.length === 1) return validActions[0];
+
+        const { hash: rootHash, isMirrored: rootMirr } = getCanonicalStateHash(
+            root.state.p1Pos, root.state.p2Pos,
+            root.state.hWalls, root.state.vWalls,
+            root.state.p1Walls, root.state.p2Walls,
+            root.state.turn === 1
+        );
+        let rootPolicy, rootValue;
+        const ttEntry = transpositionTable.get(rootHash);
+        if (ttEntry && ttEntry.policy) {
+            rootValue = ttEntry.value;
+            rootPolicy = rootMirr ? mirrorPolicy(ttEntry.policy) : ttEntry.policy;
+        } else {
+            if (!modelSession) {
+                throw new Error("AlphaZero ONNX model is not loaded. Cannot run AlphaZero MCTS without the model session.");
+            }
+            const tensorData = tensorizeBoardState(
+                root.state.p1Pos, root.state.p2Pos,
+                root.state.hWalls, root.state.vWalls,
+                root.state.p1Walls, root.state.p2Walls,
+                root.state.turn
+            );
+            const inputTensor = new ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
+            const results = await modelSession.run({ input: inputTensor });
+            const expPolicy = results.policy.data.map(Math.exp);
+            const sumExp = expPolicy.reduce((a, b) => a + b, 0);
+            rootPolicy = expPolicy.map(v => v / sumExp);
+            rootValue = results.value.data[0];
+
+            const canonPolicy = rootMirr ? mirrorPolicy(rootPolicy) : rootPolicy;
+            storeTT(rootHash, canonPolicy, rootValue, 0);
+        }
+
+        const validPairs = validActions.map(action => {
+            const idx = mapActionToIndexPerspective(action, root.state.turn, root.state.p1Pos, root.state.p2Pos);
+            return { action, idx, priorProb: rootPolicy[idx] || 0.0 };
+        });
+        let filteredPairs = validPairs.filter(p => p.action.type === 'move' || p.priorProb >= PRUNING_THRESHOLD);
+        if (filteredPairs.length < 4) filteredPairs = validPairs;
+        let pSum = filteredPairs.reduce((s, p) => s + p.priorProb, 0);
+        for (const { action, idx, priorProb } of filteredPairs) {
+            const nextState = transitionState(root.state, action);
+            const normP = pSum > 1e-8 ? priorProb / pSum : 1.0 / filteredPairs.length;
+            root.children.set(idx, new MCTSNode(nextState, root, idx, normP));
+        }
+        backpropagate(root, rootValue);
+    }
+
+    // Initialize Gumbel AlphaZero candidates (Top-16 sampling)
+    if (isGumbel && root.children.size > 0) {
+        const scores = [];
+        for (const [idx, child] of root.children.entries()) {
+            const u = Math.max(1e-7, Math.min(1 - 1e-7, Math.random()));
+            const g = -Math.log(-Math.log(u));
+            const score = Math.log(Math.max(1e-8, child.prior)) + g;
+            scores.push({ idx, gumbel: g, prior: child.prior, score });
+        }
+        scores.sort((a, b) => b.score - a.score);
+        const mTop = Math.min(16, scores.length);
+        for (let i = 0; i < scores.length; i++) {
+            gumbelCandidates.push({
+                idx: scores[i].idx,
+                gumbel: scores[i].gumbel,
+                prior: scores[i].prior,
+                active: i < mTop
+            });
+        }
+    }
 
     for (let sim = 0; sim < numSimulations; sim++) {
+        // Sequential Halving Checkpoints at 25%, 50%, 75% of simulation budget
+        if (isGumbel && gumbelCandidates.length > 0 && sim > 0) {
+            const q1 = Math.floor(numSimulations / 4);
+            const q2 = Math.floor(numSimulations / 2);
+            const q3 = Math.floor((3 * numSimulations) / 4);
+            if (sim === q1 || sim === q2 || sim === q3) {
+                const active = gumbelCandidates.filter(c => c.active);
+                if (active.length > 1) {
+                    let maxChildN = 0;
+                    for (const child of root.children.values()) {
+                        if (child.N > maxChildN) maxChildN = child.N;
+                    }
+                    const sigmaScale = (50.0 + maxChildN) * 1.0;
+
+                    active.sort((a, b) => {
+                        const childA = root.children.get(a.idx);
+                        const childB = root.children.get(b.idx);
+                        const qA = (childA && childA.N > 0) ? -childA.Q : -1.0;
+                        const qB = (childB && childB.N > 0) ? -childB.Q : -1.0;
+                        const scoreA = Math.log(Math.max(1e-8, a.prior)) + a.gumbel + sigmaScale * qA;
+                        const scoreB = Math.log(Math.max(1e-8, b.prior)) + b.gumbel + sigmaScale * qB;
+                        return scoreB - scoreA;
+                    });
+                    const keepCount = Math.max(1, Math.floor(active.length / 2));
+                    for (let i = keepCount; i < active.length; i++) {
+                        active[i].active = false;
+                    }
+                }
+            }
+        }
+
         let node = root;
 
         // 1. SELECTION
@@ -473,14 +754,60 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             let bestChild = null;
             let bestScore = -Infinity;
 
-            for (const child of node.children.values()) {
-                // Node stores Q value from the perspective of active player at child node.
-                // Parent's active player values child value as opponent outcome (-Q).
-                const qScore = child.N > 0 ? -child.Q : node.Q;
-                const uScore = qScore + cPuct * child.prior * (Math.sqrt(node.N) / (1 + child.N));
-                if (uScore > bestScore) {
-                    bestScore = uScore;
-                    bestChild = child;
+            if (node === root) {
+                if (isGumbel && gumbelCandidates.length > 0) {
+                    let minVisits = Infinity;
+                    let bestPerturbed = -Infinity;
+                    for (const cand of gumbelCandidates) {
+                        if (!cand.active) continue;
+                        const child = root.children.get(cand.idx);
+                        if (child) {
+                            const perturbed = Math.log(Math.max(1e-8, cand.prior)) + cand.gumbel;
+                            if (child.N < minVisits || (child.N === minVisits && perturbed > bestPerturbed)) {
+                                minVisits = child.N;
+                                bestPerturbed = perturbed;
+                                bestChild = child;
+                            }
+                        }
+                    }
+                } else {
+                    // KataGo Forced Playouts at root node
+                    const kForced = 2.0;
+                    const sqrtRootN = Math.sqrt(Math.max(1, root.N));
+                    let maxDeficit = 0;
+                    for (const child of root.children.values()) {
+                        const nForced = Math.floor(kForced * child.prior * sqrtRootN);
+                        if (child.N < nForced) {
+                            const deficit = nForced - child.N;
+                            if (deficit > maxDeficit) {
+                                maxDeficit = deficit;
+                                bestChild = child;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!bestChild) {
+                if (isGumbel) {
+                    const totalN = node.N;
+                    for (const child of node.children.values()) {
+                        const score = child.prior - (child.N / (1 + totalN));
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestChild = child;
+                        }
+                    }
+                } else {
+                    for (const child of node.children.values()) {
+                        // KataGo FPU Reduction: unvisited child receives parent Q minus cFpu
+                        const qScore = child.N > 0 ? -child.Q : (node.Q - cFpu);
+                        const uScore = qScore + cPuct * child.prior * (Math.sqrt(node.N) / (1 + child.N));
+                        if (uScore > bestScore) {
+                            bestScore = uScore;
+                            bestChild = child;
+                        }
+                    }
                 }
             }
             if (!bestChild) break;
@@ -490,10 +817,20 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         // Check terminal state
         const outcome = checkGameOver(node.state);
         if (outcome !== 0) {
-            // Backpropagate terminal result
-            // Winner gets 1.0, loser gets -1.0.
             const winnerVal = (outcome === 1 && node.state.turn === 1) || (outcome === -1 && node.state.turn === 2) ? 1.0 : -1.0;
             backpropagate(node, winnerVal);
+            continue;
+        }
+
+        // Zero-Wall Race Solver check: instantly evaluate without calling NN
+        const raceWinner = getGuaranteedWinner(
+            node.state.p1Pos, node.state.p2Pos,
+            node.state.p1Walls, node.state.p2Walls,
+            node.state.turn === 1, node.state.hWalls, node.state.vWalls
+        );
+        if (raceWinner !== 0) {
+            const raceVal = (raceWinner === 1 && node.state.turn === 1) || (raceWinner === -1 && node.state.turn === 2) ? 1.0 : -1.0;
+            backpropagate(node, raceVal);
             continue;
         }
 
@@ -502,37 +839,53 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         const validActions = getValidMCTSActions(node.state);
 
         if (validActions.length === 0) {
-            // Draw / terminal block check
             backpropagate(node, 0);
             continue;
         }
 
-        if (!modelSession) {
-            throw new Error("AlphaZero ONNX model is not loaded. Cannot run AlphaZero MCTS without the model session.");
-        }
+        const { hash: stateHash, isMirrored } = getCanonicalStateHash(
+            node.state.p1Pos, node.state.p2Pos,
+            node.state.hWalls, node.state.vWalls,
+            node.state.p1Walls, node.state.p2Walls,
+            node.state.turn === 1
+        );
 
-        // --- ONNX MODEL INFERENCE ---
-        try {
-            const tensorData = tensorizeBoardState(
-                node.state.p1Pos, node.state.p2Pos,
-                node.state.hWalls, node.state.vWalls,
-                node.state.p1Walls, node.state.p2Walls,
-                node.state.turn
-            );
-            const inputTensor = new ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
-            const results = await modelSession.run({ input: inputTensor });
+        const ttEntry = transpositionTable.get(stateHash);
+        if (ttEntry && ttEntry.policy) {
+            value = ttEntry.value;
+            policy = isMirrored ? mirrorPolicy(ttEntry.policy) : ttEntry.policy;
+        } else {
+            if (!modelSession) {
+                throw new Error("AlphaZero ONNX model is not loaded. Cannot run AlphaZero MCTS without the model session.");
+            }
 
-            const policyData = results.policy.data;
-            const rawValue = results.value.data[0];
+            // --- ONNX MODEL INFERENCE ---
+            try {
+                const tensorData = tensorizeBoardState(
+                    node.state.p1Pos, node.state.p2Pos,
+                    node.state.hWalls, node.state.vWalls,
+                    node.state.p1Walls, node.state.p2Walls,
+                    node.state.turn
+                );
+                const inputTensor = new ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
+                const results = await modelSession.run({ input: inputTensor });
 
-            // Softmax on policy output
-            const expPolicy = policyData.map(Math.exp);
-            const sumExp = expPolicy.reduce((a, b) => a + b, 0);
-            policy = expPolicy.map(v => v / sumExp);
-            value = rawValue;
-        } catch (e) {
-            console.error("ONNX evaluation error during MCTS:", e);
-            throw e;
+                const policyData = results.policy.data;
+                const rawValue = results.value.data[0];
+
+                // Softmax on policy output
+                const expPolicy = policyData.map(Math.exp);
+                const sumExp = expPolicy.reduce((a, b) => a + b, 0);
+                policy = expPolicy.map(v => v / sumExp);
+                value = rawValue;
+
+                // Cache in Transposition Table (canonical orientation)
+                const canonPolicy = isMirrored ? mirrorPolicy(policy) : policy;
+                storeTT(stateHash, canonPolicy, value, 0);
+            } catch (e) {
+                console.error("ONNX evaluation error during MCTS:", e);
+                throw e;
+            }
         }
 
         // Extract valid action indices & apply Policy Prior Pruning
@@ -542,7 +895,6 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             return { action, idx, priorProb: p };
         });
 
-        // Filter non-pawn moves with prior below threshold unless candidate count is very small
         let filteredPairs = validActionPairs.filter(pair => pair.action.type === 'move' || pair.priorProb >= PRUNING_THRESHOLD);
         if (filteredPairs.length < 4) {
             filteredPairs = validActionPairs;
@@ -553,7 +905,6 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             policySum += pair.priorProb;
         }
 
-        // Expand node children with normalized priors
         for (const { action, idx, priorProb } of filteredPairs) {
             const nextState = transitionState(node.state, action);
             const normalizedPrior = policySum > 1e-8 ? priorProb / policySum : 1.0 / filteredPairs.length;
@@ -564,7 +915,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         backpropagate(node, value);
 
         // 4. DYNAMIC EARLY STOPPING
-        if (sim >= 15 && root.children.size > 1) {
+        if (!isGumbel && sim >= 15 && root.children.size > 1) {
             let maxVisits = -1;
             let secondMaxVisits = -1;
             for (const child of root.children.values()) {
@@ -577,19 +928,43 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             }
             const remainingSims = numSimulations - (sim + 1);
             if (maxVisits - secondMaxVisits > remainingSims) {
-                // Top move visit lead cannot be overtaken by remaining simulation budget
                 break;
             }
         }
     }
 
-    // Choose best move based on maximum visit counts (robust policy)
+    // Choose best move based on maximum visit counts / Gumbel scores
     let bestActionIdx = -1;
-    let maxVisits = -1;
-    for (const [idx, child] of root.children.entries()) {
-        if (child.N > maxVisits) {
-            maxVisits = child.N;
-            bestActionIdx = idx;
+    if (isGumbel && gumbelCandidates.length > 0) {
+        const active = gumbelCandidates.filter(c => c.active);
+        let maxVisits = -1;
+        let bestScore = -Infinity;
+        let maxChildN = 0;
+        for (const child of root.children.values()) {
+            if (child.N > maxChildN) maxChildN = child.N;
+        }
+        const sigmaScale = (50.0 + maxChildN) * 1.0;
+
+        for (const cand of active) {
+            const child = root.children.get(cand.idx);
+            if (child) {
+                const qVal = child.N > 0 ? -child.Q : -1.0;
+                const score = Math.log(Math.max(1e-8, cand.prior)) + cand.gumbel + sigmaScale * qVal;
+                if (child.N > maxVisits || (child.N === maxVisits && score > bestScore)) {
+                    maxVisits = child.N;
+                    bestScore = score;
+                    bestActionIdx = cand.idx;
+                }
+            }
+        }
+    }
+    if (bestActionIdx === -1) {
+        let maxVisits = -1;
+        for (const [idx, child] of root.children.entries()) {
+            if (child.N > maxVisits) {
+                maxVisits = child.N;
+                bestActionIdx = idx;
+            }
         }
     }
 

@@ -80,6 +80,15 @@ PYBIND11_MODULE(quoridor_cpp, m) {
         .def_readwrite("p1_walls_left", &QuoridorGame::p1_walls_left)
         .def_readwrite("p2_walls_left", &QuoridorGame::p2_walls_left)
         .def_readwrite("is_p1_turn", &QuoridorGame::is_p1_turn)
+        .def_readwrite("h_bitboard", &QuoridorGame::h_bitboard)
+        .def_readwrite("v_bitboard", &QuoridorGame::v_bitboard)
+        .def("update_bitboards", &QuoridorGame::update_bitboards)
+        .def("get_canonical_hash", [](const QuoridorGame& g) {
+            bool is_mirr = false;
+            uint64_t h = g.get_canonical_hash(&is_mirr);
+            return py::make_tuple(h, is_mirr);
+        })
+        .def_static("mirror_bitboard_horizontal", &QuoridorGame::mirror_bitboard_horizontal)
         .def("clone", &QuoridorGame::clone)
         .def("clone_and_step", &QuoridorGame::clone_and_step)
         .def("is_move_blocked", &QuoridorGame::is_move_blocked)
@@ -87,11 +96,18 @@ PYBIND11_MODULE(quoridor_cpp, m) {
         .def("has_path_to_row", &QuoridorGame::has_path_to_row)
         .def("get_valid_pawn_moves", &QuoridorGame::get_valid_pawn_moves)
         .def("validate_wall_placement", &QuoridorGame::validate_wall_placement)
+        .def("validate_wall_placement_cached", &QuoridorGame::validate_wall_placement_cached)
+        .def("count_wall_contacts", &QuoridorGame::count_wall_contacts)
         .def("get_candidate_walls", &QuoridorGame::get_candidate_walls)
         .def("get_valid_actions", &QuoridorGame::get_valid_actions)
         .def("step", &QuoridorGame::step)
         .def("is_game_over", &QuoridorGame::is_game_over)
         .def("get_guaranteed_winner", &QuoridorGame::get_guaranteed_winner)
+        .def("are_shortest_path_dags_disjoint", [](const QuoridorGame& g) {
+            int l1 = 0, l2 = 0;
+            bool disjoint = g.are_shortest_path_dags_disjoint(l1, l2);
+            return std::make_tuple(disjoint, l1, l2);
+        })
         .def("evaluate_heuristic", &QuoridorGame::evaluate_heuristic)
         // Helper properties to fetch sets/dicts matching the python simulator behavior
         .def_property_readonly("h_walls", &QuoridorGame::get_h_walls_set)
@@ -100,10 +116,15 @@ PYBIND11_MODULE(quoridor_cpp, m) {
         .def_property_readonly("v_wall_owners", &QuoridorGame::get_v_wall_owners_map);
 
     py::class_<MCTS>(m, "MCTS")
-        .def(py::init<double, double, double>(), py::arg("c_puct") = 1.4, py::arg("dirichlet_alpha") = 0.3, py::arg("dirichlet_eps") = 0.25)
+        .def(py::init<double, double, double, double, bool>(), py::arg("c_puct") = 1.4, py::arg("dirichlet_alpha") = 0.3, py::arg("dirichlet_eps") = 0.25, py::arg("c_fpu") = 0.20, py::arg("use_gumbel") = false)
         .def_readwrite("c_puct", &MCTS::c_puct)
         .def_readwrite("dirichlet_alpha", &MCTS::dirichlet_alpha)
         .def_readwrite("dirichlet_eps", &MCTS::dirichlet_eps)
+        .def_readwrite("c_fpu", &MCTS::c_fpu)
+        .def_readwrite("use_gumbel", &MCTS::use_gumbel)
+        .def("clear_transposition_table", &MCTS::clear_transposition_table)
+        .def("get_tt_size", &MCTS::get_tt_size)
+        .def_static("mirror_policy_cpp", &MCTS::mirror_policy_cpp)
         .def("run_search_batched", &run_search_batched_py)
         .def_static("encode_state_cpp", &MCTS::encode_state_cpp);
 }

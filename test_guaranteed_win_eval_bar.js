@@ -143,6 +143,35 @@ updateEvalBarUI(500);
 assert(mockElements['eval-bar-fill'].style.height === '100%', 'Score >= 500 maps to 100% fill height', `height=${mockElements['eval-bar-fill'].style.height}`);
 assert(mockElements['eval-score-value'].textContent === '#1', 'Score >= 500 displays "#1"', `text=${mockElements['eval-score-value'].textContent}`);
 
+console.log('\n--- Test 6: Head-to-Head Jump Parity Guard in Zero-Wall Solver ---');
+// When two pawns with 0 walls run head-on along the same column with equal distance,
+// face-to-face pawn jumps could invert the race winner.
+// getGuaranteedWinner must return 0 (unsettled) rather than prematurely declaring a winner.
+const s6 = {
+    p1Pos: { x: 4, y: 2 }, // moving to y=8
+    p2Pos: { x: 4, y: 6 }, // moving to y=0
+    p1Walls: 0,
+    p2Walls: 0,
+    turn: 1,
+    hWalls: new Map(),
+    vWalls: new Map()
+};
+const gw6 = getGuaranteedWinner(s6.p1Pos, s6.p2Pos, s6.p1Walls, s6.p2Walls, true, s6.hWalls, s6.vWalls);
+assert(gw6 === 0, 'Head-to-head collision race properly returns 0 (not prematurely solved)', `winner=${gw6}`);
+
+// Divergent race (moving away from each other) has disjoint DAGs and safely settles
+const s6Divergent = {
+    p1Pos: { x: 4, y: 6 }, // moving away to y=8 (dist 2)
+    p2Pos: { x: 4, y: 2 }, // moving away to y=0 (dist 2)
+    p1Walls: 0,
+    p2Walls: 0,
+    turn: 1,
+    hWalls: new Map(),
+    vWalls: new Map()
+};
+const gw6Div = getGuaranteedWinner(s6Divergent.p1Pos, s6Divergent.p2Pos, s6Divergent.p1Walls, s6Divergent.p2Walls, true, s6Divergent.hWalls, s6Divergent.vWalls);
+assert(gw6Div === 1, 'Disjoint divergent race properly returns 1 on P1 turn', `winner=${gw6Div}`);
+
 console.log('\n' + '='.repeat(70));
 console.log(`SUMMARY: ${passedTests}/${totalTests} tests passed (${(passedTests / totalTests * 100).toFixed(1)}%)`);
 console.log('='.repeat(70));

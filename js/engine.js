@@ -179,31 +179,125 @@ export function isWallPlacementOverlap(wx, wy, type, hWalls, vWalls) {
     return false;
 }
 
-// Validates both overlap and path-blocking rules
-export function validateWallPlacement(wx, wy, type, p1Pos, p2Pos, hWalls, vWalls) {
+// Count contacts for Slatton's 2-contact rule
+export function countWallContacts(wx, wy, type, hWalls, vWalls) {
     if (!(hWalls instanceof Map)) {
-        return validateWallPlacementFast(wx, wy, type, p1Pos, p2Pos, hWalls, vWalls);
+        return countWallContactsFast(wx, wy, type, hWalls, vWalls);
     }
-    // 1. Overlap Check
+    if (type === 'h') {
+        let c0 = (wx === 0);
+        if (!c0 && wx >= 2 && hWalls.has(`${wx - 2},${wy}`)) c0 = true;
+        if (!c0 && wy >= 1 && vWalls.has(`${wx},${wy - 1}`)) c0 = true;
+        if (!c0 && wy + 1 < 8 && vWalls.has(`${wx},${wy + 1}`)) c0 = true;
+
+        let c1 = false;
+        if (wy >= 1 && vWalls.has(`${wx + 1},${wy - 1}`)) c1 = true;
+        if (!c1 && wy + 1 < 8 && vWalls.has(`${wx + 1},${wy + 1}`)) c1 = true;
+
+        let c2 = (wx === 7);
+        if (!c2 && wx + 2 < 8 && hWalls.has(`${wx + 2},${wy}`)) c2 = true;
+        if (!c2 && wy >= 1 && vWalls.has(`${wx + 2},${wy - 1}`)) c2 = true;
+        if (!c2 && wy + 1 < 8 && vWalls.has(`${wx + 2},${wy + 1}`)) c2 = true;
+
+        return (c0 ? 1 : 0) + (c1 ? 1 : 0) + (c2 ? 1 : 0);
+    } else {
+        let c0 = (wy === 0);
+        if (!c0 && wy >= 2 && vWalls.has(`${wx},${wy - 2}`)) c0 = true;
+        if (!c0 && wx >= 1 && hWalls.has(`${wx - 1},${wy}`)) c0 = true;
+        if (!c0 && wx + 1 < 8 && hWalls.has(`${wx + 1},${wy}`)) c0 = true;
+
+        let c1 = false;
+        if (wx >= 1 && hWalls.has(`${wx - 1},${wy + 1}`)) c1 = true;
+        if (!c1 && wx + 1 < 8 && hWalls.has(`${wx + 1},${wy + 1}`)) c1 = true;
+
+        let c2 = (wy === 7);
+        if (!c2 && wy + 2 < 8 && vWalls.has(`${wx},${wy + 2}`)) c2 = true;
+        if (!c2 && wx >= 1 && hWalls.has(`${wx - 1},${wy + 2}`)) c2 = true;
+        if (!c2 && wx + 1 < 8 && hWalls.has(`${wx + 1},${wy + 2}`)) c2 = true;
+
+        return (c0 ? 1 : 0) + (c1 ? 1 : 0) + (c2 ? 1 : 0);
+    }
+}
+
+export function doesWallIntersectPath(wx, wy, type, path) {
+    if (!path || path.length < 2) return false;
+    for (let i = 0; i < path.length - 1; i++) {
+        const x1 = path[i].x;
+        const y1 = path[i].y;
+        const x2 = path[i + 1].x;
+        const y2 = path[i + 1].y;
+
+        if (x1 === x2) {
+            const ymin = Math.min(y1, y2);
+            const ymax = Math.max(y1, y2);
+            if (type === 'h' && (wx === x1 || wx === x1 - 1)) {
+                if (ymax - ymin === 1) {
+                    if (ymin === wy) return true;
+                } else if (ymin <= wy && wy < ymax) {
+                    return true;
+                }
+            }
+        } else if (y1 === y2) {
+            const xmin = Math.min(x1, x2);
+            const xmax = Math.max(x1, x2);
+            if (type === 'v' && (wy === y1 || wy === y1 - 1)) {
+                if (xmax - xmin === 1) {
+                    if (xmin === wx) return true;
+                } else if (xmin <= wx && wx < xmax) {
+                    return true;
+                }
+            }
+        } else {
+            if (type === 'h') {
+                if ((wy === y1 || wy === y2 || wy === Math.min(y1, y2)) &&
+                    (wx >= Math.min(x1, x2) - 1 && wx <= Math.max(x1, x2))) {
+                    return true;
+                }
+            } else {
+                if ((wx === x1 || wx === x2 || wx === Math.min(x1, x2)) &&
+                    (wy >= Math.min(y1, y2) - 1 && wy <= Math.max(y1, y2))) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// Validates both overlap and path-blocking rules using 3-Tier filter
+export function validateWallPlacement(wx, wy, type, p1Pos, p2Pos, hWalls, vWalls, p1Path = null, p2Path = null) {
+    if (!(hWalls instanceof Map)) {
+        return validateWallPlacementFast(wx, wy, type, p1Pos, p2Pos, hWalls, vWalls, p1Path, p2Path);
+    }
+    // Tier 1: Overlap Check
     if (isWallPlacementOverlap(wx, wy, type, hWalls, vWalls)) {
         return false;
     }
+
+    // Tier 2a: Cached Shortest-Path Intersection Check
+    if (p1Path && p2Path && p1Path.length > 0 && p2Path.length > 0 &&
+        !doesWallIntersectPath(wx, wy, type, p1Path) &&
+        !doesWallIntersectPath(wx, wy, type, p2Path)) {
+        return true;
+    }
+
+    // Tier 2b: Slatton's 2-contact rule (fewer than 2 contacts cannot disconnect the board)
+    if (countWallContacts(wx, wy, type, hWalls, vWalls) < 2) {
+        return true;
+    }
     
-    // 2. Path-blocking Check
-    // Temporarily add wall
+    // Tier 3: Full BFS path-blocking check
     const wallKey = `${wx},${wy}`;
     if (type === 'h') hWalls.set(wallKey, true);
     else vWalls.set(wallKey, true);
     
-    // Check if both players can still reach their goals
-    const p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls);
-    const p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls);
+    const p1Possible = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls);
+    const p2Possible = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls);
     
-    // Remove wall
     if (type === 'h') hWalls.delete(wallKey);
     else vWalls.delete(wallKey);
     
-    return p1Path !== null && p2Path !== null;
+    return p1Possible !== null && p2Possible !== null;
 }
 
 // --- OPTIMIZED FAST IMPLEMENTATIONS USING FLAT TYPED ARRAYS (Uint8Array) ---
@@ -491,11 +585,60 @@ export function isWallPlacementOverlapFast(wx, wy, type, hWallsArray, vWallsArra
     return false;
 }
 
-export function validateWallPlacementFast(wx, wy, type, p1Pos, p2Pos, hWallsArray, vWallsArray) {
+export function countWallContactsFast(wx, wy, type, hWallsArray, vWallsArray) {
+    if (type === 'h') {
+        let c0 = (wx === 0);
+        if (!c0 && wx >= 2 && hWallsArray[wy * 8 + (wx - 2)]) c0 = true;
+        if (!c0 && wy >= 1 && vWallsArray[(wy - 1) * 8 + wx]) c0 = true;
+        if (!c0 && wy + 1 < 8 && vWallsArray[(wy + 1) * 8 + wx]) c0 = true;
+
+        let c1 = false;
+        if (wy >= 1 && vWallsArray[(wy - 1) * 8 + (wx + 1)]) c1 = true;
+        if (!c1 && wy + 1 < 8 && vWallsArray[(wy + 1) * 8 + (wx + 1)]) c1 = true;
+
+        let c2 = (wx === 7);
+        if (!c2 && wx + 2 < 8 && hWallsArray[wy * 8 + (wx + 2)]) c2 = true;
+        if (!c2 && wy >= 1 && vWallsArray[(wy - 1) * 8 + (wx + 2)]) c2 = true;
+        if (!c2 && wy + 1 < 8 && vWallsArray[(wy + 1) * 8 + (wx + 2)]) c2 = true;
+
+        return (c0 ? 1 : 0) + (c1 ? 1 : 0) + (c2 ? 1 : 0);
+    } else {
+        let c0 = (wy === 0);
+        if (!c0 && wy >= 2 && vWallsArray[(wy - 2) * 8 + wx]) c0 = true;
+        if (!c0 && wx >= 1 && hWallsArray[wy * 8 + (wx - 1)]) c0 = true;
+        if (!c0 && wx + 1 < 8 && hWallsArray[wy * 8 + (wx + 1)]) c0 = true;
+
+        let c1 = false;
+        if (wx >= 1 && hWallsArray[(wy + 1) * 8 + (wx - 1)]) c1 = true;
+        if (!c1 && wx + 1 < 8 && hWallsArray[(wy + 1) * 8 + (wx + 1)]) c1 = true;
+
+        let c2 = (wy === 7);
+        if (!c2 && wy + 2 < 8 && vWallsArray[(wy + 2) * 8 + wx]) c2 = true;
+        if (!c2 && wx >= 1 && hWallsArray[(wy + 2) * 8 + (wx - 1)]) c2 = true;
+        if (!c2 && wx + 1 < 8 && hWallsArray[(wy + 2) * 8 + (wx + 1)]) c2 = true;
+
+        return (c0 ? 1 : 0) + (c1 ? 1 : 0) + (c2 ? 1 : 0);
+    }
+}
+
+export function validateWallPlacementFast(wx, wy, type, p1Pos, p2Pos, hWallsArray, vWallsArray, p1Path = null, p2Path = null) {
     if (isWallPlacementOverlapFast(wx, wy, type, hWallsArray, vWallsArray)) {
         return false;
     }
+
+    // Tier 2a: Cached Shortest-Path Intersection Check
+    if (p1Path && p2Path && p1Path.length > 0 && p2Path.length > 0 &&
+        !doesWallIntersectPath(wx, wy, type, p1Path) &&
+        !doesWallIntersectPath(wx, wy, type, p2Path)) {
+        return true;
+    }
+
+    // Tier 2b: Slatton's 2-contact rule
+    if (countWallContactsFast(wx, wy, type, hWallsArray, vWallsArray) < 2) {
+        return true;
+    }
     
+    // Tier 3: Full BFS reachability check
     const wallIdx = wy * 8 + wx;
     if (type === 'h') hWallsArray[wallIdx] = 1;
     else vWallsArray[wallIdx] = 1;
@@ -509,26 +652,244 @@ export function validateWallPlacementFast(wx, wy, type, p1Pos, p2Pos, hWallsArra
     return p1Possible && p2Possible;
 }
 
+export function areShortestPathDAGsDisjoint(p1Pos, p2Pos, hWalls, vWalls) {
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+
+    // 1. P1 forward BFS from p1Pos
+    const d1 = new Int16Array(81).fill(-1);
+    let q = [p1Pos.x * 9 + p1Pos.y];
+    d1[p1Pos.x * 9 + p1Pos.y] = 0;
+    let head = 0;
+    while (head < q.length) {
+        const curr = q[head++];
+        const cx = Math.floor(curr / 9);
+        const cy = curr % 9;
+        for (const [dx, dy] of dirs) {
+            const nx = cx + dx;
+            const ny = cy + dy;
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9) {
+                const nIdx = nx * 9 + ny;
+                if (d1[nIdx] === -1 && !isMoveBlocked(cx, cy, nx, ny, hWalls, vWalls)) {
+                    d1[nIdx] = d1[curr] + 1;
+                    q.push(nIdx);
+                }
+            }
+        }
+    }
+
+    // 2. P1 reverse BFS from row 8
+    const r1 = new Int16Array(81).fill(-1);
+    q = [];
+    head = 0;
+    for (let x = 0; x < 9; x++) {
+        r1[x * 9 + 8] = 0;
+        q.push(x * 9 + 8);
+    }
+    while (head < q.length) {
+        const curr = q[head++];
+        const cx = Math.floor(curr / 9);
+        const cy = curr % 9;
+        for (const [dx, dy] of dirs) {
+            const nx = cx + dx;
+            const ny = cy + dy;
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9) {
+                const nIdx = nx * 9 + ny;
+                if (r1[nIdx] === -1 && !isMoveBlocked(cx, cy, nx, ny, hWalls, vWalls)) {
+                    r1[nIdx] = r1[curr] + 1;
+                    q.push(nIdx);
+                }
+            }
+        }
+    }
+
+    const l1 = r1[p1Pos.x * 9 + p1Pos.y];
+    if (l1 <= 0 || l1 > 100) return { disjoint: false, l1: 999, l2: 999 };
+
+    // 3. P2 forward BFS from p2Pos
+    const d2 = new Int16Array(81).fill(-1);
+    q = [p2Pos.x * 9 + p2Pos.y];
+    d2[p2Pos.x * 9 + p2Pos.y] = 0;
+    head = 0;
+    while (head < q.length) {
+        const curr = q[head++];
+        const cx = Math.floor(curr / 9);
+        const cy = curr % 9;
+        for (const [dx, dy] of dirs) {
+            const nx = cx + dx;
+            const ny = cy + dy;
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9) {
+                const nIdx = nx * 9 + ny;
+                if (d2[nIdx] === -1 && !isMoveBlocked(cx, cy, nx, ny, hWalls, vWalls)) {
+                    d2[nIdx] = d2[curr] + 1;
+                    q.push(nIdx);
+                }
+            }
+        }
+    }
+
+    // 4. P2 reverse BFS from row 0
+    const r2 = new Int16Array(81).fill(-1);
+    q = [];
+    head = 0;
+    for (let x = 0; x < 9; x++) {
+        r2[x * 9 + 0] = 0;
+        q.push(x * 9 + 0);
+    }
+    while (head < q.length) {
+        const curr = q[head++];
+        const cx = Math.floor(curr / 9);
+        const cy = curr % 9;
+        for (const [dx, dy] of dirs) {
+            const nx = cx + dx;
+            const ny = cy + dy;
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9) {
+                const nIdx = nx * 9 + ny;
+                if (r2[nIdx] === -1 && !isMoveBlocked(cx, cy, nx, ny, hWalls, vWalls)) {
+                    r2[nIdx] = r2[curr] + 1;
+                    q.push(nIdx);
+                }
+            }
+        }
+    }
+
+    const l2 = r2[p2Pos.x * 9 + p2Pos.y];
+    if (l2 <= 0 || l2 > 100) return { disjoint: false, l1: 999, l2: 999 };
+
+    // 5. Check if DAGs intersect
+    for (let i = 0; i < 81; i++) {
+        const inDag1 = (d1[i] >= 0 && r1[i] >= 0 && d1[i] + r1[i] === l1);
+        const inDag2 = (d2[i] >= 0 && r2[i] >= 0 && d2[i] + r2[i] === l2);
+        if (inDag1 && inDag2) {
+            return { disjoint: false, l1, l2 };
+        }
+    }
+
+    return { disjoint: true, l1, l2 };
+}
+
 // Guaranteed winner solver check: returns 1 for P1 win, -1 for P2 win, 0 for ongoing.
 // Mirrors C++ QuoridorGame::get_guaranteed_winner().
 export function getGuaranteedWinner(p1Pos, p2Pos, p1Walls, p2Walls, isP1Turn, hWalls, vWalls) {
     if (p1Pos.y === 8) return 1;
     if (p2Pos.y === 0) return -1;
 
-    const p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, p2Pos);
-    const p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, p1Pos);
+    const { disjoint, l1, l2 } = areShortestPathDAGsDisjoint(p1Pos, p2Pos, hWalls, vWalls);
+    if (l1 >= 999 || l2 >= 999) return 0;
 
-    if (!p1Path || !p2Path) return 0;
-    const l1 = p1Path.length - 1;
-    const l2 = p2Path.length - 1;
+    // Both players have 0 walls left: deterministic pawn race
+    if (p1Walls === 0 && p2Walls === 0) {
+        // High margin: 2 full plies guarantees win regardless of jump parity
+        if (l1 <= l2 - 2) return 1;
+        if (l2 <= l1 - 2) return -1;
 
+        // Tight margin (|l1 - l2| <= 1): require disjoint DAGs to preclude jump flips
+        if (disjoint) {
+            if (l1 < l2) return 1;
+            if (l2 < l1) return -1;
+            return isP1Turn ? 1 : -1;
+        }
+        return 0;
+    }
+
+    // One player has 0 walls left: conservative bounds with jump parity guard
     if (p2Walls === 0) {
-        if (isP1Turn && l1 <= l2 - 1) return 1;
-        if (!isP1Turn && l1 <= l2 - 2) return 1;
+        if (l1 <= l2 - 2) return 1;
+        if (isP1Turn && l1 <= l2 - 1 && disjoint) return 1;
     }
     if (p1Walls === 0) {
-        if (isP1Turn && l2 <= l1 - 2) return -1;
-        if (!isP1Turn && l2 <= l1 - 1) return -1;
+        if (l2 <= l1 - 2) return -1;
+        if (!isP1Turn && l2 <= l1 - 1 && disjoint) return -1;
     }
+
     return 0;
+}
+
+export function getWallBitboards(hWalls, vWalls) {
+    let hBitboard = 0n;
+    let vBitboard = 0n;
+
+    if (hWalls instanceof Map) {
+        for (const key of hWalls.keys()) {
+            const [wx, wy] = key.split(',').map(Number);
+            if (wx >= 0 && wx < 8 && wy >= 0 && wy < 8) {
+                hBitboard |= (1n << BigInt(wy * 8 + wx));
+            }
+        }
+    } else if (hWalls) {
+        for (let i = 0; i < 64; i++) {
+            if (hWalls[i]) hBitboard |= (1n << BigInt(i));
+        }
+    }
+
+    if (vWalls instanceof Map) {
+        for (const key of vWalls.keys()) {
+            const [wx, wy] = key.split(',').map(Number);
+            if (wx >= 0 && wx < 8 && wy >= 0 && wy < 8) {
+                vBitboard |= (1n << BigInt(wy * 8 + wx));
+            }
+        }
+    } else if (vWalls) {
+        for (let i = 0; i < 64; i++) {
+            if (vWalls[i]) vBitboard |= (1n << BigInt(i));
+        }
+    }
+
+    return { hBitboard, vBitboard };
+}
+
+export function mirrorBitboardHorizontal(b) {
+    b = ((b & 0x5555555555555555n) << 1n) | ((b >> 1n) & 0x5555555555555555n);
+    b = ((b & 0x3333333333333333n) << 2n) | ((b >> 2n) & 0x3333333333333333n);
+    b = ((b & 0x0F0F0F0F0F0F0F0Fn) << 4n) | ((b >> 4n) & 0x0F0F0F0F0F0F0F0Fn);
+    return b;
+}
+
+function splitmix64(x) {
+    x = (x + 0x9e3779b97f4a7c15n) & 0xFFFFFFFFFFFFFFFFn;
+    x = ((x ^ (x >> 30n)) * 0xbf58476d1ce4e5b9n) & 0xFFFFFFFFFFFFFFFFn;
+    x = ((x ^ (x >> 27n)) * 0x94d049bb133111ebn) & 0xFFFFFFFFFFFFFFFFn;
+    return (x ^ (x >> 31n)) & 0xFFFFFFFFFFFFFFFFn;
+}
+
+export function getCanonicalStateHash(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, isP1Turn) {
+    const { hBitboard, vBitboard } = (typeof hWalls === 'bigint' && typeof vWalls === 'bigint')
+        ? { hBitboard: hWalls, vBitboard: vWalls }
+        : getWallBitboards(hWalls, vWalls);
+
+    const p1_x = p1Pos.x, p1_y = p1Pos.y;
+    const p2_x = p2Pos.x, p2_y = p2Pos.y;
+    const m_p1_x = 8 - p1_x;
+    const m_p2_x = 8 - p2_x;
+
+    const m_h = mirrorBitboardHorizontal(hBitboard);
+    const m_v = mirrorBitboardHorizontal(vBitboard);
+
+    const act_x = isP1Turn ? p1_x : p2_x;
+    const m_act_x = 8 - act_x;
+    const opp_x = isP1Turn ? p2_x : p1_x;
+    const m_opp_x = 8 - opp_x;
+
+    let isMirrored = false;
+    if (act_x !== m_act_x) {
+        isMirrored = act_x > m_act_x;
+    } else if (opp_x !== m_opp_x) {
+        isMirrored = opp_x > m_opp_x;
+    } else if (hBitboard !== m_h) {
+        isMirrored = hBitboard > m_h;
+    } else if (vBitboard !== m_v) {
+        isMirrored = vBitboard > m_v;
+    }
+
+    const c_p1_x = isMirrored ? m_p1_x : p1_x;
+    const c_p2_x = isMirrored ? m_p2_x : p2_x;
+    const c_h = isMirrored ? m_h : hBitboard;
+    const c_v = isMirrored ? m_v : vBitboard;
+
+    let meta = (BigInt(c_p1_x) << 20n) | (BigInt(p1_y) << 16n)
+             | (BigInt(c_p2_x) << 12n) | (BigInt(p2_y) << 8n)
+             | (BigInt(p1Walls) << 4n) | BigInt(p2Walls);
+    if (isP1Turn) meta |= (1n << 24n);
+
+    const h = splitmix64(c_h ^ splitmix64(c_v) ^ splitmix64(meta));
+    return { hash: h.toString(16), isMirrored };
 }

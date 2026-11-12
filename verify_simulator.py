@@ -1,6 +1,50 @@
 import random
+import torch
+import numpy as np
 import quoridor_cpp
 import train_alphazero as py_az
+from quoridor_model import flip_horizontal_state
+
+def verify_wall_coordinate_padding_alignment():
+    print("Verifying 8x8 wall coordinate padding under 180-degree rotation and horizontal mirroring...")
+    test_game = quoridor_cpp.QuoridorGame()
+    
+    # Place horizontal and vertical walls across diverse coordinates
+    test_walls = [
+        quoridor_cpp.Action.Wall('h', 0, 0),
+        quoridor_cpp.Action.Wall('v', 0, 0),
+        quoridor_cpp.Action.Wall('h', 7, 7),
+        quoridor_cpp.Action.Wall('v', 7, 7),
+        quoridor_cpp.Action.Wall('h', 3, 4),
+        quoridor_cpp.Action.Wall('v', 5, 2),
+    ]
+    for w in test_walls:
+        if test_game.validate_wall_placement(w.wall_x, w.wall_y, w.wall_type):
+            test_game.step(w)
+
+    for is_p1 in [True, False]:
+        test_game.is_p1_turn = is_p1
+        enc = quoridor_cpp.MCTS.encode_state_cpp(test_game)
+        tensor = torch.tensor(enc, dtype=torch.float32).reshape(11, 9, 9)
+
+        # 1. Verify that padding row 8 and col 8 are strictly zero in channels 2 and 3
+        assert (tensor[2, 8, :] == 0.0).all(), f"Turn P1={is_p1}: H-wall column 8 padding is non-zero!"
+        assert (tensor[2, :, 8] == 0.0).all(), f"Turn P1={is_p1}: H-wall row 8 padding is non-zero!"
+        assert (tensor[3, 8, :] == 0.0).all(), f"Turn P1={is_p1}: V-wall column 8 padding is non-zero!"
+        assert (tensor[3, :, 8] == 0.0).all(), f"Turn P1={is_p1}: V-wall row 8 padding is non-zero!"
+
+        # 2. Verify horizontal mirroring preserves padding and aligns wall coordinates
+        flipped = flip_horizontal_state(tensor)
+        assert (flipped[2, 8, :] == 0.0).all(), f"Flipped P1={is_p1}: H-wall column 8 padding is non-zero!"
+        assert (flipped[2, :, 8] == 0.0).all(), f"Flipped P1={is_p1}: H-wall row 8 padding is non-zero!"
+        assert (flipped[3, 8, :] == 0.0).all(), f"Flipped P1={is_p1}: V-wall column 8 padding is non-zero!"
+        assert (flipped[3, :, 8] == 0.0).all(), f"Flipped P1={is_p1}: V-wall row 8 padding is non-zero!"
+
+        # 3. Verify involution: flip(flip(tensor)) == tensor
+        double_flipped = flip_horizontal_state(flipped)
+        assert torch.allclose(double_flipped, tensor, atol=1e-6), f"Double horizontal flip mismatch for turn P1={is_p1}"
+
+    print("SUCCESS: 8x8 wall coordinate padding remained strictly aligned under rotation and mirroring.")
 
 def cpp_action_to_dict(act):
     if act.type == 'move':
@@ -78,3 +122,4 @@ def verify_simulators(num_moves=1000):
 
 if __name__ == "__main__":
     verify_simulators()
+    verify_wall_coordinate_padding_alignment()

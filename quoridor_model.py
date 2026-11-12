@@ -3,16 +3,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class SEBlock(nn.Module):
-    """Squeeze-and-Excitation channel attention block."""
-    def __init__(self, channels=128, reduction=16):
+    """KataGo Global Pooling (mean + max) channel attention block."""
+    def __init__(self, channels=192, reduction=16):
         super(SEBlock, self).__init__()
         reduced = max(8, channels // reduction)
-        self.fc1 = nn.Linear(channels, reduced, bias=False)
+        # KataGo Global Pooling combines spatial mean and spatial max
+        self.fc1 = nn.Linear(channels * 2, reduced, bias=False)
         self.fc2 = nn.Linear(reduced, channels, bias=False)
 
     def forward(self, x):
         b, c, _, _ = x.size()
-        y = x.mean(dim=(2, 3))
+        mean_pool = x.mean(dim=(2, 3))
+        max_pool = torch.amax(x, dim=(2, 3))
+        y = torch.cat([mean_pool, max_pool], dim=1)
         y = F.relu(self.fc1(y))
         y = torch.sigmoid(self.fc2(y)).view(b, c, 1, 1)
         return x * y
@@ -20,9 +23,9 @@ class SEBlock(nn.Module):
 class ResidualBlock(nn.Module):
     """
     Residual block with two 3x3 Conv2d layers, BatchNorm,
-    Squeeze-and-Excitation attention, and a skip connection.
+    KataGo Global Pooling SE attention, and a skip connection.
     """
-    def __init__(self, channels=128):
+    def __init__(self, channels=192):
         super(ResidualBlock, self).__init__()
         self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(channels)
@@ -40,41 +43,73 @@ class ResidualBlock(nn.Module):
 
 class QuoridorNet(nn.Module):
     """
-    AlphaZero-style network for Quoridor.
+    AlphaZero-style network for Quoridor with KataGo Global Pooling
+    and decoupled 12-Pawn + 2x8x8 Spatial Wall Convolutional Head.
     Input shape: (Batch, 11, 9, 9)
-    Trunk: 20 ResidualBlocks with SE-Attention and 192 channels.
+    Trunk: ResidualBlocks with KataGo Global Pooling SE-Attention.
     Value Head: outputs scalar in [-1, 1].
-    Policy Head: outputs 140 action logits.
-    Auxiliary Head: outputs 2 scalars in [0, 1] for active and opp path lengths.
+    Policy Head: decoupled 12 pawn + 2x8x8 spatial wall conv head (140 action logits).
+    Auxiliary Heads: 2-Output End-of-Game Path Length Head (2), Final Wall-Structure Ownership Map (2x8x8), and Opponent's Next Move (140).
     """
     def __init__(self, num_residual_blocks=20, channels=192):
         super(QuoridorNet, self).__init__()
-        self.conv_init = nn.Conv2d(6, channels, kernel_size=3, padding=1, bias=False)
+        # Channels 0..7 are full 2D spatial feature maps
+        self.conv_init = nn.Conv2d(8, channels, kernel_size=3, padding=1, bias=False)
         self.bn_init = nn.BatchNorm2d(channels)
         
         self.res_blocks = nn.ModuleList([
             ResidualBlock(channels) for _ in range(num_residual_blocks)
         ])
         
-        # Value Head: (128, 9, 9) -> Conv -> BN -> ReLU -> Flatten -> Cat with scalars -> Linear -> ReLU -> Linear -> Tanh
+        # Value Head: (channels, 9, 9) -> Conv1x1 -> BN -> ReLU -> Flatten -> Cat scalars -> Linear -> ReLU -> Linear -> Tanh
         self.value_conv = nn.Conv2d(channels, 4, kernel_size=1, bias=False)
         self.value_bn = nn.BatchNorm2d(4)
-        self.value_fc1 = nn.Linear(4 * 9 * 9 + 4, 64)
+        self.value_fc1 = nn.Linear(4 * 9 * 9 + 6, 64)
         self.value_fc2 = nn.Linear(64, 1)
         
-        # Policy Head: (128, 9, 9) -> Conv -> BN -> ReLU -> Flatten -> Cat with scalars -> Linear
-        self.policy_conv = nn.Conv2d(channels, 4, kernel_size=1, bias=False)
-        self.policy_bn = nn.BatchNorm2d(4)
-        self.policy_fc = nn.Linear(4 * 9 * 9 + 4, 140)
+        # Decoupled Policy Head:
+        # 1. 12-Pawn Move Sub-Head
+        self.pawn_conv = nn.Conv2d(channels, 4, kernel_size=1, bias=False)
+        self.pawn_bn = nn.BatchNorm2d(4)
+        self.pawn_fc = nn.Linear(4 * 9 * 9 + 6, 12)
 
-        # Auxiliary Path Head: predicts [active_path_len, opp_path_len] normalized in [0, 1]
+        # 2. 2x8x8 Spatial Wall Convolutional Sub-Head
+        self.wall_conv = nn.Conv2d(channels, 32, kernel_size=1, bias=False)
+        self.wall_bn = nn.BatchNorm2d(32)
+        self.wall_out = nn.Conv2d(32, 2, kernel_size=2, padding=0, bias=True)
+
+        # Auxiliary Heads:
+        # A. End-of-Game Path Length Head: predicts [active_end_path_norm, opp_end_path_norm] in [0, 1]
         self.aux_conv = nn.Conv2d(channels, 2, kernel_size=1, bias=False)
         self.aux_bn = nn.BatchNorm2d(2)
-        self.aux_fc = nn.Linear(2 * 9 * 9 + 4, 2)
+        self.aux_fc = nn.Linear(2 * 9 * 9 + 6, 2)
+
+        # B. Final Wall-Structure Ownership Map: (B, 2, 8, 8) in [-1, 1]
+        self.aux_wall_conv = nn.Conv2d(channels, 32, kernel_size=1, bias=False)
+        self.aux_wall_bn = nn.BatchNorm2d(32)
+        self.aux_wall_out = nn.Conv2d(32, 2, kernel_size=2, padding=0, bias=True)
+
+        # C. Opponent's Next Move Policy Head: (B, 140) logits
+        self.aux_opp_conv = nn.Conv2d(channels, 4, kernel_size=1, bias=False)
+        self.aux_opp_bn = nn.BatchNorm2d(4)
+        self.aux_opp_fc = nn.Linear(4 * 9 * 9 + 6, 140)
 
     def forward(self, x, return_aux=False):
-        x_spatial = torch.cat([x[:, :4, :, :], x[:, 6:8, :, :]], dim=1)
-        scalars = torch.cat([x[:, 4:6, 0, 0], x[:, 8:10, 0, 0]], dim=1)
+        b = x.size(0)
+        # Channels 0-7 are spatial; extract distance/wall counts and tempo features as scalars
+        x_spatial = x[:, :8, :, :]
+        # Scalar features: [active_dist_norm, opp_dist_norm, active_walls_norm, opp_walls_norm, path_adv, jump_parity]
+        active_pos_x = x[:, 0, :, :].view(b, -1).argmax(dim=-1) // 9
+        active_pos_y = x[:, 0, :, :].view(b, -1).argmax(dim=-1) % 9
+        opp_pos_x = x[:, 1, :, :].view(b, -1).argmax(dim=-1) // 9
+        opp_pos_y = x[:, 1, :, :].view(b, -1).argmax(dim=-1) % 9
+
+        batch_idx = torch.arange(b, device=x.device)
+        act_dist = x[batch_idx, 4, active_pos_x, active_pos_y].unsqueeze(1)
+        opp_dist = x[batch_idx, 5, opp_pos_x, opp_pos_y].unsqueeze(1)
+        path_adv = x[:, 10, 0, 0].unsqueeze(1)
+        jump_parity = x[:, 10, 0, 1].unsqueeze(1)
+        scalars = torch.cat([act_dist, opp_dist, x[:, 8:10, 0, 0], path_adv, jump_parity], dim=1)
 
         # Trunk
         out = F.relu(self.bn_init(self.conv_init(x_spatial)))
@@ -83,23 +118,39 @@ class QuoridorNet(nn.Module):
             
         # Value Head
         v = F.relu(self.value_bn(self.value_conv(out)))
-        v = v.view(v.size(0), -1)
+        v = v.view(b, -1)
         v_in = torch.cat([v, scalars], dim=1)
         v = F.relu(self.value_fc1(v_in))
         v = torch.tanh(self.value_fc2(v))
         
-        # Policy Head
-        p = F.relu(self.policy_bn(self.policy_conv(out)))
-        p = p.view(p.size(0), -1)
-        p_in = torch.cat([p, scalars], dim=1)
-        logits = self.policy_fc(p_in)
+        # Policy Head: Decoupled 12-Pawn + 2x8x8 Spatial Wall Convolution
+        # 1. Pawn moves (12 logits)
+        pawn_feat = F.relu(self.pawn_bn(self.pawn_conv(out))).view(b, -1)
+        pawn_in = torch.cat([pawn_feat, scalars], dim=1)
+        logits_pawn = self.pawn_fc(pawn_in)
+
+        # 2. Spatial wall placements (2 x 8 x 8 = 128 logits)
+        # 2x2 conv on 9x9 without padding yields exactly 8x8 spatial intersection grid
+        wall_feat = F.relu(self.wall_bn(self.wall_conv(out)))
+        wall_grid = self.wall_out(wall_feat) # (b, 2, wx, wy)
+        wall_perm = wall_grid.permute(0, 1, 3, 2) # (b, 2, wy, wx)
+        h_wall_logits = wall_perm[:, 0, :, :].reshape(b, 64) # 12..75: wy * 8 + wx
+        v_wall_logits = wall_perm[:, 1, :, :].reshape(b, 64) # 76..139: wy * 8 + wx
+
+        logits = torch.cat([logits_pawn, h_wall_logits, v_wall_logits], dim=1)
         
         if return_aux:
-            aux = F.relu(self.aux_bn(self.aux_conv(out)))
-            aux = aux.view(aux.size(0), -1)
-            aux_in = torch.cat([aux, scalars], dim=1)
-            aux_path = torch.sigmoid(self.aux_fc(aux_in))
-            return logits, v, aux_path
+            aux_feat = F.relu(self.aux_bn(self.aux_conv(out))).view(b, -1)
+            aux_in = torch.cat([aux_feat, scalars], dim=1)
+            aux_path_pred = torch.sigmoid(self.aux_fc(aux_in)) # (b, 2) in [0, 1]
+
+            aux_w_feat = F.relu(self.aux_wall_bn(self.aux_wall_conv(out)))
+            aux_wall_grid = torch.tanh(self.aux_wall_out(aux_w_feat)) # (b, 2, 8, 8) in [-1, 1]
+            
+            aux_opp_feat = F.relu(self.aux_opp_bn(self.aux_opp_conv(out))).view(b, -1)
+            aux_opp_in = torch.cat([aux_opp_feat, scalars], dim=1)
+            aux_opp_logits = self.aux_opp_fc(aux_opp_in) # (b, 140)
+            return logits, v, aux_path_pred, aux_wall_grid, aux_opp_logits
 
         return logits, v
 
@@ -185,28 +236,34 @@ def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_le
     # 9. Opponent walls remaining / 10.0
     tensor[9, :, :] = min(opp_walls / 10.0, 1.0)
     
-    # 10. Path advantage: (opp_dist - active_dist) / 16.0, clamped to [-1, 1].
-    # Positive means opponent has a longer path (active player is ahead).
-    path_advantage = (opp_dist - active_dist) / 16.0
-    tensor[10, :, :] = max(-1.0, min(1.0, path_advantage))
+    # 10. Path advantage & Jump Parity:
+    # Even cells ((x+y)%2 == 0): path advantage (opp_dist - active_dist) / 16.0 clamped to [-1, 1].
+    # Odd cells ((x+y)%2 == 1): jump parity tempo (even Manhattan dist -> +1.0 active jump initiative, odd -> -1.0).
+    path_advantage = max(-1.0, min(1.0, (opp_dist - active_dist) / 16.0))
+    m_dist = abs(active_pos[0] - opp_pos[0]) + abs(active_pos[1] - opp_pos[1])
+    jump_parity = 1.0 if (m_dist % 2 == 0) else -1.0
+    for x in range(9):
+        for y in range(9):
+            tensor[10, x, y] = path_advantage if ((x + y) % 2 == 0) else jump_parity
 
     return tensor
 
 def flip_horizontal_state(tensor):
     """
     Horizontally mirror a (11, 9, 9) state tensor.
-    Pawn/path channels: x -> 8-x.  Wall channels: wx -> 7-wx
-    (walls span 0-7 inside the 9-wide dimension, so a plain flip
-    of only the first 8 entries is used).
-    Scalar channels (4,5,8,9,10) are unchanged by a left-right flip.
+    Pawn, distance, and criticality channels: x -> 8-x.
+    Wall channels: wx -> 7-wx with coordinate padding (index 8) preserved as 0.0.
+    Scalar channels (8, 9, 10) are invariant under left-right mirroring.
     """
     flipped = tensor.clone()
-    # Pawn positions and path cell masks
-    for ch in [0, 1, 6, 7]:
+    # Pawn positions (0, 1), 2D distance maps (4, 5), and DAG criticality masks (6, 7)
+    for ch in [0, 1, 4, 5, 6, 7]:
         flipped[ch] = torch.flip(tensor[ch], dims=[0])
-    # Wall placements: only the first 8 x-positions are used
+    # Wall placements: only the active 8 x-positions (0..7) are flipped
     for ch in [2, 3]:
         flipped[ch, :8, :] = torch.flip(tensor[ch, :8, :], dims=[0])
+        flipped[ch, 8, :] = 0.0
+        flipped[ch, :, 8] = 0.0
     return flipped
 
 def flip_horizontal_policy(policy):
@@ -312,10 +369,21 @@ def map_index_to_action_perspective(index, is_p1_turn, p1_pos, p2_pos):
         act_rot = map_index_to_action(index, rx, ry)
         return rotate_action_180(act_rot)
 
+class ONNXDeployWrapper(nn.Module):
+    """Wraps QuoridorNet to strictly emit only policy and value heads for ONNX deployment."""
+    def __init__(self, model):
+        super(ONNXDeployWrapper, self).__init__()
+        self.model = model
+
+    def forward(self, x):
+        logits, value = self.model(x, return_aux=False)
+        return logits, value
+
 def export_to_onnx(model, filepath="quoridor_model.onnx"):
     model.eval()
     orig_device = next(model.parameters()).device
     model.cpu()
+    deploy_wrapper = ONNXDeployWrapper(model).eval()
     dummy_input = torch.randn(32, 11, 9, 9, dtype=torch.float32)
     try:
         # Set environment variable and reconfigure streams to force UTF-8 on Windows
@@ -334,7 +402,7 @@ def export_to_onnx(model, filepath="quoridor_model.onnx"):
                 except Exception:
                     pass
         torch.onnx.export(
-            model,
+            deploy_wrapper,
             dummy_input,
             filepath,
             export_params=True,

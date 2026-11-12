@@ -6,6 +6,7 @@
 #include <map>
 #include <tuple>
 #include <utility>
+#include <cstdint>
 
 struct Action {
     std::string type; // "move" or "wall"
@@ -50,11 +51,19 @@ public:
     int h_wall_owners[8][8];
     int v_wall_owners[8][8];
 
+    // 64-bit Bitboards for horizontal and vertical walls (wy * 8 + wx)
+    uint64_t h_bitboard;
+    uint64_t v_bitboard;
+
     int p1_walls_left;
     int p2_walls_left;
     bool is_p1_turn;
 
     QuoridorGame();
+
+    void update_bitboards();
+    uint64_t get_canonical_hash(bool* out_is_mirrored = nullptr) const;
+    static uint64_t mirror_bitboard_horizontal(uint64_t b);
 
     QuoridorGame clone() const;
     QuoridorGame clone_and_step(const Action& action) const;
@@ -64,13 +73,19 @@ public:
     bool has_path_to_row(std::pair<int, int> start, int target_y) const;
 
     std::vector<Action> get_valid_pawn_moves(bool is_p1) const;
+    int count_wall_contacts(int wx, int wy, char wall_type) const;
+    bool does_wall_intersect_path(int wx, int wy, char wall_type, const std::vector<std::pair<int, int>>& path) const;
     bool validate_wall_placement(int wx, int wy, char wall_type) const;
+    bool validate_wall_placement_cached(int wx, int wy, char wall_type,
+                                        const std::vector<std::pair<int, int>>& p1_path,
+                                        const std::vector<std::pair<int, int>>& p2_path) const;
     std::vector<std::tuple<int, int, char>> get_candidate_walls() const;
     std::vector<Action> get_valid_actions() const;
 
     void step(const Action& action);
     int is_game_over() const;
     int get_guaranteed_winner() const;
+    bool are_shortest_path_dags_disjoint(int& l1_out, int& l2_out) const;
 
     double evaluate_heuristic() const;
     

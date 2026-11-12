@@ -34,8 +34,9 @@ from quoridor_model import flip_horizontal_state, flip_horizontal_policy, map_in
 
 # Constants matching train_alphazero.py
 TEMP_THRESHOLD = 20
-NUM_SIMULATIONS = 1200  # 1200 simulations for all searches
-FAST_SIMULATIONS = 1200 # 1200 simulations (PCR disabled/set to 1200)
+NUM_SIMULATIONS = 800   # Deep search simulations (25% PCR)
+FAST_SIMULATIONS = 120  # Fast search simulations (75% PCR)
+VALUE_LAMBDA = 0.70     # MCTS eval & terminal outcome mixing
 GAMES_PER_EPOCH = 50   # Expected games per epoch
 DATA_DIR = os.environ.get("QUORIDOR_DATA_DIR", r"C:\quoridor_data")
 ONNX_PATH = "quoridor_model.onnx"
@@ -195,8 +196,14 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=1200, f
     state_histories = [{} for _ in range(batch_size)]
     active_indices = list(range(batch_size))
 
-    # Pure AlphaZero vs AlphaZero self-play for all games in batch
-    sparring_modes = [0] * batch_size
+    # Mixed-Opponent Self-Play Curriculum:
+    # 20% of games played against Minimax bot (depth 2) to test defense against naive rushing and wall traps
+    sparring_modes = []
+    for _ in range(batch_size):
+        if random.random() < 0.20:
+            sparring_modes.append(1 if random.random() < 0.50 else 2) # 1: AlphaZero is P1, 2: AlphaZero is P2
+        else:
+            sparring_modes.append(0) # Pure AlphaZero self-play
     
     batch_start_time = time.time()
     games_completed_in_batch = 0
@@ -207,21 +214,97 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=1200, f
     draws = 0
 
     while len(active_indices) > 0:
-        active_games = [games[i] for i in active_indices]
-        
-        # Simulations for all MCTS evaluations
-        current_sims = num_simulations
-
-        visit_counts_list, _ = mcts.run_search_batched(
-            active_games,
-            evaluator.evaluate_batch,
-            current_sims
-        )
-        
-        next_active_indices = []
-        for local_idx, global_idx in enumerate(active_indices):
+        # 1. Process Minimax turns first (no MCTS needed)
+        mcts_indices = []
+        for global_idx in active_indices:
             game = games[global_idx]
             spar_mode = sparring_modes[global_idx]
+            is_minimax_turn = (spar_mode == 1 and not game.is_p1_turn) or (spar_mode == 2 and game.is_p1_turn)
+            if is_minimax_turn:
+                _, mm_action = minimax_search(game, depth=2, alpha=-float('inf'), beta=float('inf'), maximizing_player=game.is_p1_turn)
+                if mm_action is None:
+                    valid_acts = game.get_valid_actions()
+                    mm_action = valid_acts[0] if valid_acts else None
+                if mm_action is not None:
+                    game.step(mm_action)
+                    move_counts[global_idx] += 1
+            else:
+                mcts_indices.append(global_idx)
+
+        # 2. Run batched MCTS search for AlphaZero turns
+        if mcts_indices:
+            active_games = [games[i] for i in mcts_indices]
+            
+            # Playout Cap Randomization (PCR): 25% at 800 simulations, 75% at 120 simulations
+            current_sims = NUM_SIMULATIONS if (random.random() < 0.25) else FAST_SIMULATIONS
+
+            visit_counts_list, root_q_values = mcts.run_search_batched(
+                active_games,
+                evaluator.evaluate_batch,
+                current_sims
+            )
+
+            for local_idx, global_idx in enumerate(mcts_indices):
+                game = games[global_idx]
+                visits = np.array(visit_counts_list[local_idx], dtype=np.float32)
+                valid_actions = game.get_valid_actions()
+                valid_mask = np.zeros(140, dtype=np.bool_)
+                
+                # Repetition Penalty: Downweight visits for moves that step into previously seen board states
+                adjusted_visits = visits.copy()
+                for act in valid_actions:
+                    py_act = cpp_action_to_python(act)
+                    idx = map_action_to_index_perspective(py_act, game.is_p1_turn)
+                    valid_mask[idx] = True
+                    
+                    next_game = game.clone_and_step(act)
+                    next_key = (
+                        next_game.p1_pos, next_game.p2_pos,
+                        frozenset(next_game.h_walls), frozenset(next_game.v_walls),
+                        next_game.p1_walls_left, next_game.p2_walls_left,
+                        next_game.is_p1_turn
+                    )
+                    seen_count = state_histories[global_idx].get(next_key, 0)
+                    if seen_count >= 2:
+                        adjusted_visits[idx] = 0.0
+                    elif seen_count == 1:
+                        adjusted_visits[idx] *= 0.1
+
+                visits_sum = adjusted_visits.sum()
+                policy_probs = adjusted_visits / (visits_sum if visits_sum > 0 else 1.0)
+                
+                state_flat = quoridor_cpp.MCTS.encode_state_cpp(game)
+                mcts_eval = float(root_q_values[local_idx])
+                trajectories[global_idx].append((state_flat, policy_probs, game.is_p1_turn, valid_mask, mcts_eval))
+                
+                # Temperature schedule: decay across first 20 plies
+                current_move = move_counts[global_idx]
+                if current_move < 20:
+                    tau = max(0.1, 1.0 - (current_move / 20.0))
+                else:
+                    tau = 0.0
+                    
+                if tau > 0.0:
+                    probs = np.power(policy_probs, 1.0 / tau)
+                    prob_sum = probs.sum()
+                    if prob_sum > 1e-8:
+                        norm_probs = probs / prob_sum
+                        action_idx = np.random.choice(140, p=norm_probs)
+                    else:
+                        action_idx = np.argmax(policy_probs)
+                else:
+                    action_idx = np.argmax(policy_probs)
+                    
+                py_action = map_index_to_action_perspective(action_idx, game.is_p1_turn, game.p1_pos, game.p2_pos)
+                cpp_action = python_action_to_cpp(py_action)
+                
+                game.step(cpp_action)
+                move_counts[global_idx] += 1
+        
+        # 3. Check termination and history for all active games
+        next_active_indices = []
+        for global_idx in active_indices:
+            game = games[global_idx]
             
             state_key = (
                 game.p1_pos, game.p2_pos,
@@ -243,24 +326,38 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=1200, f
                 else:
                     draws += 1
 
+                # Calculate final end-of-game shortest-path distances
+                p1_end_path = game.get_shortest_path(game.p1_pos, 8, opp_pos=game.p2_pos)
+                p2_end_path = game.get_shortest_path(game.p2_pos, 0, opp_pos=game.p1_pos)
+                final_p1_dist = len(p1_end_path) - 1 if p1_end_path else 20
+                final_p2_dist = len(p2_end_path) - 1 if p2_end_path else 20
+
                 training_examples = []
                 total_moves = len(trajectories[global_idx])
-                for idx, (state_flat, policy_probs, is_p1, valid_mask) in enumerate(trajectories[global_idx]):
+                for idx, (state_flat, policy_probs, is_p1, valid_mask, mcts_eval) in enumerate(trajectories[global_idx]):
                     if final_winner == 0:
-                        # Repetition / max moves draw penalty: small negative target to disincentivize draws
-                        target_value = -0.2
+                        z_terminal = -0.2
                     else:
                         is_win = (final_winner == 1 and is_p1) or (final_winner == -1 and not is_p1)
                         base_val = 1.0 if is_win else -1.0
                         moves_from_end = total_moves - 1 - idx
-                        target_value = base_val * (0.995 ** moves_from_end)
+                        z_terminal = base_val * (0.995 ** moves_from_end)
                     
+                    # Bootstrapped value target mixing (lambda = 0.70)
+                    target_value = VALUE_LAMBDA * z_terminal + (1.0 - VALUE_LAMBDA) * mcts_eval
+                    target_value = max(-1.0, min(1.0, float(target_value)))
+                    
+                    # End-of-game path length prediction targets
+                    end_act_dist = min(1.0, (final_p1_dist if is_p1 else final_p2_dist) / 20.0)
+                    end_opp_dist = min(1.0, (final_p2_dist if is_p1 else final_p1_dist) / 20.0)
+                    target_aux = torch.tensor([end_act_dist, end_opp_dist], dtype=torch.float32)
+
                     state_tensor = torch.tensor(state_flat, dtype=torch.float32).reshape(11, 9, 9)
-                    training_examples.append((state_tensor, policy_probs, target_value, valid_mask))
+                    training_examples.append((state_tensor, policy_probs, target_value, valid_mask, target_aux))
                 
                 augmented_examples = training_examples + [
-                    (flip_horizontal_state(s), flip_horizontal_policy(p), v, flip_horizontal_policy(m))
-                    for (s, p, v, m) in training_examples
+                    (flip_horizontal_state(s), flip_horizontal_policy(p), v, flip_horizontal_policy(m), aux)
+                    for (s, p, v, m, aux) in training_examples
                 ]
                 
                 all_batch_examples.extend(augmented_examples)
@@ -268,62 +365,6 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=1200, f
                 total_positions_generated += len(augmented_examples)
                 continue
                 
-            visits = np.array(visit_counts_list[local_idx], dtype=np.float32)
-            valid_actions = game.get_valid_actions()
-            valid_mask = np.zeros(140, dtype=np.bool_)
-            
-            # Repetition Penalty: Downweight visits for moves that step into previously seen board states
-            adjusted_visits = visits.copy()
-            for act in valid_actions:
-                py_act = cpp_action_to_python(act)
-                idx = map_action_to_index_perspective(py_act, game.is_p1_turn)
-                valid_mask[idx] = True
-                
-                next_game = game.clone_and_step(act)
-                next_key = (
-                    next_game.p1_pos, next_game.p2_pos,
-                    frozenset(next_game.h_walls), frozenset(next_game.v_walls),
-                    next_game.p1_walls_left, next_game.p2_walls_left,
-                    next_game.is_p1_turn
-                )
-                seen_count = state_histories[global_idx].get(next_key, 0)
-                if seen_count >= 2:
-                    adjusted_visits[idx] = 0.0  # Zero probability for 3-fold repetition moves
-                elif seen_count == 1:
-                    adjusted_visits[idx] *= 0.1 # Heavily penalize moves returning to a state seen once
-
-            visits_sum = adjusted_visits.sum()
-            policy_probs = adjusted_visits / (visits_sum if visits_sum > 0 else 1.0)
-            
-            state_flat = quoridor_cpp.MCTS.encode_state_cpp(game)
-            trajectories[global_idx].append((state_flat, policy_probs, game.is_p1_turn, valid_mask))
-            
-            # AlphaZero turn: Extended temperature schedule for midgame wall exploration
-            current_move = move_counts[global_idx]
-            if current_move < 30:
-                tau = 1.0
-            elif current_move < 60:
-                tau = max(0.1, 1.0 - (current_move - 30) / 30.0)
-            else:
-                tau = 0.1
-                
-            if tau > 0.0:
-                probs = np.power(policy_probs, 1.0 / tau)
-                prob_sum = probs.sum()
-                if prob_sum > 1e-8:
-                    norm_probs = probs / prob_sum
-                    action_idx = np.random.choice(140, p=norm_probs)
-                else:
-                    action_idx = np.argmax(policy_probs)
-            else:
-                # Exploitation: select top visit count action
-                action_idx = np.argmax(policy_probs)
-                
-            py_action = map_index_to_action_perspective(action_idx, game.is_p1_turn, game.p1_pos, game.p2_pos)
-            cpp_action = python_action_to_cpp(py_action)
-            
-            game.step(cpp_action)
-            move_counts[global_idx] += 1
             next_active_indices.append(global_idx)
             
         active_indices = next_active_indices

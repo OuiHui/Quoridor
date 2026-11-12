@@ -14,9 +14,82 @@ QuoridorGame::QuoridorGame() {
     std::memset(h_wall_owners, 0, sizeof(h_wall_owners));
     std::memset(v_wall_owners, 0, sizeof(v_wall_owners));
     
+    h_bitboard = 0;
+    v_bitboard = 0;
+
     p1_walls_left = 10;
     p2_walls_left = 10;
     is_p1_turn = true;
+}
+
+void QuoridorGame::update_bitboards() {
+    h_bitboard = 0;
+    v_bitboard = 0;
+    for (int wy = 0; wy < 8; ++wy) {
+        for (int wx = 0; wx < 8; ++wx) {
+            if (h_walls[wx][wy]) h_bitboard |= (1ULL << (wy * 8 + wx));
+            if (v_walls[wx][wy]) v_bitboard |= (1ULL << (wy * 8 + wx));
+        }
+    }
+}
+
+uint64_t QuoridorGame::mirror_bitboard_horizontal(uint64_t b) {
+    b = ((b & 0x5555555555555555ULL) << 1) | ((b >> 1) & 0x5555555555555555ULL);
+    b = ((b & 0x3333333333333333ULL) << 2) | ((b >> 2) & 0x3333333333333333ULL);
+    b = ((b & 0x0F0F0F0F0F0F0F0FULL) << 4) | ((b >> 4) & 0x0F0F0F0F0F0F0F0FULL);
+    return b;
+}
+
+uint64_t QuoridorGame::get_canonical_hash(bool* out_is_mirrored) const {
+    int p1_x = p1_pos.first;
+    int p1_y = p1_pos.second;
+    int p2_x = p2_pos.first;
+    int p2_y = p2_pos.second;
+
+    int m_p1_x = 8 - p1_x;
+    int m_p2_x = 8 - p2_x;
+
+    uint64_t m_h_bits = mirror_bitboard_horizontal(h_bitboard);
+    uint64_t m_v_bits = mirror_bitboard_horizontal(v_bitboard);
+
+    int act_x = is_p1_turn ? p1_x : p2_x;
+    int m_act_x = 8 - act_x;
+    int opp_x = is_p1_turn ? p2_x : p1_x;
+    int m_opp_x = 8 - opp_x;
+
+    bool is_mirrored = false;
+    if (act_x != m_act_x) {
+        is_mirrored = (act_x > m_act_x);
+    } else if (opp_x != m_opp_x) {
+        is_mirrored = (opp_x > m_opp_x);
+    } else if (h_bitboard != m_h_bits) {
+        is_mirrored = (h_bitboard > m_h_bits);
+    } else if (v_bitboard != m_v_bits) {
+        is_mirrored = (v_bitboard > m_v_bits);
+    }
+
+    if (out_is_mirrored) {
+        *out_is_mirrored = is_mirrored;
+    }
+
+    int c_p1_x = is_mirrored ? m_p1_x : p1_x;
+    int c_p2_x = is_mirrored ? m_p2_x : p2_x;
+    uint64_t c_h = is_mirrored ? m_h_bits : h_bitboard;
+    uint64_t c_v = is_mirrored ? m_v_bits : v_bitboard;
+
+    uint64_t meta = (uint64_t(c_p1_x) << 20) | (uint64_t(p1_y) << 16)
+                  | (uint64_t(c_p2_x) << 12) | (uint64_t(p2_y) << 8)
+                  | (uint64_t(p1_walls_left) << 4) | uint64_t(p2_walls_left);
+    if (is_p1_turn) meta |= (1ULL << 24);
+
+    auto splitmix64 = [](uint64_t x) -> uint64_t {
+        x += 0x9e3779b97f4a7c15ULL;
+        x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+        return x ^ (x >> 31);
+    };
+
+    return splitmix64(c_h ^ splitmix64(c_v) ^ splitmix64(meta));
 }
 
 QuoridorGame QuoridorGame::clone() const {
@@ -26,6 +99,8 @@ QuoridorGame QuoridorGame::clone() const {
     g.p1_walls_left = p1_walls_left;
     g.p2_walls_left = p2_walls_left;
     g.is_p1_turn = is_p1_turn;
+    g.h_bitboard = h_bitboard;
+    g.v_bitboard = v_bitboard;
     
     std::memcpy(g.h_walls, h_walls, sizeof(h_walls));
     std::memcpy(g.v_walls, v_walls, sizeof(v_walls));
@@ -244,12 +319,93 @@ std::vector<Action> QuoridorGame::get_valid_pawn_moves(bool is_p1) const {
     return valid;
 }
 
+int QuoridorGame::count_wall_contacts(int wx, int wy, char wall_type) const {
+    if (wall_type == 'h') {
+        bool c0 = (wx == 0);
+        if (!c0 && wx >= 2 && h_walls[wx - 2][wy]) c0 = true;
+        if (!c0 && wy >= 1 && v_walls[wx][wy - 1]) c0 = true;
+        if (!c0 && wy + 1 < 8 && v_walls[wx][wy + 1]) c0 = true;
+
+        bool c1 = false;
+        if (wy >= 1 && v_walls[wx + 1][wy - 1]) c1 = true;
+        if (!c1 && wy + 1 < 8 && v_walls[wx + 1][wy + 1]) c1 = true;
+
+        bool c2 = (wx == 7);
+        if (!c2 && wx + 2 < 8 && h_walls[wx + 2][wy]) c2 = true;
+        if (!c2 && wy >= 1 && v_walls[wx + 2][wy - 1]) c2 = true;
+        if (!c2 && wy + 1 < 8 && v_walls[wx + 2][wy + 1]) c2 = true;
+
+        return (c0 ? 1 : 0) + (c1 ? 1 : 0) + (c2 ? 1 : 0);
+    } else {
+        bool c0 = (wy == 0);
+        if (!c0 && wy >= 2 && v_walls[wx][wy - 2]) c0 = true;
+        if (!c0 && wx >= 1 && h_walls[wx - 1][wy]) c0 = true;
+        if (!c0 && wx + 1 < 8 && h_walls[wx + 1][wy]) c0 = true;
+
+        bool c1 = false;
+        if (wx >= 1 && h_walls[wx - 1][wy + 1]) c1 = true;
+        if (!c1 && wx + 1 < 8 && h_walls[wx + 1][wy + 1]) c1 = true;
+
+        bool c2 = (wy == 7);
+        if (!c2 && wy + 2 < 8 && v_walls[wx][wy + 2]) c2 = true;
+        if (!c2 && wx >= 1 && h_walls[wx - 1][wy + 2]) c2 = true;
+        if (!c2 && wx + 1 < 8 && h_walls[wx + 1][wy + 2]) c2 = true;
+
+        return (c0 ? 1 : 0) + (c1 ? 1 : 0) + (c2 ? 1 : 0);
+    }
+}
+
+bool QuoridorGame::does_wall_intersect_path(int wx, int wy, char wall_type, const std::vector<std::pair<int, int>>& path) const {
+    if (path.size() < 2) return false;
+    for (size_t i = 0; i < path.size() - 1; ++i) {
+        int x1 = path[i].first;
+        int y1 = path[i].second;
+        int x2 = path[i + 1].first;
+        int y2 = path[i + 1].second;
+
+        if (x1 == x2) {
+            int ymin = std::min(y1, y2);
+            int ymax = std::max(y1, y2);
+            if (wall_type == 'h' && (wx == x1 || wx == x1 - 1)) {
+                if (ymax - ymin == 1) {
+                    if (ymin == wy) return true;
+                } else if (ymin <= wy && wy < ymax) {
+                    return true;
+                }
+            }
+        } else if (y1 == y2) {
+            int xmin = std::min(x1, x2);
+            int xmax = std::max(x1, x2);
+            if (wall_type == 'v' && (wy == y1 || wy == y1 - 1)) {
+                if (xmax - xmin == 1) {
+                    if (xmin == wx) return true;
+                } else if (xmin <= wx && wx < xmax) {
+                    return true;
+                }
+            }
+        } else {
+            // Diagonal jump step: if wall is incident on either cell
+            if (wall_type == 'h') {
+                if ((wy == y1 || wy == y2 || wy == std::min(y1, y2)) &&
+                    (wx >= std::min(x1, x2) - 1 && wx <= std::max(x1, x2))) {
+                    return true;
+                }
+            } else {
+                if ((wx == x1 || wx == x2 || wx == std::min(x1, x2)) &&
+                    (wy >= std::min(y1, y2) - 1 && wy <= std::max(y1, y2))) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 bool QuoridorGame::validate_wall_placement(int wx, int wy, char wall_type) const {
+    // Tier 1: Bounds & Overlap checks
     if (wx < 0 || wx > 7 || wy < 0 || wy > 7) {
         return false;
     }
-    
-    // Overlap checks
     if (wall_type == 'h') {
         if (h_walls[wx][wy] || (wx > 0 && h_walls[wx - 1][wy]) || (wx < 7 && h_walls[wx + 1][wy])) {
             return false;
@@ -265,24 +421,84 @@ bool QuoridorGame::validate_wall_placement(int wx, int wy, char wall_type) const
             return false;
         }
     }
-    
-    // Connectivity check: cast away constness to temporarily modify the board
+
+    // Tier 2: Slatton's 2-contact rule (contacts < 2 cannot disconnect the graph)
+    if (count_wall_contacts(wx, wy, wall_type) < 2) {
+        return true;
+    }
+
+    // Tier 3: Full BFS connectivity check
     QuoridorGame* mutable_this = const_cast<QuoridorGame*>(this);
     if (wall_type == 'h') {
         mutable_this->h_walls[wx][wy] = true;
     } else {
         mutable_this->v_walls[wx][wy] = true;
     }
-    
+
     bool p1_path_exists = has_path_to_row(p1_pos, 8);
     bool p2_path_exists = has_path_to_row(p2_pos, 0);
-    
+
     if (wall_type == 'h') {
         mutable_this->h_walls[wx][wy] = false;
     } else {
         mutable_this->v_walls[wx][wy] = false;
     }
-    
+
+    return p1_path_exists && p2_path_exists;
+}
+
+bool QuoridorGame::validate_wall_placement_cached(int wx, int wy, char wall_type,
+                                                 const std::vector<std::pair<int, int>>& p1_path,
+                                                 const std::vector<std::pair<int, int>>& p2_path) const {
+    // Tier 1: Bounds & Overlap checks
+    if (wx < 0 || wx > 7 || wy < 0 || wy > 7) {
+        return false;
+    }
+    if (wall_type == 'h') {
+        if (h_walls[wx][wy] || (wx > 0 && h_walls[wx - 1][wy]) || (wx < 7 && h_walls[wx + 1][wy])) {
+            return false;
+        }
+        if (v_walls[wx][wy]) {
+            return false;
+        }
+    } else {
+        if (v_walls[wx][wy] || (wy > 0 && v_walls[wx][wy - 1]) || (wy < 7 && v_walls[wx][wy + 1])) {
+            return false;
+        }
+        if (h_walls[wx][wy]) {
+            return false;
+        }
+    }
+
+    // Tier 2a: Cached Shortest-Path Intersection Check
+    if (!p1_path.empty() && !p2_path.empty() &&
+        !does_wall_intersect_path(wx, wy, wall_type, p1_path) &&
+        !does_wall_intersect_path(wx, wy, wall_type, p2_path)) {
+        return true;
+    }
+
+    // Tier 2b: Slatton's 2-contact rule
+    if (count_wall_contacts(wx, wy, wall_type) < 2) {
+        return true;
+    }
+
+    // Tier 3: Full BFS connectivity check
+    QuoridorGame* mutable_this = const_cast<QuoridorGame*>(this);
+    if (wall_type == 'h') {
+        mutable_this->h_walls[wx][wy] = true;
+    } else {
+        mutable_this->v_walls[wx][wy] = true;
+    }
+
+    bool p1_path_exists = has_path_to_row(p1_pos, 8);
+    bool p2_path_exists = has_path_to_row(p2_pos, 0);
+
+    if (wall_type == 'h') {
+        mutable_this->h_walls[wx][wy] = false;
+    } else {
+        mutable_this->v_walls[wx][wy] = false;
+    }
+
     return p1_path_exists && p2_path_exists;
 }
 
@@ -365,13 +581,15 @@ std::vector<Action> QuoridorGame::get_valid_actions() const {
     // 2. Wall placements
     int walls_left = is_p1_turn ? p1_walls_left : p2_walls_left;
     if (walls_left > 0) {
+        std::vector<std::pair<int, int>> p1_path = get_shortest_path(p1_pos, 8, p2_pos);
+        std::vector<std::pair<int, int>> p2_path = get_shortest_path(p2_pos, 0, p1_pos);
         std::vector<std::tuple<int, int, char>> candidates = get_candidate_walls();
         for (const auto& c : candidates) {
             int wx = std::get<0>(c);
             int wy = std::get<1>(c);
             char wtype = std::get<2>(c);
             
-            if (validate_wall_placement(wx, wy, wtype)) {
+            if (validate_wall_placement_cached(wx, wy, wtype, p1_path, p2_path)) {
                 actions.push_back(Action::Wall(wtype, wx, wy));
             }
         }
@@ -390,14 +608,17 @@ void QuoridorGame::step(const Action& action) {
         int wx = action.wall_x;
         int wy = action.wall_y;
         int owner = is_p1_turn ? 1 : 2;
+        int idx = wy * 8 + wx;
         if (action.wall_type == 'h') {
             h_walls[wx][wy] = true;
             h_wall_owners[wx][wy] = owner;
+            h_bitboard |= (1ULL << idx);
             if (is_p1_turn) p1_walls_left--;
             else p2_walls_left--;
         } else {
             v_walls[wx][wy] = true;
             v_wall_owners[wx][wy] = owner;
+            v_bitboard |= (1ULL << idx);
             if (is_p1_turn) p1_walls_left--;
             else p2_walls_left--;
         }
@@ -415,31 +636,148 @@ int QuoridorGame::is_game_over() const {
     return 0; // still playing
 }
 
-int QuoridorGame::get_guaranteed_winner() const {
-    if (is_game_over() != 0) return is_game_over();
+bool QuoridorGame::are_shortest_path_dags_disjoint(int& l1_out, int& l2_out) const {
+    const std::pair<int, int> dirs[4] = {{0, 1}, {0, -1}, {1, 0}, {-1, 0}};
 
-    std::vector<std::pair<int, int>> p1_path = get_shortest_path(p1_pos, 8, p2_pos);
-    std::vector<std::pair<int, int>> p2_path = get_shortest_path(p2_pos, 0, p1_pos);
-    
-    int l1 = p1_path.empty() ? 999 : (static_cast<int>(p1_path.size()) - 1);
-    int l2 = p2_path.empty() ? 999 : (static_cast<int>(p2_path.size()) - 1);
-    
-    if (l1 < 999 && l2 < 999) {
-        if (p2_walls_left == 0) {
-            if (is_p1_turn) {
-                if (l1 <= l2 - 1) return 1;
-            } else {
-                if (l1 <= l2 - 2) return 1;
-            }
-        }
-        if (p1_walls_left == 0) {
-            if (is_p1_turn) {
-                if (l2 <= l1 - 2) return -1;
-            } else {
-                if (l2 <= l1 - 1) return -1;
+    // 1. P1 forward BFS from p1_pos
+    int d1[9][9];
+    std::memset(d1, -1, sizeof(d1));
+    std::queue<std::pair<int, int>> q;
+    d1[p1_pos.first][p1_pos.second] = 0;
+    q.push(p1_pos);
+    while (!q.empty()) {
+        std::pair<int, int> curr = q.front();
+        q.pop();
+        int cx = curr.first;
+        int cy = curr.second;
+        for (const auto& d : dirs) {
+            int nx = cx + d.first;
+            int ny = cy + d.second;
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9 && d1[nx][ny] == -1 && !is_move_blocked(cx, cy, nx, ny)) {
+                d1[nx][ny] = d1[cx][cy] + 1;
+                q.push({nx, ny});
             }
         }
     }
+
+    // 2. P1 reverse BFS from target row 8
+    int r1[9][9];
+    std::memset(r1, -1, sizeof(r1));
+    for (int x = 0; x < 9; ++x) {
+        r1[x][8] = 0;
+        q.push({x, 8});
+    }
+    while (!q.empty()) {
+        std::pair<int, int> curr = q.front();
+        q.pop();
+        int cx = curr.first;
+        int cy = curr.second;
+        for (const auto& d : dirs) {
+            int nx = cx + d.first;
+            int ny = cy + d.second;
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9 && r1[nx][ny] == -1 && !is_move_blocked(cx, cy, nx, ny)) {
+                r1[nx][ny] = r1[cx][cy] + 1;
+                q.push({nx, ny});
+            }
+        }
+    }
+
+    int l1 = r1[p1_pos.first][p1_pos.second];
+    l1_out = l1;
+    if (l1 <= 0 || l1 > 100) return false;
+
+    // 3. P2 forward BFS from p2_pos
+    int d2[9][9];
+    std::memset(d2, -1, sizeof(d2));
+    d2[p2_pos.first][p2_pos.second] = 0;
+    q.push(p2_pos);
+    while (!q.empty()) {
+        std::pair<int, int> curr = q.front();
+        q.pop();
+        int cx = curr.first;
+        int cy = curr.second;
+        for (const auto& d : dirs) {
+            int nx = cx + d.first;
+            int ny = cy + d.second;
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9 && d2[nx][ny] == -1 && !is_move_blocked(cx, cy, nx, ny)) {
+                d2[nx][ny] = d2[cx][cy] + 1;
+                q.push({nx, ny});
+            }
+        }
+    }
+
+    // 4. P2 reverse BFS from target row 0
+    int r2[9][9];
+    std::memset(r2, -1, sizeof(r2));
+    for (int x = 0; x < 9; ++x) {
+        r2[x][0] = 0;
+        q.push({x, 0});
+    }
+    while (!q.empty()) {
+        std::pair<int, int> curr = q.front();
+        q.pop();
+        int cx = curr.first;
+        int cy = curr.second;
+        for (const auto& d : dirs) {
+            int nx = cx + d.first;
+            int ny = cy + d.second;
+            if (nx >= 0 && nx < 9 && ny >= 0 && ny < 9 && r2[nx][ny] == -1 && !is_move_blocked(cx, cy, nx, ny)) {
+                r2[nx][ny] = r2[cx][cy] + 1;
+                q.push({nx, ny});
+            }
+        }
+    }
+
+    int l2 = r2[p2_pos.first][p2_pos.second];
+    l2_out = l2;
+    if (l2 <= 0 || l2 > 100) return false;
+
+    // 5. Check if any cell (x, y) belongs to BOTH shortest-path DAGs
+    for (int x = 0; x < 9; ++x) {
+        for (int y = 0; y < 9; ++y) {
+            bool in_dag1 = (d1[x][y] >= 0 && r1[x][y] >= 0 && d1[x][y] + r1[x][y] == l1);
+            bool in_dag2 = (d2[x][y] >= 0 && r2[x][y] >= 0 && d2[x][y] + r2[x][y] == l2);
+            if (in_dag1 && in_dag2) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+int QuoridorGame::get_guaranteed_winner() const {
+    if (is_game_over() != 0) return is_game_over();
+
+    int l1 = 999, l2 = 999;
+    bool disjoint = are_shortest_path_dags_disjoint(l1, l2);
+    if (l1 >= 999 || l2 >= 999) return 0;
+
+    // Both players have 0 walls left: deterministic pawn race
+    if (p1_walls_left == 0 && p2_walls_left == 0) {
+        // High margin: 2 full plies guarantees win regardless of jump parity
+        if (l1 <= l2 - 2) return 1;
+        if (l2 <= l1 - 2) return -1;
+
+        // Tight margin (|l1 - l2| <= 1): require disjoint DAGs to preclude jump flips
+        if (disjoint) {
+            if (l1 < l2) return 1;
+            if (l2 < l1) return -1;
+            return is_p1_turn ? 1 : -1;
+        }
+        return 0;
+    }
+
+    // One player has 0 walls left: conservative bounds with jump parity guard
+    if (p2_walls_left == 0) {
+        if (l1 <= l2 - 2) return 1;
+        if (is_p1_turn && l1 <= l2 - 1 && disjoint) return 1;
+    }
+    if (p1_walls_left == 0) {
+        if (l2 <= l1 - 2) return -1;
+        if (!is_p1_turn && l2 <= l1 - 1 && disjoint) return -1;
+    }
+
     return 0;
 }
 

@@ -275,7 +275,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.00015, 
     
     model_gpu = QuoridorNet(num_residual_blocks=20, channels=192).to(DEVICE)
     optimizer = optim.Adam(model_gpu.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.8)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
     loss_val_fn = nn.MSELoss()
 
     start_epoch = 0
@@ -309,14 +309,9 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.00015, 
                         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                         if 'scheduler_state_dict' in checkpoint:
                             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-                        scheduler.step_size = 50
-                        scheduler.gamma = 0.8
-                        scheduler.base_lrs = [lr]
-                        decay_count = checkpoint.get('epoch', 0) // 50
-                        current_scheduled_lr = lr * (0.8 ** decay_count)
                         for param_group in optimizer.param_groups:
-                            param_group['lr'] = current_scheduled_lr
-                        print(f"Adjusted learning rate to {current_scheduled_lr:.6f} based on schedule.")
+                            param_group['lr'] = scheduler.get_last_lr()[0] if hasattr(scheduler, 'get_last_lr') else lr
+                        print(f"Resumed optimizer and scheduler. LR = {optimizer.param_groups[0]['lr']:.6f}.")
                     except Exception as opt_err:
                         print(f"Re-initializing optimizer for updated architecture ({opt_err}). LR = {lr}.")
                         for param_group in optimizer.param_groups:
@@ -406,17 +401,22 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.00015, 
         epoch_mcts_eval = 0.0
         epoch_abs_mcts_eval = 0.0
 
-        for states, target_policies, target_values, valid_masks in dataloader:
+        for batch in dataloader:
+            if len(batch) == 5:
+                states, target_policies, target_values, valid_masks, target_aux = batch
+                target_aux = target_aux.to(DEVICE, non_blocking=True)
+            else:
+                states, target_policies, target_values, valid_masks = batch
+                target_aux = states[:, [4, 5], 0, 0].to(DEVICE, non_blocking=True)
+
             states = states.to(DEVICE, non_blocking=True)
             target_policies = target_policies.to(DEVICE, non_blocking=True)
             target_values = target_values.to(DEVICE, non_blocking=True)
             valid_masks = valid_masks.to(DEVICE, non_blocking=True)
             
-            target_aux = states[:, [4, 5], 0, 0]
-            
             optimizer.zero_grad()
             with torch.amp.autocast(DEVICE.type, enabled=use_amp):
-                logits, values, aux_preds = model_gpu(states, return_aux=True)
+                logits, values, aux_preds, aux_wall_grid, aux_opp_logits = model_gpu(states, return_aux=True)
                 logits = logits.masked_fill(~valid_masks, -1e4)
                 log_probs = torch.log_softmax(logits, dim=1)
                 loss_p = -torch.sum(target_policies * log_probs) / logits.size(0)

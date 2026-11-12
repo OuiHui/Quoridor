@@ -37,7 +37,7 @@ def main():
     print(f"Detected architecture: {num_blocks} blocks, {channels} channels (epoch {epoch})")
 
     model = QuoridorNet(num_residual_blocks=num_blocks, channels=channels)
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=False)
 
     os.makedirs("public", exist_ok=True)
     export_to_onnx(model, OUTPUT_PATH)

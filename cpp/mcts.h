@@ -2,14 +2,57 @@
 
 #include "quoridor_simulator.h"
 #include <map>
+#include <unordered_map>
 #include <vector>
 #include <memory>
 #include <functional>
+#include <cstdint>
 
 enum class ProvenStatus {
     UNRESOLVED,
     PROVEN_WIN,
     PROVEN_LOSS
+};
+
+struct TTEntry {
+    std::vector<float> policy; // 140 floats
+    float value = 0.0f;
+    ProvenStatus proven_status = ProvenStatus::UNRESOLVED;
+};
+
+class TranspositionTable {
+public:
+    std::unordered_map<uint64_t, TTEntry> table;
+    size_t max_entries;
+
+    TranspositionTable(size_t max_size = 200000) : max_entries(max_size) {}
+
+    bool lookup(uint64_t hash, TTEntry& entry) const {
+        auto it = table.find(hash);
+        if (it != table.end()) {
+            entry = it->second;
+            return true;
+        }
+        return false;
+    }
+
+    void store(uint64_t hash, const std::vector<float>& policy, float value, ProvenStatus status = ProvenStatus::UNRESOLVED) {
+        if (table.size() >= max_entries) {
+            table.clear();
+        }
+        TTEntry& e = table[hash];
+        e.policy = policy;
+        e.value = value;
+        e.proven_status = status;
+    }
+
+    void clear() {
+        table.clear();
+    }
+
+    size_t size() const {
+        return table.size();
+    }
 };
 
 struct MCTSNode {
@@ -41,8 +84,15 @@ public:
     double c_puct;
     double dirichlet_alpha;
     double dirichlet_eps;
+    double c_fpu;
+    bool use_gumbel;
+    TranspositionTable tt;
 
-    MCTS(double c_puct = 1.4, double dirichlet_alpha = 0.07, double dirichlet_eps = 0.15);
+    MCTS(double c_puct = 1.4, double dirichlet_alpha = 0.07, double dirichlet_eps = 0.15, double c_fpu = 0.20, bool use_gumbel = false);
+
+    void clear_transposition_table() { tt.clear(); }
+    size_t get_tt_size() const { return tt.size(); }
+    static std::vector<float> mirror_policy_cpp(const std::vector<float>& policy);
 
     // Parallel lock-step MCTS search for a batch of games.
     // games: list of QuoridorGame objects
