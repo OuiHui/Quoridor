@@ -120,6 +120,39 @@ def verify_simulators(num_moves=1000):
         
     print(f"SUCCESS: Verified C++ simulator against Python reference over {num_moves} random steps. Boards and rules match perfectly!")
 
+def verify_wall_trapping_prevention():
+    print("Verifying that illegal wall placements trapping either player are rejected...")
+    g = quoridor_cpp.QuoridorGame()
+    h_walls = [(0, 1), (4, 0), (2, 7), (5, 4), (2, 2), (6, 6)]
+    v_walls = [(0, 7), (7, 4), (1, 2), (7, 7), (0, 0), (4, 6), (3, 0), (7, 2)]
+
+    for wx, wy in h_walls:
+        g.step(quoridor_cpp.Action.Wall('h', wx, wy))
+        g.is_p1_turn = not g.is_p1_turn
+        g.p1_walls_left = 10
+        g.p2_walls_left = 10
+
+    for wx, wy in v_walls:
+        g.step(quoridor_cpp.Action.Wall('v', wx, wy))
+        g.is_p1_turn = not g.is_p1_turn
+        g.p1_walls_left = 10
+        g.p2_walls_left = 10
+
+    # Vertical wall at (5, 0) would box in P1 at (4, 0)
+    assert not g.validate_wall_placement(5, 0, 'v'), "Trapping wall (5, 0, 'v') must be rejected by validate_wall_placement!"
+
+    p1_path = g.get_shortest_path(g.p1_pos, 8, g.p2_pos)
+    p2_path = g.get_shortest_path(g.p2_pos, 0, g.p1_pos)
+    assert not g.validate_wall_placement_cached(5, 0, 'v', p1_path, p2_path), "Trapping wall (5, 0, 'v') must be rejected by validate_wall_placement_cached!"
+
+    valid_actions = g.get_valid_actions()
+    for a in valid_actions:
+        if a.type == 'wall' and a.wall_type == 'v' and a.wall_x == 5 and a.wall_y == 0:
+            raise AssertionError("Trapping wall (5, 0, 'v') was found in get_valid_actions()!")
+
+    print("SUCCESS: Trapping wall was strictly rejected by all validation checks.")
+
 if __name__ == "__main__":
+    verify_wall_trapping_prevention()
     verify_simulators()
     verify_wall_coordinate_padding_alignment()

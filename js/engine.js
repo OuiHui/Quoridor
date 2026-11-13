@@ -280,11 +280,6 @@ export function validateWallPlacement(wx, wy, type, p1Pos, p2Pos, hWalls, vWalls
         !doesWallIntersectPath(wx, wy, type, p2Path)) {
         return true;
     }
-
-    // Tier 2b: Slatton's 2-contact rule (fewer than 2 contacts cannot disconnect the board)
-    if (countWallContacts(wx, wy, type, hWalls, vWalls) < 2) {
-        return true;
-    }
     
     // Tier 3: Full BFS path-blocking check
     const wallKey = `${wx},${wy}`;
@@ -630,11 +625,6 @@ export function validateWallPlacementFast(wx, wy, type, p1Pos, p2Pos, hWallsArra
     if (p1Path && p2Path && p1Path.length > 0 && p2Path.length > 0 &&
         !doesWallIntersectPath(wx, wy, type, p1Path) &&
         !doesWallIntersectPath(wx, wy, type, p2Path)) {
-        return true;
-    }
-
-    // Tier 2b: Slatton's 2-contact rule
-    if (countWallContactsFast(wx, wy, type, hWallsArray, vWallsArray) < 2) {
         return true;
     }
     

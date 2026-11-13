@@ -422,12 +422,7 @@ bool QuoridorGame::validate_wall_placement(int wx, int wy, char wall_type) const
         }
     }
 
-    // Tier 2: Slatton's 2-contact rule (contacts < 2 cannot disconnect the graph)
-    if (count_wall_contacts(wx, wy, wall_type) < 2) {
-        return true;
-    }
-
-    // Tier 3: Full BFS connectivity check
+    // Full BFS connectivity check
     QuoridorGame* mutable_this = const_cast<QuoridorGame*>(this);
     if (wall_type == 'h') {
         mutable_this->h_walls[wx][wy] = true;
@@ -477,12 +472,7 @@ bool QuoridorGame::validate_wall_placement_cached(int wx, int wy, char wall_type
         return true;
     }
 
-    // Tier 2b: Slatton's 2-contact rule
-    if (count_wall_contacts(wx, wy, wall_type) < 2) {
-        return true;
-    }
-
-    // Tier 3: Full BFS connectivity check
+    // Full BFS connectivity check
     QuoridorGame* mutable_this = const_cast<QuoridorGame*>(this);
     if (wall_type == 'h') {
         mutable_this->h_walls[wx][wy] = true;
