@@ -160,16 +160,20 @@ def count_games_in_dir(epoch_dir):
 
 def get_current_epoch():
     """
-    Finds the active training epoch. We read the checkpoint file first;
-    if unavailable, we scan the data directory.
+    Finds the active training epoch. We check public/training_state.json first
+    to avoid reading the 162MB checkpoint file in a loop and causing file-lock collisions.
     """
-    if os.path.exists(CHECKPOINT_PATH):
+    state_file = os.path.join("public", "training_state.json")
+    if os.path.exists(state_file):
         try:
-            checkpoint = torch.load(CHECKPOINT_PATH, map_location='cpu', weights_only=False)
-            return checkpoint.get('epoch', 0)
+            with open(state_file, "r") as f:
+                data = json.load(f)
+                ep = data.get("metrics", {}).get("epoch", 0)
+                if ep > 0:
+                    return ep
         except Exception:
             pass
-            
+
     # Fallback to scanning data/epoch_XXX directories
     if os.path.exists(DATA_DIR):
         epochs = []
@@ -184,10 +188,17 @@ def get_current_epoch():
                     pass
         if epochs:
             return max(epochs)
+
+    if os.path.exists(CHECKPOINT_PATH):
+        try:
+            checkpoint = torch.load(CHECKPOINT_PATH, map_location='cpu', weights_only=False)
+            return checkpoint.get('epoch', 0)
+        except Exception:
+            pass
     return 0
 
 def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=1200, fast_simulations=1200, use_pcr=False, actor_id=1):
-    mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.20, dirichlet_eps=0.25)
+    mcts = quoridor_cpp.MCTS(c_puct=1.4, dirichlet_alpha=0.07, dirichlet_eps=0.15)
     
     # Initialize batch vectors
     games = [quoridor_cpp.QuoridorGame() for _ in range(batch_size)]
@@ -277,21 +288,33 @@ def run_self_play_batch(evaluator, epoch, batch_size=32, num_simulations=1200, f
                 mcts_eval = float(root_q_values[local_idx])
                 trajectories[global_idx].append((state_flat, policy_probs, game.is_p1_turn, valid_mask, mcts_eval))
                 
-                # Temperature schedule: decay across first 20 plies
+                # Masked graduated temperature schedule
                 current_move = move_counts[global_idx]
-                if current_move < 20:
-                    tau = max(0.1, 1.0 - (current_move / 20.0))
+                if current_move <= 5:
+                    tau = 0.8
+                elif current_move <= 16:
+                    tau = 0.4
                 else:
                     tau = 0.0
-                    
+
                 if tau > 0.0:
-                    probs = np.power(policy_probs, 1.0 / tau)
-                    prob_sum = probs.sum()
-                    if prob_sum > 1e-8:
-                        norm_probs = probs / prob_sum
+                    max_visits = adjusted_visits.max()
+                    visit_threshold = 0.25 * max_visits
+                    masked_probs = policy_probs.copy()
+                    masked_probs[adjusted_visits < visit_threshold] = 0.0
+                    prob_sum = masked_probs.sum()
+                    if prob_sum < 1e-8:
+                        masked_probs = policy_probs.copy()
+                        prob_sum = masked_probs.sum()
+                    masked_probs /= prob_sum
+
+                    temp_probs = np.power(masked_probs, 1.0 / tau)
+                    temp_sum = temp_probs.sum()
+                    if temp_sum > 1e-8:
+                        norm_probs = temp_probs / temp_sum
                         action_idx = np.random.choice(140, p=norm_probs)
                     else:
-                        action_idx = np.argmax(policy_probs)
+                        action_idx = np.argmax(masked_probs)
                 else:
                     action_idx = np.argmax(policy_probs)
                     

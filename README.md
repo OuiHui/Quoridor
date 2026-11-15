@@ -4,7 +4,11 @@ An implementation of an AlphaZero-style reinforcement learning agent for the boa
 
 > [!TIP]
 > For a detailed technical overview of system modules, data flows, and performance optimizations, see the [Architecture Documentation](docs/architecture.md).
-> For the latest training audit, red flag remediations, and metric fixes, see the [Epoch 365 Analysis and Remediation Report](docs/training_epoch365_analysis_and_remediation.md) and [Training Pipeline Remediation](docs/training_pipeline_remediation.md).
+> For the latest training audits, red flag remediations, and benchmark results, see:
+> - [Epoch 373 Evaluation & Diagonal Jump Patch Report](docs/training_epoch373_and_jump_patch.md) (Perimeter jump bug fix, 83.3% Minimax win rate, jump prior floors, and 5/6 tactical score)
+> - [Epoch 200 Audit and Remediation Report](docs/training_epoch200_audit_and_remediation.md) (Opening wall bias resolution, stratified Dirichlet noise, masked graduated temperature, and Slatton contact fix)
+> - [Epoch 700 Training Collapse and QuoridorNet v2 Remediation](docs/training_epoch700_collapse_and_v2_remediation.md) (Architecture overhaul, Gumbel AlphaZero, and race solver)
+> - [Training Pipeline Remediation](docs/training_pipeline_remediation.md)
 
 ---
 
@@ -49,24 +53,21 @@ The game board is represented as an $11 \times 9 \times 9$ tensor. The 11 channe
 > **Pathfinding**: Traditional Convolutional Neural Networks lack global coordination to calculate path connectivity. By pre-calculating the BFS shortest paths (Channels 4-7) and feeding them directly as inputs, the model trains significantly faster and avoids having to learn shortest path algorithms from scratch.
 
 ### 2. The Convolutional Trunk
-* **Initial Block**: A $3 \times 3$ 2D Convolution layer with 128 channels, followed by 2D Batch Normalization and a ReLU activation function.
-* **Residual Trunk with SE-Attention**: Consists of **10 Residual Blocks** with 128 channels each and **Squeeze-and-Excitation (SE)** channel attention. Each block performs two consecutive $3 \times 3$ convolutions (with Batch Normalization and ReLU), passes through an adaptive SE channel attention module to recalibrate feature channels based on global grid context, and adds a skip connection.
+* **Initial Block**: A $3 \times 3$ 2D Convolution layer with 192 channels, followed by 2D Batch Normalization and a ReLU activation function.
+* **Residual Trunk with Global Pooling Attention**: Consists of **20 Residual Blocks** with 192 channels each, integrating Squeeze-and-Excitation channel attention augmented with global mean and max pooling ($y = [\text{mean\_pool}(x), \text{max\_pool}(x)]$). Each block performs two consecutive $3 \times 3$ convolutions (with Batch Normalization and ReLU), recalibrates feature channels based on global grid context, and adds a residual skip connection.
 
 ### 3. Multi-Head Output Architecture
-The network splits into three output branches:
-* **Policy Head**:
-  - Compresses the trunk's 128 channels down to 4 channels using a $1 \times 1$ convolution.
-  - Applies Batch Normalization and a ReLU activation.
-  - Flattens the output and passes it through a fully connected linear layer to yield **140 action logits**.
+The network splits into dedicated heads:
+* **Decoupled Spatial Policy Head**:
+  - *Pawn Sub-Head*: Compresses trunk channels to 4 via $1 \times 1$ convolution, followed by Batch Normalization, ReLU, flattening, and a linear readout producing **12 pawn movement logits**.
+  - *Wall Sub-Head*: Compresses trunk channels to 32 via $1 \times 1$ convolution, followed by Batch Normalization, ReLU, and a spatial $2 \times 2$ unpadded convolution producing a $(2, 8, 8)$ grid, reshaped into **64 horizontal wall logits** and **64 vertical wall logits**. Preserves 2D geometric locality.
 * **Value Head**:
   - Compresses features down to 4 channels using a $1 \times 1$ convolution.
   - Applies Batch Normalization and a ReLU activation.
   - Flattens the output and passes it through a fully connected linear layer of size 64 with a ReLU activation.
   - Passes the result through a final fully connected linear layer with a `tanh` activation to output a scalar in `[-1.0, 1.0]`, representing the expected game outcome.
-* **Auxiliary Path Head**:
-  - Compresses features down to 2 channels using a $1 \times 1$ convolution.
-  - Applies Batch Normalization and a ReLU activation.
-  - Passes through a linear layer and a `sigmoid` activation to predict normalized remaining shortest path lengths $[0.0, 1.0]$ for active player and opponent.
+* **Auxiliary Path & Ownership Heads**:
+  - Predicts normalized terminal path distances $[d_{\text{active}}^{\text{end}}, d_{\text{opp}}^{\text{end}}]$ in $[0.0, 1.0]$ and terminal wall ownership grids during training. Auxiliary heads are automatically stripped during ONNX export for browser deployment.
 
 ### 4. Action Space Mapping (140 Actions)
 The output policy vector of size 140 represents all possible moves and wall placements:
@@ -128,19 +129,19 @@ The training pipeline runs in a loop across a user-specified number of epochs. E
 * **MCTS Guidance**: During each turn, Monte Carlo Tree Search (MCTS) executes a deep lookahead (`simulations`, default: 800). It uses the model's **Policy Head** as prior probabilities to narrow down candidate branches and the **Value Head** to immediately evaluate leaf nodes.
 * **C++ Acceleration**: Self-play games are simulated in parallel batches by [run_actor.py](run_actor.py) using the compiled C++ simulator and MCTS engine, leveraging ONNX Runtime for fast batched neural network inference.
 * **Exploration vs. Exploitation**: 
-  - For the first 6 moves of each game, pawn moves are sampled proportionally to MCTS visit counts to guarantee diverse openings.
-  - After 6 moves, the agent acts greedily by picking the most-visited action.
-  - Dirichlet noise ($\alpha=0.3, \epsilon=0.15$) is added to the root node to ensure exploration.
+  - **Masked Graduated Temperature**: Plies 0–5 use $\tau = 0.8$, plies 6–16 use $\tau = 0.4$, and ply 17+ uses greedy $\arg\max$. Actions with visit counts below $25\%$ of the maximum child count ($N(a) < 0.25 \times \max N(b)$) are masked to zero prior to temperature sampling, preventing noise wall selection.
+  - **Class-Stratified Dirichlet Noise**: At the root node, noise budget ($\epsilon=0.15$) is split $50\%$ to pawn moves ($\alpha_{\text{pawn}}=0.5$) and $50\%$ to wall moves ($\alpha_{\text{wall}}=0.07$) to counteract the $128:3$ opening move imbalance.
+  - **Playout Cap Randomization (PCR)**: 25% of turns execute 800 simulations; 75% execute 120 fast simulations.
 * **Consolidated Data Batching**: Trajectories are saved in consolidated files (`games_32_<timestamp>_<uuid>.pt`) to maximize disk I/O performance.
 * **Symmetry Augmentation**: Each position is augmented using horizontal mirroring (left-right board symmetry), doubling the dataset size for free.
 
 ### 2. Optimization (Neural Network Training)
-* **Replay Buffer Caching**: Positions are maintained in an in-memory buffer via `ReplayDatasetCache`, loading only newly generated batch files each epoch.
+* **Replay Buffer Caching**: Positions are maintained in an in-memory buffer via `ReplayDatasetCache`, loading newly generated batch files each epoch.
 * **AMP & Vectorized Tensors**: Mini-batches are trained with Automatic Mixed Precision (`torch.amp.autocast('cuda')`) and pre-stacked contiguous memory tensors for 2x-3x faster backpropagation.
 * **Loss Function**:
   - **Policy Loss**: Cross-entropy between predicted policy logits and target MCTS visit distributions.
-  - **Value Loss**: Mean Squared Error (MSE) between predicted value ($V \in [-1, 1]$) and outcome ($Z \in \{-1, 1\}$ or $0$ for draws).
-* **Learning Rate Decay**: `StepLR` decays LR by 0.8 every 50 epochs.
+  - **Value Loss**: Bootstrapped target mixing combining discounted terminal outcome ($z$) and root evaluation ($q_{\text{root}}$): $v_{\text{target}} = 0.70 z + 0.30 q_{\text{root}}$.
+* **Learning Rate Schedule**: `CosineAnnealingLR` with warm restarts / resets as configured by `--reset_lr`.
 * **ONNX Export**: Updated weights are exported to `quoridor_model.onnx` so self-play workers hot-reload the latest model automatically.
 
 ---

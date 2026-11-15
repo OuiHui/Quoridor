@@ -681,7 +681,9 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
 
         const validPairs = validActions.map(action => {
             const idx = mapActionToIndexPerspective(action, root.state.turn, root.state.p1Pos, root.state.p2Pos);
-            return { action, idx, priorProb: rootPolicy[idx] || 0.0 };
+            let p = rootPolicy[idx] || 0.0;
+            if (idx >= 4 && idx <= 11) p = Math.max(p, 0.10);
+            return { action, idx, priorProb: p };
         });
         let filteredPairs = validPairs.filter(p => p.action.type === 'move' || p.priorProb >= PRUNING_THRESHOLD);
         if (filteredPairs.length < 4) filteredPairs = validPairs;
@@ -776,7 +778,10 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
                     const sqrtRootN = Math.sqrt(Math.max(1, root.N));
                     let maxDeficit = 0;
                     for (const child of root.children.values()) {
-                        const nForced = Math.floor(kForced * child.prior * sqrtRootN);
+                        let nForced = Math.floor(kForced * child.prior * sqrtRootN);
+                        if (child.actionIdx >= 4 && child.actionIdx <= 11) {
+                            nForced = Math.max(nForced, 2);
+                        }
                         if (child.N < nForced) {
                             const deficit = nForced - child.N;
                             if (deficit > maxDeficit) {

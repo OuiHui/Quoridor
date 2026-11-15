@@ -93,17 +93,18 @@ def handle_fresh_start():
             pass
 
 
-def launch_windows_mode(num_actors, simulations, fast_simulations, batch_size, epochs):
+def launch_windows_mode(num_actors, simulations, fast_simulations, batch_size, epochs, reset_lr=False):
     print("Launching training pipeline in separate terminal windows...")
+    work_dir = os.path.dirname(os.path.abspath(__file__))
 
-    server_cmd = f'start "Quoridor GPU Inference Server" cmd /k "{sys.executable} gpu_inference_server.py"'
+    server_cmd = f'start "Quoridor GPU Inference Server" /D "{work_dir}" cmd /k "{sys.executable} gpu_inference_server.py"'
     subprocess.Popen(server_cmd, shell=True)
     time.sleep(3)
 
     for i in range(num_actors):
         actor_id = i + 1
         actor_cmd = (
-            f'start "Quoridor Actor #{actor_id}" cmd /k '
+            f'start "Quoridor Actor #{actor_id}" /D "{work_dir}" cmd /k '
             f'"{sys.executable} run_actor.py --actor_id {actor_id} '
             f'--simulations {simulations} --fast_simulations {fast_simulations} --batch_size {batch_size}"'
         )
@@ -111,17 +112,18 @@ def launch_windows_mode(num_actors, simulations, fast_simulations, batch_size, e
         time.sleep(0.5)
 
     time.sleep(1)
+    reset_flag = " --reset_lr" if reset_lr else ""
     trainer_cmd = (
-        f'start "Quoridor AlphaZero Learner" cmd /k '
+        f'start "Quoridor AlphaZero Learner" /D "{work_dir}" cmd /k '
         f'"{sys.executable} train_alphazero.py --no_spawn --epochs {epochs} '
-        f'--simulations {simulations} --fast_simulations {fast_simulations}"'
+        f'--simulations {simulations} --fast_simulations {fast_simulations}{reset_flag}"'
     )
     subprocess.Popen(trainer_cmd, shell=True)
 
     print("All processes launched in dedicated windows. Monitor each window for live logs.")
 
 
-def launch_managed_mode(num_actors, simulations, fast_simulations, batch_size, epochs):
+def launch_managed_mode(num_actors, simulations, fast_simulations, batch_size, epochs, reset_lr=False):
     print(f"Starting AlphaZero orchestrator ({num_actors} parallel actors, deep sims: {simulations}, fast sims: {fast_simulations})...")
 
     cmd = [
@@ -131,6 +133,8 @@ def launch_managed_mode(num_actors, simulations, fast_simulations, batch_size, e
         "--fast_simulations", str(fast_simulations),
         "--epochs", str(epochs)
     ]
+    if reset_lr:
+        cmd.append("--reset_lr")
 
     proc = subprocess.Popen(cmd)
 
@@ -158,6 +162,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=32, help="Self-play batch size per actor (default: 32)")
     parser.add_argument("--epochs", type=int, default=200, help="Total training epochs (default: 200)")
     parser.add_argument("--fresh", action="store_true", help="Start training from scratch with fresh v2 weights (archives old checkpoint)")
+    parser.add_argument("--reset_lr", action="store_true", help="Reset learning rate schedule to initial LR before resuming training")
     parser.add_argument("--windows", action="store_true", help="Launch server, actors, and learner in separate terminal windows")
     args = parser.parse_args()
 
@@ -167,9 +172,9 @@ def main():
         handle_fresh_start()
 
     if args.windows and sys.platform == "win32":
-        launch_windows_mode(args.actors, args.simulations, args.fast_simulations, args.batch_size, args.epochs)
+        launch_windows_mode(args.actors, args.simulations, args.fast_simulations, args.batch_size, args.epochs, reset_lr=args.reset_lr)
     else:
-        launch_managed_mode(args.actors, args.simulations, args.fast_simulations, args.batch_size, args.epochs)
+        launch_managed_mode(args.actors, args.simulations, args.fast_simulations, args.batch_size, args.epochs, reset_lr=args.reset_lr)
 
 
 if __name__ == "__main__":

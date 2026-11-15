@@ -186,8 +186,8 @@ std::vector<std::pair<int, int>> QuoridorGame::get_shortest_path(std::pair<int, 
                             next_path.push_back(jump_dest);
                             q.push(next_path);
                         }
-                    } else if (straight_blocked_by_wall) {
-                        // Diagonal jumps when straight is blocked by a wall
+                    } else if (straight_blocked_by_wall || !straight_in_bounds) {
+                        // Diagonal jumps when straight is blocked by a wall or board boundary
                         std::vector<std::pair<int, int>> sides;
                         if (dx == 0) { // moving vertically, sides are horizontal
                             sides = {{-1, 0}, {1, 0}};
@@ -289,8 +289,8 @@ std::vector<Action> QuoridorGame::get_valid_pawn_moves(bool is_p1) const {
                     
                     if (is_straight_in_bounds && !is_straight_blocked_by_wall) {
                         valid.push_back(Action::Move("jump_" + dir_names[i], jx, jy));
-                    } else if (is_straight_blocked_by_wall) {
-                        // Diagonal jump only if straight is blocked by a wall
+                    } else if (is_straight_blocked_by_wall || !is_straight_in_bounds) {
+                        // Diagonal jump if straight is blocked by a wall or board boundary
                         if (dx == 0) { // moving vertically, check horizontal diagonals
                             std::string base_dir = (dir_names[i] == "N") ? "jump_N" : "jump_S";
                             if (nx - 1 >= 0 && !is_move_blocked(nx, ny, nx - 1, ny)) {

@@ -426,7 +426,16 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
 
                     // Root Selection: Gumbel Sequential Halving or KataGo Forced Playouts
                     if (node == roots[i]) {
-                        if (is_gumbel_active && !gumbel_candidates[i].empty()) {
+                        // Terminal win / proven win pre-check: short-circuit selection to winning child
+                        for (const auto& pair : node->children) {
+                            if (pair.second->game_state.is_game_over() != 0 || pair.second->proven_status == ProvenStatus::PROVEN_LOSS) {
+                                best_child = pair.second;
+                                break;
+                            }
+                        }
+                        if (best_child != nullptr) {
+                            // skip normal selection
+                        } else if (is_gumbel_active && !gumbel_candidates[i].empty()) {
                             int min_visits = 1e9;
                             double best_perturbed = -1e9;
                             for (const auto& cand : gumbel_candidates[i]) {
@@ -451,6 +460,10 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                             for (const auto& pair : node->children) {
                                 MCTSNode* child = pair.second;
                                 int n_forced = static_cast<int>(std::floor(k_forced * child->prior * sqrt_root_n));
+                                // Guarantee forced playouts for legal jump actions (indices 4-11)
+                                if (pair.first >= 4 && pair.first <= 11) {
+                                    n_forced = std::max(n_forced, 2);
+                                }
                                 int eff_N = child->N + child->virtual_loss;
                                 if (eff_N < n_forced) {
                                     double deficit = n_forced - eff_N;
@@ -577,6 +590,9 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                     double policy_sum = 0.0;
                     for (int idx : valid_indices) {
                         double model_p = traversals[t_idx].cached_policy[idx];
+                        if (leaf == roots[traversals[t_idx].game_idx] && idx >= 4 && idx <= 11) {
+                            model_p = std::max(model_p, 0.10);
+                        }
                         policy_prior[idx] = model_p;
                         policy_sum += model_p;
                     }
@@ -628,6 +644,9 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                     double policy_sum = 0.0;
                     for (int idx : valid_indices) {
                         double model_p = raw_policy[idx];
+                        if (leaf == roots[traversals[t_idx].game_idx] && idx >= 4 && idx <= 11) {
+                            model_p = std::max(model_p, 0.10);
+                        }
                         policy_prior[idx] = model_p;
                         policy_sum += model_p;
                     }
@@ -647,21 +666,48 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                     }
 
                     if (sim == 0 && leaf == roots[traversals[t_idx].game_idx] && !leaf->children.empty() && !is_gumbel_active) {
-                        std::gamma_distribution<double> gamma(dirichlet_alpha, 1.0);
-                        double noise_sum = 0.0;
-                        std::vector<double> noises;
-                        noises.reserve(leaf->children.size());
-                        for (size_t c = 0; c < leaf->children.size(); ++c) {
-                            double val = gamma(gen);
-                            if (val < 1e-8) val = 1e-8;
-                            noises.push_back(val);
-                            noise_sum += val;
+                        // Stratified Dirichlet noise: split eps budget 50/50 between pawn (0–11) and wall (12–139) moves
+                        std::gamma_distribution<double> gamma_pawn(0.5, 1.0);
+                        std::gamma_distribution<double> gamma_wall(dirichlet_alpha, 1.0);
+
+                        std::vector<int> pawn_keys, wall_keys;
+                        for (const auto& pair : leaf->children) {
+                            if (pair.first < 12) pawn_keys.push_back(pair.first);
+                            else wall_keys.push_back(pair.first);
                         }
-                        size_t n_idx = 0;
-                        for (auto& pair : leaf->children) {
-                            double n = noises[n_idx++] / noise_sum;
-                            pair.second->prior = (1.0 - dirichlet_eps) * pair.second->prior + dirichlet_eps * n;
+
+                        auto sample_noise = [&](std::vector<int>& keys, std::gamma_distribution<double>& dist) {
+                            double sum = 0.0;
+                            std::vector<double> vals;
+                            vals.reserve(keys.size());
+                            for (size_t c = 0; c < keys.size(); ++c) {
+                                double v = dist(gen);
+                                if (v < 1e-8) v = 1e-8;
+                                vals.push_back(v);
+                                sum += v;
+                            }
+                            for (size_t c = 0; c < keys.size(); ++c) {
+                                double n = vals[c] / sum;
+                                // Each class receives half of eps
+                                leaf->children[keys[c]]->prior =
+                                    (1.0 - dirichlet_eps) * leaf->children[keys[c]]->prior
+                                    + (dirichlet_eps * 0.5) * n;
+                            }
+                        };
+
+                        if (!pawn_keys.empty()) sample_noise(pawn_keys, gamma_pawn);
+                        if (!wall_keys.empty()) sample_noise(wall_keys, gamma_wall);
+
+                        // Renormalize priors across all children after stratified noise
+                        double prior_sum = 0.0;
+                        for (const auto& pair : leaf->children) prior_sum += pair.second->prior;
+                        if (prior_sum > 1e-8) {
+                            for (auto& pair : leaf->children) pair.second->prior /= prior_sum;
                         }
+
+                        // Forced pawn expansion: guarantee at least 1 visit to every legal pawn child
+                        // by boosting their prior so PUCT will naturally select them early
+                        // (actual forced visits are handled by FPU + KataGo forced playouts in selection)
                     }
                 }
             }
@@ -797,6 +843,21 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
     
     for (int i = 0; i < K; ++i) {
         root_q_values[i] = roots[i]->Q;
+
+        // Terminal win / PROVEN_WIN override: if any root child is a terminal win or proven loss for opponent
+        int proven_win_act = -1;
+        for (const auto& pair : roots[i]->children) {
+            if (pair.second->game_state.is_game_over() != 0 || pair.second->proven_status == ProvenStatus::PROVEN_LOSS) {
+                proven_win_act = pair.first;
+                break;
+            }
+        }
+        if (proven_win_act >= 0) {
+            visit_counts[i][proven_win_act] = num_simulations;
+            root_q_values[i] = 1.0;
+            delete roots[i];
+            continue;
+        }
 
         if (is_gumbel_active) {
             // Gumbel Completed Q-values Policy Target:

@@ -52,7 +52,7 @@ def select_device(device_name="auto"):
     # Try DirectML (AMD/Intel on Windows)
     if device_name in ("auto", "gpu", "directml"):
         try:
-            import torch_directml
+            import torch_directml  # type: ignore
             if torch_directml.is_available():
                 return torch_directml.device()
         except ImportError:
@@ -476,7 +476,7 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.00015, 
         except Exception:
             pass
         
-        # Save checkpoint atomically after each epoch
+        # Save checkpoint atomically after each epoch with retry on Windows file lock
         try:
             tmp_checkpoint_path = f"{checkpoint_path}.tmp"
             torch.save({
@@ -485,8 +485,24 @@ def train_alphazero(epochs=200, games_per_epoch=50, batch_size=256, lr=0.00015, 
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
             }, tmp_checkpoint_path)
-            os.replace(tmp_checkpoint_path, checkpoint_path)
-            print(f"  Checkpoint saved to {checkpoint_path}")
+            saved = False
+            for attempt in range(5):
+                try:
+                    os.replace(tmp_checkpoint_path, checkpoint_path)
+                    saved = True
+                    break
+                except PermissionError:
+                    time.sleep(0.5)
+            if saved:
+                print(f"  Checkpoint saved to {checkpoint_path}")
+            else:
+                import shutil
+                shutil.copy2(tmp_checkpoint_path, checkpoint_path)
+                try:
+                    os.remove(tmp_checkpoint_path)
+                except Exception:
+                    pass
+                print(f"  Checkpoint copied to {checkpoint_path} via fallback")
         except Exception as e:
             print(f"  Failed to save checkpoint: {e}")
             

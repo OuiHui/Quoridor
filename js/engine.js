@@ -52,8 +52,8 @@ export function getValidPawnMoves(px, py, ox, oy, hWalls, vWalls) {
 
             if (isStraightInBounds && !isStraightBlockedByWall) {
                 moves.push({ x: jx, y: jy });
-            } else if (isStraightBlockedByWall) {
-                // Diagonal jumps only allowed when straight jump is blocked by a wall
+            } else if (isStraightBlockedByWall || !isStraightInBounds) {
+                // Diagonal jumps allowed when straight jump is blocked by a wall or board boundary
                 if (d.dx === 0) {
                     // Moving vertically - diagonals are horizontal
                     const leftX = nx - 1;
@@ -126,7 +126,7 @@ export function findShortestPath(startX, startY, targetY, hWalls, vWalls, oppPos
                             visited.add(key);
                             queue.push({ x: jx, y: jy, path: path.concat([{ x, y }]) });
                         }
-                    } else if (straightBlocked) {
+                    } else if (straightBlocked || !straightInBounds) {
                         const sides = d.dx === 0 ? [{ dx: -1, dy: 0 }, { dx: 1, dy: 0 }] : [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }];
                         for (const s of sides) {
                             const dix = nx + s.dx;
@@ -378,7 +378,7 @@ export function findShortestPathFast(startX, startY, targetY, hWallsArray, vWall
                             parent[nextIdx] = curr;
                             queue[tail++] = nextIdx;
                         }
-                    } else if (straightBlocked) {
+                    } else if (straightBlocked || !straightInBounds) {
                         const sides = dx === 0 ? [{ sx: -1, sy: 0 }, { sx: 1, sy: 0 }] : [{ sx: 0, sy: -1 }, { sx: 0, sy: 1 }];
                         for (let s = 0; s < 2; s++) {
                             const dix = nx + sides[s].sx;
@@ -471,7 +471,7 @@ export function findShortestPathLengthFast(startX, startY, targetY, hWallsArray,
                             dist[nextIdx] = currDist + 1;
                             queue[tail++] = nextIdx;
                         }
-                    } else if (straightBlocked) {
+                    } else if (straightBlocked || !straightInBounds) {
                         const sides = dx === 0 ? [{ sx: -1, sy: 0 }, { sx: 1, sy: 0 }] : [{ sx: 0, sy: -1 }, { sx: 0, sy: 1 }];
                         for (let s = 0; s < 2; s++) {
                             const dix = nx + sides[s].sx;
