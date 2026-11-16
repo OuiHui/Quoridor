@@ -15,6 +15,7 @@ import numpy as np
 
 os.environ["TORCHDYNAMO_DISABLE"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import quoridor_cpp

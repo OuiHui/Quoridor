@@ -13,9 +13,10 @@ export const state = {
     turn: 1, // 1 for Player 1, 2 for Player 2
     gameMode: 'sandbox', // 'sandbox', 'pvp', 'ai'
     aiSettings: {
-        difficulty: 'medium', // 'easy', 'medium', 'hard'
-        color: 'p2'           // 'p1' or 'p2'
+        difficulty: 'alphazero', // 'alphazero' (Neural Net MCTS)
+        color: 'p2'              // 'p1' or 'p2'
     },
+    isAlphaZeroReady: false,
     
     // History for undo stack & time-travel navigation
     history: [],

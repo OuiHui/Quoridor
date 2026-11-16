@@ -7,6 +7,8 @@ import torch
 
 os.environ["TORCHDYNAMO_DISABLE"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import quoridor_cpp

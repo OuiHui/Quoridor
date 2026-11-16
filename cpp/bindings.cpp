@@ -80,6 +80,7 @@ PYBIND11_MODULE(quoridor_cpp, m) {
         .def_readwrite("p1_walls_left", &QuoridorGame::p1_walls_left)
         .def_readwrite("p2_walls_left", &QuoridorGame::p2_walls_left)
         .def_readwrite("is_p1_turn", &QuoridorGame::is_p1_turn)
+        .def_readwrite("move_count", &QuoridorGame::move_count)
         .def_readwrite("h_bitboard", &QuoridorGame::h_bitboard)
         .def_readwrite("v_bitboard", &QuoridorGame::v_bitboard)
         .def("update_bitboards", &QuoridorGame::update_bitboards)

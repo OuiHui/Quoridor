@@ -7,11 +7,17 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "predeploy": "python deploy_model.py && vite build",
+    "test": "node tests/test_mcts_optimizations.js && node tests/test_guaranteed_win_eval_bar.js && python tests/test_model.py",
+    "test:sim": "python tests/verify_simulator.py && python tests/verify_solver.py",
+    "eval": "python eval/eval_suite.py",
+    "predeploy": "python scripts/deploy_model.py && vite build",
     "deploy": "gh-pages -d dist"
   },
   "devDependencies": {
     "gh-pages": "^6.3.0",
     "vite": "^5.0.0"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.31.1"
   }
 }

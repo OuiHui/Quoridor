@@ -154,98 +154,79 @@ class QuoridorNet(nn.Module):
 
         return logits, v
 
-def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path, p2_path, p1_walls_left, p2_walls_left, is_p1_turn):
+try:
+    import quoridor_cpp
+except ImportError:
+    quoridor_cpp = None
+
+
+def encode_state(p1_pos, p2_pos, h_walls, v_walls, p1_path=None, p2_path=None, p1_walls_left=10, p2_walls_left=10, is_p1_turn=True):
     """
     Encodes the Quoridor board state into a (11, 9, 9) tensor representation,
     rotated by 180 degrees if it is Player 2's turn to make the representation
     perspective-symmetric.
-    
-    Inputs:
-        p1_pos: tuple (x, y) for Player 1
-        p2_pos: tuple (x, y) for Player 2
-        h_walls: set/list of (wx, wy) coordinates for horizontal walls
-        v_walls: set/list of (wx, wy) coordinates for vertical walls
-        p1_path: list of (x, y) on P1's current BFS shortest path
-        p2_path: list of (x, y) on P2's current BFS shortest path
-        p1_walls_left: int (0 to 10)
-        p2_walls_left: int (0 to 10)
-        is_p1_turn: bool (True if P1's turn)
-        
-    Returns:
-        torch.Tensor of shape (11, 9, 9)
+
+    Channels:
+        0: Active player pawn position (one-hot)
+        1: Opponent pawn position (one-hot)
+        2: Horizontal walls (8x8 in 9x9)
+        3: Vertical walls (8x8 in 9x9)
+        4: Active player 2D Reverse-BFS distance map to goal (row 8) / 20.0
+        5: Opponent player 2D Reverse-BFS distance map to goal (row 0) / 20.0
+        6: Active player All-Shortest-Paths DAG Criticality Mask
+        7: Opponent player All-Shortest-Paths DAG Criticality Mask
+        8: Active walls remaining / 10.0
+        9: Opponent walls remaining / 10.0
+        10: Checkerboard path advantage & jump-parity tempo
     """
+    if quoridor_cpp is not None:
+        game = quoridor_cpp.QuoridorGame()
+        game.p1_pos = (int(p1_pos[0]), int(p1_pos[1]))
+        game.p2_pos = (int(p2_pos[0]), int(p2_pos[1]))
+        game.p1_walls_left = int(p1_walls_left)
+        game.p2_walls_left = int(p2_walls_left)
+        game.is_p1_turn = bool(is_p1_turn)
+        for wx, wy in h_walls:
+            if 0 <= wx < 8 and 0 <= wy < 8:
+                game.step(quoridor_cpp.Action.Wall('h', int(wx), int(wy)))
+        for wx, wy in v_walls:
+            if 0 <= wx < 8 and 0 <= wy < 8:
+                game.step(quoridor_cpp.Action.Wall('v', int(wx), int(wy)))
+        game.p1_pos = (int(p1_pos[0]), int(p1_pos[1]))
+        game.p2_pos = (int(p2_pos[0]), int(p2_pos[1]))
+        game.p1_walls_left = int(p1_walls_left)
+        game.p2_walls_left = int(p2_walls_left)
+        game.is_p1_turn = bool(is_p1_turn)
+        enc = quoridor_cpp.MCTS.encode_state_cpp(game)
+        return torch.tensor(enc, dtype=torch.float32).reshape(11, 9, 9)
+
     tensor = torch.zeros(11, 9, 9, dtype=torch.float32)
-    
     if is_p1_turn:
         active_pos = p1_pos
         opp_pos = p2_pos
         h_walls_to_encode = h_walls
         v_walls_to_encode = v_walls
-        active_path = p1_path
-        opp_path = p2_path
         active_walls = p1_walls_left
         opp_walls = p2_walls_left
     else:
-        # Rotate state by 180 degrees for Player 2 perspective
         active_pos = (8 - p2_pos[0], 8 - p2_pos[1])
         opp_pos = (8 - p1_pos[0], 8 - p1_pos[1])
         h_walls_to_encode = [(7 - wx, 7 - wy) for wx, wy in h_walls]
         v_walls_to_encode = [(7 - wx, 7 - wy) for wx, wy in v_walls]
-        active_path = [(8 - x, 8 - y) for x, y in p2_path] if p2_path else []
-        opp_path = [(8 - x, 8 - y) for x, y in p1_path] if p1_path else []
         active_walls = p2_walls_left
         opp_walls = p1_walls_left
 
-    # 0. Your pawn position (active player)
     tensor[0, active_pos[0], active_pos[1]] = 1.0
-    
-    # 1. Opponent pawn position
     tensor[1, opp_pos[0], opp_pos[1]] = 1.0
-    
-    # 2. Horizontal walls (8x8 padded to 9x9 by leaving row/col 8 as 0)
     for wx, wy in h_walls_to_encode:
         if 0 <= wx < 8 and 0 <= wy < 8:
             tensor[2, wx, wy] = 1.0
-            
-    # 3. Vertical walls (8x8 padded to 9x9)
     for wx, wy in v_walls_to_encode:
         if 0 <= wx < 8 and 0 <= wy < 8:
             tensor[3, wx, wy] = 1.0
-            
-    # 4. Your shortest path length / 20.0
-    active_dist = len(active_path) if active_path else 20
-    tensor[4, :, :] = min(active_dist / 20.0, 1.0)
-    
-    # 5. Opponent shortest path length / 20.0
-    opp_dist = len(opp_path) if opp_path else 20
-    tensor[5, :, :] = min(opp_dist / 20.0, 1.0)
-    
-    # 6. Your path cells (binary 9x9)
-    if active_path:
-        for px, py in active_path:
-            tensor[6, px, py] = 1.0
-            
-    # 7. Opponent path cells (binary 9x9)
-    if opp_path:
-        for px, py in opp_path:
-            tensor[7, px, py] = 1.0
-            
-    # 8. Your walls remaining / 10.0
-    tensor[8, :, :] = min(active_walls / 10.0, 1.0)
-    
-    # 9. Opponent walls remaining / 10.0
-    tensor[9, :, :] = min(opp_walls / 10.0, 1.0)
-    
-    # 10. Path advantage & Jump Parity:
-    # Even cells ((x+y)%2 == 0): path advantage (opp_dist - active_dist) / 16.0 clamped to [-1, 1].
-    # Odd cells ((x+y)%2 == 1): jump parity tempo (even Manhattan dist -> +1.0 active jump initiative, odd -> -1.0).
-    path_advantage = max(-1.0, min(1.0, (opp_dist - active_dist) / 16.0))
-    m_dist = abs(active_pos[0] - opp_pos[0]) + abs(active_pos[1] - opp_pos[1])
-    jump_parity = 1.0 if (m_dist % 2 == 0) else -1.0
-    for x in range(9):
-        for y in range(9):
-            tensor[10, x, y] = path_advantage if ((x + y) % 2 == 0) else jump_parity
 
+    tensor[8, :, :] = min(active_walls / 10.0, 1.0)
+    tensor[9, :, :] = min(opp_walls / 10.0, 1.0)
     return tensor
 
 def flip_horizontal_state(tensor):
@@ -416,6 +397,18 @@ def export_to_onnx(model, filepath="quoridor_model.onnx"):
                 'value': {0: 'batch_size'}
             }
         )
+
+        # Consolidate weights into a self-contained single .onnx file (no .onnx.data)
+        ext_data_path = f"{filepath}.data"
+        if os.path.exists(ext_data_path):
+            try:
+                import onnx
+                proto = onnx.load(filepath, load_external_data=True)
+                onnx.save_model(proto, filepath, save_as_external_data=False)
+                if os.path.exists(ext_data_path):
+                    os.remove(ext_data_path)
+            except Exception as embed_err:
+                print(f"Note: Could not embed external ONNX data into single file: {embed_err}")
     except Exception as e:
         print(f"Warning: ONNX export failed with exception: {e}")
         print("This is likely a non-fatal console encoding error; the training checkpoint is still saved.")

@@ -68,6 +68,86 @@ bool MCTSNode::is_leaf() const {
     return children.empty();
 }
 
+static void apply_root_prior_heuristics(
+    const QuoridorGame& state,
+    bool is_root,
+    const std::vector<int>& valid_indices,
+    std::vector<double>& policy_prior
+) {
+    if (!is_root || valid_indices.empty()) return;
+
+    // 1. Jump prior floor (indices 4..11)
+    for (int idx : valid_indices) {
+        if (idx >= 4 && idx <= 11) {
+            policy_prior[idx] = std::max(policy_prior[idx], 0.10);
+        }
+    }
+
+    // 2. Opening Pawn Prior Floor for Plies 0-3 (move_count < 4):
+    // Clamps total legal pawn mass to at least 50% and ensures primary forward advance (Action 0)
+    // receives at least 0.35 prior if legal.
+    if (state.move_count < 4) {
+        double pawn_mass = 0.0;
+        std::vector<int> legal_pawn_indices;
+        std::vector<int> legal_wall_indices;
+        for (int idx : valid_indices) {
+            if (idx < 12) {
+                pawn_mass += policy_prior[idx];
+                legal_pawn_indices.push_back(idx);
+            } else {
+                legal_wall_indices.push_back(idx);
+            }
+        }
+
+        const double target_pawn_floor = 0.50;
+        if (pawn_mass < target_pawn_floor && !legal_pawn_indices.empty()) {
+            double remaining_wall_mass = 1.0 - target_pawn_floor;
+            double wall_mass = 1.0 - pawn_mass;
+
+            if (pawn_mass > 1e-6) {
+                for (int idx : legal_pawn_indices) {
+                    policy_prior[idx] *= (target_pawn_floor / pawn_mass);
+                }
+            } else {
+                double per_pawn = target_pawn_floor / legal_pawn_indices.size();
+                for (int idx : legal_pawn_indices) {
+                    policy_prior[idx] = per_pawn;
+                }
+            }
+
+            bool has_act0 = false;
+            for (int idx : legal_pawn_indices) {
+                if (idx == 0) { has_act0 = true; break; }
+            }
+            if (has_act0 && policy_prior[0] < 0.35) {
+                double deficit = 0.35 - policy_prior[0];
+                policy_prior[0] = 0.35;
+                double other_pawn_sum = 0.0;
+                for (int idx : legal_pawn_indices) {
+                    if (idx != 0) other_pawn_sum += policy_prior[idx];
+                }
+                if (other_pawn_sum > deficit) {
+                    for (int idx : legal_pawn_indices) {
+                        if (idx != 0) policy_prior[idx] -= deficit * (policy_prior[idx] / other_pawn_sum);
+                    }
+                }
+            }
+
+            if (wall_mass > 1e-6 && !legal_wall_indices.empty()) {
+                for (int idx : legal_wall_indices) {
+                    policy_prior[idx] *= (remaining_wall_mass / wall_mass);
+                }
+            }
+        }
+    }
+
+    double sum = 0.0;
+    for (int idx : valid_indices) sum += policy_prior[idx];
+    if (sum > 1e-8) {
+        for (int idx : valid_indices) policy_prior[idx] /= sum;
+    }
+}
+
 static void compute_reverse_bfs_distances(const QuoridorGame& g, int target_y, int dist_out[9][9]) {
     for (int x = 0; x < 9; ++x) {
         for (int y = 0; y < 9; ++y) {
@@ -460,9 +540,14 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                             for (const auto& pair : node->children) {
                                 MCTSNode* child = pair.second;
                                 int n_forced = static_cast<int>(std::floor(k_forced * child->prior * sqrt_root_n));
-                                // Guarantee forced playouts for legal jump actions (indices 4-11)
-                                if (pair.first >= 4 && pair.first <= 11) {
-                                    n_forced = std::max(n_forced, 2);
+                                // Minimum Root Exploration Guarantee for all legal pawn moves (indices 0-11):
+                                // Jumps receive at least 2 playouts, orthogonal pawn moves receive at least 1 playout
+                                if (pair.first < 12) {
+                                    if (pair.first >= 4 && pair.first <= 11) {
+                                        n_forced = std::max(n_forced, 2);
+                                    } else {
+                                        n_forced = std::max(n_forced, 1);
+                                    }
                                 }
                                 int eff_N = child->N + child->virtual_loss;
                                 if (eff_N < n_forced) {
@@ -590,9 +675,6 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                     double policy_sum = 0.0;
                     for (int idx : valid_indices) {
                         double model_p = traversals[t_idx].cached_policy[idx];
-                        if (leaf == roots[traversals[t_idx].game_idx] && idx >= 4 && idx <= 11) {
-                            model_p = std::max(model_p, 0.10);
-                        }
                         policy_prior[idx] = model_p;
                         policy_sum += model_p;
                     }
@@ -602,6 +684,7 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                         double uniform_p = 1.0 / valid_indices.size();
                         for (int idx : valid_indices) policy_prior[idx] = uniform_p;
                     }
+                    apply_root_prior_heuristics(leaf->game_state, leaf == roots[traversals[t_idx].game_idx], valid_indices, policy_prior);
 
                     for (size_t act_idx = 0; act_idx < valid_actions.size(); ++act_idx) {
                         int global_idx = valid_indices[act_idx];
@@ -644,9 +727,6 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                     double policy_sum = 0.0;
                     for (int idx : valid_indices) {
                         double model_p = raw_policy[idx];
-                        if (leaf == roots[traversals[t_idx].game_idx] && idx >= 4 && idx <= 11) {
-                            model_p = std::max(model_p, 0.10);
-                        }
                         policy_prior[idx] = model_p;
                         policy_sum += model_p;
                     }
@@ -656,6 +736,7 @@ std::pair<std::vector<std::vector<int>>, std::vector<double>> MCTS::run_search_b
                         double uniform_p = 1.0 / valid_indices.size();
                         for (int idx : valid_indices) policy_prior[idx] = uniform_p;
                     }
+                    apply_root_prior_heuristics(leaf->game_state, leaf == roots[traversals[t_idx].game_idx], valid_indices, policy_prior);
 
                     for (size_t act_idx = 0; act_idx < valid_actions.size(); ++act_idx) {
                         int global_idx = valid_indices[act_idx];

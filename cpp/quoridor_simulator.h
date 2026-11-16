@@ -58,6 +58,7 @@ public:
     int p1_walls_left;
     int p2_walls_left;
     bool is_p1_turn;
+    int move_count;
 
     QuoridorGame();
 

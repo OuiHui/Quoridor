@@ -20,6 +20,7 @@ QuoridorGame::QuoridorGame() {
     p1_walls_left = 10;
     p2_walls_left = 10;
     is_p1_turn = true;
+    move_count = 0;
 }
 
 void QuoridorGame::update_bitboards() {
@@ -99,6 +100,7 @@ QuoridorGame QuoridorGame::clone() const {
     g.p1_walls_left = p1_walls_left;
     g.p2_walls_left = p2_walls_left;
     g.is_p1_turn = is_p1_turn;
+    g.move_count = move_count;
     g.h_bitboard = h_bitboard;
     g.v_bitboard = v_bitboard;
     
@@ -220,6 +222,9 @@ std::vector<std::pair<int, int>> QuoridorGame::get_shortest_path(std::pair<int, 
                 }
             }
         }
+    }
+    if (opp_pos.first != -1) {
+        return get_shortest_path(start, target_y, {-1, -1});
     }
     return {};
 }
@@ -614,6 +619,7 @@ void QuoridorGame::step(const Action& action) {
         }
     }
     is_p1_turn = !is_p1_turn;
+    move_count++;
 }
 
 int QuoridorGame::is_game_over() const {

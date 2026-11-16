@@ -1,27 +1,41 @@
 ---
 name: evaluate_model
-description: Evaluate a trained Quoridor AlphaZero model using a 4-tier benchmark framework (Tactical Puzzle Suite, Checkpoint-vs-Checkpoint Arena, Minimax Bot, and Trajectory Auditing).
+description: Evaluate a trained Quoridor AlphaZero model using a 4-tier benchmark framework (Pre-Flight Sync, Tactical & Opening Health Suite, Checkpoint Arena, Minimax Bot, and Self-Play Trajectory Auditing).
 ---
 
 # Evaluate Model Skill
 
-Use this skill whenever evaluating, benchmarking, or diagnosing the playing strength, policy health, or tactical competency of a trained Quoridor AlphaZero model.
+Use this skill whenever evaluating, benchmarking, or diagnosing the playing strength, policy health, or training stability of a Quoridor AlphaZero model.
 
-The framework is organized into 4 evaluation tiers:
+The framework is organized into a Pre-Flight Sync check followed by 4 evaluation tiers:
 
-1. **Tier 1: Tactical & Representation Health Suite** (Fast 10s diagnostic)
-2. **Tier 2: Checkpoint-vs-Checkpoint Tournament Arena** (AlphaZero standard for monotonic progress)
-3. **Tier 3: Heuristic Minimax Bot Match** (Baseline sanity check across depths)
-4. **Tier 4: Training & Self-Play Trajectory Auditing** (Game length, wall timing, entropy)
+0. **Pre-Flight: Checkpoint, ONNX & Replay Buffer Synchronization**
+1. **Tier 1: Tactical, Representation & Opening Ply 0/1 Health Suite** (Fast 10s diagnostic)
+2. **Tier 2: Checkpoint-vs-Checkpoint Tournament Arena** (Monotonic Elo & P1/P2 color balance)
+3. **Tier 3: Heuristic Minimax Bot Match** (Baseline tactical sanity check across depths)
+4. **Tier 4: Training State & Self-Play Trajectory Auditing** (Loss curves, entropy, LR floor, buffer drift)
+
+---
+
+## 0. Pre-Flight Synchronization Check
+
+Before running any benchmark, verify that the evaluated `.onnx` file matches the latest PyTorch checkpoint and check whether background self-play actors are running or out of sync:
+
+1. **Verify Checkpoint vs. ONNX Sync**:
+   - Inspect the epoch number and modification timestamps of `quoridor_checkpoint.pth`, `quoridor_model.onnx`, and `public/quoridor_model.onnx`.
+   - If `quoridor_checkpoint.pth` is newer than `public/quoridor_model.onnx`, export the latest weights first (`python scripts/deploy_model.py`).
+2. **Check Pipeline & Buffer Alignment**:
+   - Compare the checkpoint epoch in `quoridor_checkpoint.pth` (or `public/training_state.json`) against the latest `epoch_XXX` folder in `C:\quoridor_data`.
+   - **Red Flag (Off-Policy Buffer Drift)**: If `C:\quoridor_data` is more than 5 epochs ahead of the learner checkpoint, orphaned `run_actor.py` processes have been generating duplicate off-policy data with a frozen model. Flag this immediately.
 
 ---
 
 ## 1. Quick Diagnostic Check (Tier 1)
 
-Before launching full match play, run the automated tactical puzzle and representation health suite. This verifies that the policy and value heads have not collapsed or developed wall bias:
+Run the automated tactical puzzle and representation health suite first:
 
 ```bash
-python eval_suite.py tactics --model quoridor_model.onnx --sims 400
+python eval/eval_suite.py tactics --model public/quoridor_model.onnx --sims 400
 ```
 
 ### Health Metrics & Thresholds
@@ -40,9 +54,9 @@ python eval_suite.py tactics --model quoridor_model.onnx --sims 400
 The primary method for measuring genuine reinforcement learning progress is pitting the current checkpoint directly against an earlier historical checkpoint:
 
 ```bash
-python eval_suite.py arena \
-  --model_a quoridor_model_epoch_400.onnx \
-  --model_b quoridor_model_epoch_399.onnx \
+python eval/eval_suite.py arena \
+  --model_a public/quoridor_model.onnx \
+  --model_b checkpoint_backup/quoridor_model_epoch_XXX.onnx \
   --games 20 \
   --sims 800
 ```
@@ -60,11 +74,11 @@ python eval_suite.py arena \
 Use Minimax matches to confirm the model beats basic human heuristics:
 
 ```bash
-python eval_suite.py bot \
-  --model quoridor_model.onnx \
+python eval/eval_suite.py bot \
+  --model public/quoridor_model.onnx \
   --depth 2 \
-  --games 20 \
-  --sims 800
+  --games 10 \
+  --sims 400
 ```
 
 To stress-test against deeper lookahead, increase `--depth 3` or `--depth 4`.
@@ -83,9 +97,9 @@ To stress-test against deeper lookahead, increase `--depth 3` or `--depth 4`.
 To generate an end-to-end evaluation report in a single command:
 
 ```bash
-python eval_suite.py full \
-  --model quoridor_model.onnx \
-  --baseline quoridor_model_epoch_399.onnx \
+python eval/eval_suite.py full \
+  --model public/quoridor_model.onnx \
+  --baseline checkpoint_backup/quoridor_model_epoch_XXX.onnx \
   --sims 400
 ```
 

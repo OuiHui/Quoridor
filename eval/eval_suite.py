@@ -4,6 +4,8 @@ import argparse
 import numpy as np
 import torch
 
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from eval_tactics import run_tactical_suite, print_tactical_report
@@ -98,7 +100,7 @@ def main():
         print_arena_report(report)
     elif args.command == "bot":
         run_battle(
-            checkpoint_path="quoridor_checkpoint.pth",
+            checkpoint_path=os.path.join(REPO_ROOT, "quoridor_checkpoint.pth"),
             onnx_path=args.model,
             depth=args.depth,
             simulations=args.sims,

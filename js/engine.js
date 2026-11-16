@@ -150,6 +150,9 @@ export function findShortestPath(startX, startY, targetY, hWalls, vWalls, oppPos
             }
         }
     }
+    if (oppPos) {
+        return findShortestPath(startX, startY, targetY, hWalls, vWalls, null);
+    }
     return null; // Path blocked
 }
 
@@ -405,7 +408,12 @@ export function findShortestPathFast(startX, startY, targetY, hWallsArray, vWall
         }
     }
 
-    if (targetIdx === -1) return null;
+    if (targetIdx === -1) {
+        if (oppX !== -1) {
+            return findShortestPathFast(startX, startY, targetY, hWallsArray, vWallsArray, -1, -1);
+        }
+        return null;
+    }
 
     const path = [];
     let curr = targetIdx;
@@ -498,6 +506,9 @@ export function findShortestPathLengthFast(startX, startY, targetY, hWallsArray,
         }
     }
 
+    if (oppX !== -1) {
+        return findShortestPathLengthFast(startX, startY, targetY, hWallsArray, vWallsArray, -1, -1);
+    }
     return -1;
 }
 

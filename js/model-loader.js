@@ -1,20 +1,49 @@
+import * as ort from 'onnxruntime-web';
 import { initWorkerONNX } from './worker-manager.js';
+import { state } from './state.js';
+
+export function updateEngineStatusUI(statusClass, label) {
+    const el = document.getElementById('ai-engine-status');
+    if (!el) return;
+    el.className = `engine-status-badge ${statusClass}`;
+    el.textContent = label;
+}
 
 export async function loadONNXModel() {
+    updateEngineStatusUI('loading', 'Loading AlphaZero ONNX...');
     try {
         const timestamp = Date.now();
         const modelRes = await fetch(`./quoridor_model.onnx?t=${timestamp}`);
         if (!modelRes.ok) throw new Error(`HTTP error status: ${modelRes.status}`);
         const modelBuffer = await modelRes.arrayBuffer();
 
-        // Pass model buffer copy to worker
-        initWorkerONNX(modelBuffer.slice(0));
+        if (ort.env && ort.env.wasm) {
+            ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
+        }
 
-        if (window.ort) {
-            window.quoridorONNXSession = await ort.InferenceSession.create(new Uint8Array(modelBuffer));
+        // Initialize Web Worker first
+        const workerOk = await initWorkerONNX(modelBuffer.slice(0));
+
+        // Initialize main thread session for eval bar / diagnostics
+        try {
+            window.quoridorONNXSession = await ort.InferenceSession.create(new Uint8Array(modelBuffer.slice(0)));
             console.log("AlphaZero ONNX model loaded successfully on main thread!");
+        } catch (mainErr) {
+            console.warn("Main thread session init non-critical error:", mainErr);
+        }
+
+        if (workerOk) {
+            state.isAlphaZeroReady = true;
+            updateEngineStatusUI('ready', 'AlphaZero MCTS (Active)');
+            console.log("AlphaZero MCTS engine verified and active in worker.");
+            return true;
+        } else {
+            throw new Error("Web Worker failed to initialize ONNX session.");
         }
     } catch (e) {
-        console.warn("AlphaZero ONNX model could not be loaded. AI will fall back to Minimax evaluation:", e);
+        state.isAlphaZeroReady = false;
+        updateEngineStatusUI('error', 'AlphaZero Model Unavailable');
+        console.error("AlphaZero ONNX model could not be loaded:", e);
+        return false;
     }
 }

@@ -1,84 +1,163 @@
 # Quoridor AlphaZero Architecture & System Design
 
-This document details the high-level architecture, module design, data flow, and performance optimizations of the Quoridor AlphaZero reinforcement learning framework.
+This document details the system design, neural network topology, Monte Carlo Tree Search (MCTS) engine, data flow, and comparative evolution between QuoridorNet v1 and QuoridorNet v2.
 
 ---
 
 ## 1. System Overview & Data Flow
 
-The training pipeline uses an **Asynchronous Actor-Learner Architecture**. High-throughput C++ actor processes generate self-play games in parallel while a PyTorch learner process trains the neural network on GPU using Automatic Mixed Precision (AMP).
+The training pipeline uses an **Asynchronous Actor-Learner Architecture**. Parallel C++ actor processes generate self-play trajectories while a PyTorch learner process trains the neural network on GPU using Automatic Mixed Precision (AMP).
 
 ```mermaid
 graph TD
-    A["Learner (train_alphazero.py)"] -->|Exports Weights| B["quoridor_model.onnx"]
+    A["Learner (train_alphazero.py)"] -->|Exports Primary Topology| B["public/quoridor_model.onnx"]
     B -->|Loaded by| S["Central GPU Inference Server (gpu_inference_server.py)"]
-    S -->|TCP IPC Batched Inference| C["Actor Workers (run_actor.py)"]
-    C -->|MCTS & C++ Simulator| D["Batched Self-Play (quoridor_cpp)"]
-    D -->|Saves Consolidated .pt Files| E["data/epoch_XXX/"]
-    E -->|Incremental Cache Update| F["ReplayDatasetCache"]
-    F -->|Vectorized FP16 Batches| A
-    B -->|Browser Web Worker| G["Web Worker (js/worker.js)"]
-    G -->|Async Promise IPC| H["Vite Main UI Thread (js/game.js)"]
+    S -->|TCP Socket IPC Batched Inference| C["Actor Workers (run_actor.py)"]
+    C -->|C++ Simulator & MCTS Engine| D["Batched Self-Play (quoridor_cpp)"]
+    D -->|Writes Consolidated .pt Files| E["C:/quoridor_data/epoch_XXX/"]
+    E -->|Incremental In-Memory Cache| F["ReplayDatasetCache"]
+    F -->|Vectorized Contiguous Batches| A
+    B -->|Loaded via ONNX Runtime Web| G["Client Web Worker (js/worker.js)"]
+    G -->|Async Promise IPC| H["Vite UI Thread (js/game.js)"]
 ```
 
 ---
 
 ## 2. Component Breakdown
 
-### A. C++ Core Engine & MCTS ([cpp/](../cpp))
-- **`QuoridorGame`**: High-performance game state representation, move generator, wall placement validator, and BFS shortest pathfinder. Exposed to Python via `pybind11` in `quoridor_cpp`.
-- **`MCTS` Engine**: Implements Monte Carlo Tree Search with PUCT selection formula ($c_{\text{puct}} = 1.4$) and Dirichlet noise ($\alpha = 0.07, \epsilon = 0.15$). Supports batched search execution (`MCTS.run_search_batched`) with **Virtual Loss Parallel Batching** (4 parallel leaf traversals per game step), reducing IPC round-trips to the central GPU inference server by 4x.
+### A. C++ Core Engine & MCTS ([cpp/quoridor_simulator.cpp](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/cpp/quoridor_simulator.cpp) & [cpp/mcts.cpp](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/cpp/mcts.cpp))
+- **`QuoridorGame`**: High-performance game state representation, bit-packed wall tracking, jump action validator, and BFS pathfinder. Exposed to Python via `pybind11` in [cpp/bindings.cpp](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/cpp/bindings.cpp).
+- **`encode_state_cpp`**: Generates the 11-channel input tensor directly in C++, computing multi-source 2D Reverse-BFS distance maps and All-Shortest-Paths DAG Criticality masks without Python interpreter overhead.
+- **`MCTS` Engine**: Implements Monte Carlo Tree Search with Gumbel AlphaZero sequential halving and PUCT selection. Allocates a fresh root node per turn to avoid candidate pruning bias. Supports virtual loss parallel batching to aggregate evaluation requests across multiple tree traversals.
 
-### B. Centralized GPU Inference Server ([gpu_inference_server.py](../gpu_inference_server.py))
-- **Single GPU Context**: Dedicated process running PyTorch TorchScript JIT Traced execution with CUDA AMP (TF32/FP16) on RTX GPUs.
-- **Dynamic Micro-Batching**: Receives `(M, 11, 9, 9)` evaluation requests from all connected actors over TCP socket IPC, aggregates requests into larger batches (up to batch size 256–512), and runs single unified GPU forward passes.
-- **Auto Model Reloading**: Automatically polls for updated model checkpoints (`quoridor_checkpoint.pth`) per epoch and hot-reloads model weights seamlessly into the JIT execution context.
+### B. Centralized GPU Inference Server ([gpu_inference_server.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/gpu_inference_server.py))
+- **Single GPU Context**: Dedicated process hosting PyTorch TorchScript JIT execution with CUDA AMP on Tensor Cores.
+- **Dynamic Micro-Batching**: Receives `(M, 11, 9, 9)` evaluation requests from all connected actors over TCP socket IPC with `TCP_NODELAY`, batches requests up to size 256–512, and runs single unified GPU forward passes.
+- **Auto Model Reloading**: Polls for updated model checkpoints (`quoridor_checkpoint.pth`) per epoch and hot-reloads model weights seamlessly into the JIT execution context.
 
-### C. Self-Play Actor Workers ([run_actor.py](../run_actor.py))
-- **Parallel Workers**: Multiple independent actor processes (`run_actor.py`) run in parallel.
-- **Remote Model Evaluator ([RemoteModelEvaluator](../onnx_inference.py))**: Sends state tensors over ultra-low-latency TCP sockets (`TCP_NODELAY`) to `gpu_inference_server.py`, receiving sliced policy and value tensors. Standalone mode provides fallback to local ONNX execution.
-- **Consolidated Batch File Saving**: Self-play trajectories are saved into consolidated files containing entire game batches (`games_32_<timestamp>_<uuid>.pt`), reducing disk file creation by 32x.
+### C. Self-Play Actor Workers ([run_actor.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/run_actor.py))
+- **Parallel Workers**: Multiple independent actor processes run in parallel.
+- **Remote Model Evaluator ([onnx_inference.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/onnx_inference.py))**: Transmits state tensors over low-latency TCP sockets to `gpu_inference_server.py`, receiving sliced policy and value arrays. Standalone mode provides fallback to local ONNX execution.
+- **Consolidated Batch File Saving**: Self-play trajectories are saved into consolidated files containing full game batches (`games_32_<timestamp>_<uuid>.pt`), avoiding filesystem metadata thrashing.
 
-### C. Neural Network & Learner ([train_alphazero.py](../train_alphazero.py) & [quoridor_model.py](../quoridor_model.py))
-- **Network Topology ([QuoridorNet](../quoridor_model.py))**:
-  - Input: `(11, 9, 9)` spatial board tensor (including active/opponent positions, wall maps, BFS path masks, normalized shortest path distances, wall counts, and path advantage scalar).
-  - Perspective Rotation: State rotated by 180° on P2 turn to maintain active-player symmetry.
-  - Convolutional Trunk: 10 Residual Blocks with Squeeze-and-Excitation (SE) channel attention and 128 channels.
-  - Policy Head: Outputs 140 raw action logits (12 move/jumps + 64 horizontal walls + 64 vertical walls).
-  - Value Head: Outputs scalar $V \in [-1.0, 1.0]$.
-  - Auxiliary Path Head: Outputs 2 scalars in $[0.0, 1.0]$ predicting active and opponent remaining shortest path lengths.
+### D. Neural Network & Learner ([train_alphazero.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/train_alphazero.py) & [quoridor_model.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/quoridor_model.py))
+- **Trunk**: 20 Residual Blocks with 192 channels, incorporating KataGo Global Pooling (spatial mean + spatial max concatenated) channel attention.
+- **Decoupled Spatial Policy Head**: 12-pawn linear projection sub-head and 128-wall unpadded $2 \times 2$ spatial convolution sub-head.
+- **Value Head**: Outputs scalar $V \in [-1.0, 1.0]$.
+- **Auxiliary Heads**: Predicts terminal path lengths, terminal wall ownership grids, and opponent next-move distributions during training. Stripped during ONNX export for zero deployment overhead.
 - **Learner Optimizations**:
-  - [ReplayDatasetCache](../train_alphazero.py): In-memory incremental data loader that reads only newly generated batch files per epoch, preventing disk I/O bottlenecks.
-  - **Vectorized Pre-Stacked Tensors**: Pre-stacks dataset elements into contiguous PyTorch tensors for zero-copy CPU-to-GPU transfers (`non_blocking=True`).
-  - **Automatic Mixed Precision (AMP / FP16)**: Uses `torch.amp.autocast('cuda')` and `GradScaler` for 2x-3x faster backpropagation on Tensor Cores.
-  - **Multi-Task Loss**: Minimizes joint loss $\mathcal{L} = \mathcal{L}_{\text{policy}} + \mathcal{L}_{\text{value}} + 0.1 \cdot \mathcal{L}_{\text{aux}}$.
-  - **cuDNN Autotuning**: Enables `torch.backends.cudnn.benchmark = True`.
+  - `ReplayDatasetCache`: In-memory incremental data loader reading only newly added batch files each epoch.
+  - Vectorized pre-stacked tensors for zero-copy CPU-to-GPU transfers (`non_blocking=True`).
+  - Automatic Mixed Precision (`torch.amp.autocast('cuda')`) with gradient scaling.
+  - cuDNN autotuning (`torch.backends.cudnn.benchmark = True`).
 
-### D. Web Frontend & Background Worker ([js/worker.js](../js/worker.js) & [js/worker-manager.js](../js/worker-manager.js))
-- **Web Worker Offloading**: All heavy computations (AlphaZero MCTS lookahead, Minimax move generation, and depth-4 move quality analysis) are executed off the main UI thread in a background ES module Web Worker (`js/worker.js`).
-- **Async Promise IPC**: Managed by `js/worker-manager.js`, returning non-blocking promises for AI move generation and move quality badges, keeping the main thread (DOM rendering, animations, hover effects) perfectly smooth at 60+ FPS.
-- **WASM Multi-Threading**: Configures ONNX Runtime Web with WebAssembly multi-threading (`ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4`) inside the worker thread context, utilizing all CPU cores for parallel neural network inference.
-
----
-
-## 4. Win-Probability Move Quality Analysis ([js/move-analysis.js](../js/move-analysis.js))
-
-The match history move analyzer converts engine evaluation scores into win probabilities:
-$$W = \frac{1}{1 + 10^{-\text{eval} / 100}}$$
-
-Move quality is classified based on **Win Chance Loss ($\Delta W = W_{\text{best}} - W_{\text{chosen}}$)** rather than raw heuristic point loss, eliminating false blunder classifications in complex wall positions:
-- **Best / Brilliant / Great**: $\Delta W \le 2\%$
-- **Excellent**: $\Delta W \le 6\%$
-- **Good**: $\Delta W \le 12\%$
-- **Inaccuracy**: $\Delta W \le 22\%$
-- **Mistake**: $\Delta W \le 40\%$
-- **Blunder**: $\Delta W > 40\%$
+### E. Web Frontend & Client Worker ([js/worker.js](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/js/worker.js) & [js/ai-mcts.js](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/js/ai-mcts.js))
+- **Web Worker Offloading**: All heavy computations (AlphaZero MCTS lookahead, Minimax move generation, depth-4 move quality analysis) run off the main UI thread in a background ES module Web Worker.
+- **Fresh Root Allocation**: A fresh root node is allocated on each turn, matching the C++ engine to prevent search blindness under sequential halving, while preserving $O(1)$ Transposition Table evaluation caching.
+- **WASM Multi-Threading**: Configures ONNX Runtime Web with WebAssembly multi-threading (`ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4`) inside the worker thread context.
 
 ---
 
-## 5. Training & Evaluation Pipeline
+## 3. Architecture Comparison: Old (v1) vs New (v2)
 
-1. **Self-Play Generation**: Background actors simulate games using ONNX MCTS lookahead. The first 6 turns use proportional sampling over pawn moves for exploration before switching to greedy selection.
-2. **Dataset Updates**: Completed batch trajectories (augmented with horizontal board symmetry) are saved to `data/epoch_XXX/`.
-3. **GPU Training Pass**: The learner updates `ReplayDatasetCache`, pre-stacks tensors, shuffles mini-batches (size 64 by default), computes Policy Cross-Entropy, Value MSE, and Auxiliary Path MSE loss, and steps the Adam optimizer with `StepLR` (gamma 0.8 every 50 epochs).
-4. **ONNX Synchronization**: Newly updated checkpoint weights are exported to `quoridor_model.onnx` so actor processes automatically hot-reload the latest model.
+### High-Level Specification Differences
+
+```
+QuoridorNet v1 (Baseline):
+  Input Tensor:      (11, 9, 9) with constant scalar distances and arbitrary single-path masks
+  Trunk:             10 ResBlocks, 128 Channels
+  Attention:         Squeeze-and-Excitation with spatial mean-only pooling
+  Policy Head:       Monolithic Linear(10368 -> 140) (~2.18M parameters)
+  Auxiliary Heads:   None or redundant current-turn path prediction
+  Total Parameters:  ~4.8M parameters
+
+QuoridorNet v2 (Overhauled):
+  Input Tensor:      (11, 9, 9) with 2D Reverse-BFS distance maps and All-Shortest-Paths DAG masks
+  Trunk:             20 ResBlocks, 192 Channels
+  Attention:         KataGo Global Pooling (spatial mean + spatial max concatenated)
+  Policy Head:       Decoupled (12-pawn Linear + 2x8x8 Spatial Conv Wall Head, <15K parameters)
+  Auxiliary Heads:   Terminal Path (2), Final Wall Grid (2x8x8), Opponent Next Policy (140)
+  Total Parameters:  ~14.2M parameters (Trunk expanded; Head parameters reduced by 85%)
+```
+
+### Detailed Design Justifications
+
+#### 1. 2D Reverse-BFS Distance Maps vs Constant Scalar Planes
+- **v1 Design**: Channels 4 and 5 filled all 81 coordinates with a single broadcast scalar value $\min(d / 20.0, 1.0)$.
+- **Limitation**: Any $3 \times 3$ convolutional kernel computing spatial derivatives across the plane observed:
+  $$\frac{\partial R}{\partial x} = 0, \quad \frac{\partial R}{\partial y} = 0$$
+  The network received magnitude information about how far the player was from the goal, but zero spatial directionality indicating which adjacent step reduced the distance.
+- **v2 Solution**: Channels 4 and 5 compute a multi-source Reverse-BFS starting from all cells along the target goal row ($y=8$ for active player, $y=0$ for opponent). Every cell $(x, y)$ stores its exact distance to the goal line.
+- **Impact**: The spatial gradient $\nabla R(x, y)$ provides local filters with an immediate directional vector pointing toward the shortest route to victory.
+
+#### 2. All-Shortest-Paths DAG Criticality Maps vs Arbitrary Single-Path Masks
+- **v1 Design**: Channels 6 and 7 computed a single shortest path using BFS with fixed neighbor order (North, East, South, West).
+- **Limitation**:
+  1. Arbitrary tie-breaking broke left-right reflection symmetry. When a state was mirrored horizontally for data augmentation, the flipped target path often failed to match the path generated from the mirrored state.
+  2. A single path masked alternative paths of equal length, concealing topological choke points where all valid paths intersect.
+- **v2 Solution**: Channels 6 and 7 compute the Directed Acyclic Graph (DAG) of all shortest paths. A cell $(x, y)$ belongs to the DAG if and only if:
+  $$d_{\text{pawn}}(x, y) + d_{\text{goal}}(x, y) = d_{\min}$$
+- **Impact**: All candidate shortest routes are marked simultaneously. Cells traversed by every path exhibit maximal flow, identifying critical bottlenecks that dictate wall placement. The representation is strictly invariant under horizontal reflection.
+
+#### 3. KataGo Global Pooling vs Mean-Only SE Attention
+- **v1 Design**: Standard Squeeze-and-Excitation computed channel summary statistics by taking the spatial mean:
+  $$s_c = \frac{1}{81} \sum_{i=1}^{9} \sum_{j=1}^{9} x_{c, i, j}$$
+- **Limitation**: A critical feature in Quoridor (e.g., an opponent pawn poised on a jump square, or a single open cell in a wall barrier) creates a sharp activation in 1 out of 81 cells. Averaging over 81 cells dilutes this spike by a factor of 81.
+- **v2 Solution**: Concatenate spatial mean pooling with spatial max pooling:
+  $$y_c = \left[ \frac{1}{81} \sum_{i,j} x_{c, i, j}, \quad \max_{i,j} x_{c, i, j} \right] \in \mathbb{R}^{2C}$$
+- **Impact**: The spatial mean captures global board density and wall saturation, while the spatial max preserves isolated tactical spikes.
+
+#### 4. Spatially Decoupled Wall Head vs Monolithic Flattened Layer
+- **v1 Design**: The final trunk features were flattened and passed to a linear layer:
+  $$\mathbf{z} \in \mathbb{R}^{C \times 9 \times 9} \implies \text{Flatten} \implies \text{Linear}(10368 \to 140)$$
+- **Limitation**: Wall placements occur at the 64 intersections between grid cells. Flattening the feature map completely discards 2D spatial translation equivariance, requiring the fully connected layer to redundantly relearn local wall geometry across all 64 coordinates.
+- **v2 Solution**: Slicing trunk features into two branches:
+  1. **Pawn Sub-Head**: Trunk features are reduced via $1 \times 1$ convolution to 4 channels, flattened, combined with scalar features, and passed to `Linear(4*81 + 6 -> 12)`.
+  2. **Wall Sub-Head**: Trunk features are reduced via $1 \times 1$ convolution to 32 channels. An unpadded $2 \times 2$ spatial convolution maps the $(32, 9, 9)$ tensor to $(2, 8, 8)$:
+     $$\text{Conv2d}(32 \to 2, \text{kernel}=2, \text{stride}=1, \text{padding}=0)$$
+     The 2 output channels correspond directly to horizontal and vertical wall placements across the $8 \times 8$ intersection subgrid.
+- **Impact**: Preserves spatial translation equivariance across the board, respects grid geometry, and reduces wall head parameter count from $\sim 2.18\text{M}$ to under $15\text{K}$.
+
+#### 5. Multi-Task Auxiliary Heads
+- **v1 Design**: Predicted current-turn shortest-path lengths. Because current-turn distances were already provided in the input tensor, this target provided minimal additional supervision.
+- **v2 Solution**: Supervises three non-trivial targets during self-play optimization:
+  1. **End-of-Game Path Lengths**: Predicts $[d_{\text{active}}^{\text{end}}, d_{\text{opp}}^{\text{end}}] \in [0.0, 1.0]$.
+  2. **Final Wall-Structure Ownership**: Predicts a $(2, 8, 8)$ grid in $[-1.0, 1.0]$ representing which intersections contain walls at terminal state.
+  3. **Opponent Next Move**: Predicts the 140-action policy distribution of the opponent's counter-move.
+- **Impact**: Provides dense localized gradient signals throughout the convolutional trunk, accelerating corridor pattern recognition without adding any computational cost during client deployment.
+
+---
+
+## 4. Multi-Task Training Loss Formulation
+
+During self-play training, the joint objective function minimized by the learner is:
+
+$$\mathcal{L} = \mathcal{L}_{\text{policy}} + \mathcal{L}_{\text{value}} + \lambda_1 \mathcal{L}_{\text{aux\_path}} + \lambda_2 \mathcal{L}_{\text{aux\_wall}} + \lambda_3 \mathcal{L}_{\text{aux\_opp}}$$
+
+Where:
+- $\mathcal{L}_{\text{policy}} = -\sum_{a} \pi_{\text{MCTS}}(a) \log p(a)$ (Cross-Entropy against MCTS visit distribution).
+- $\mathcal{L}_{\text{value}} = (v_{\text{target}} - V)^2$ where $v_{\text{target}} = 0.70 z + 0.30 q_{\text{root}}$ (Bootstrapped value target).
+- $\mathcal{L}_{\text{aux\_path}} = \frac{1}{2} \| \mathbf{d}_{\text{end}} - \hat{\mathbf{d}}_{\text{end}} \|_2^2$ (Mean Squared Error on terminal path lengths).
+- $\mathcal{L}_{\text{aux\_wall}} = \frac{1}{128} \| \mathbf{W}_{\text{end}} - \hat{\mathbf{W}}_{\text{end}} \|_2^2$ (Mean Squared Error on terminal wall layout).
+- $\mathcal{L}_{\text{aux\_opp}} = -\sum_{a} \pi_{\text{opp}}(a) \log p_{\text{opp}}(a)$ (Cross-Entropy against opponent's subsequent move).
+- Default auxiliary weights: $\lambda_1 = 0.1$, $\lambda_2 = 0.1$, $\lambda_3 = 0.1$.
+
+---
+
+## 5. Starting Training from Scratch
+
+To launch a clean training run with QuoridorNet v2 from scratch:
+
+```powershell
+# 1. Compile C++ extension
+python setup_cpp.py build_ext --inplace
+
+# 2. Launch fresh training pipeline
+python start_training.py --fresh --actors 4 --epochs 200
+```
+
+The `--fresh` routine:
+1. Moves any existing `quoridor_checkpoint.pth` to [checkpoint_backup/](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/checkpoint_backup) with a timestamp.
+2. Clears previous self-play batches in `C:\quoridor_data` to ensure the replay buffer contains only games generated by the v2 architecture.
+3. Resets `public/training_state.json` to Epoch 0 initial state for the browser live dashboard.
+4. Initializes QuoridorNet v2 weights and begins parallel self-play data generation.

@@ -7,23 +7,23 @@ import { minimax } from './ai-search.js';
 export function evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, isP1Turn) {
     let p1Dist, p2Dist;
     if (hWalls instanceof Map) {
-        const p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, p2Pos);
-        const p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, p1Pos);
+        let p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, p2Pos);
+        let p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, p1Pos);
 
-        if (!p1Path) return -Infinity; // P1 is blocked – invalid
-        if (!p2Path) return Infinity;  // P2 is blocked – invalid
+        if (!p1Path) p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, null);
+        if (!p2Path) p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, null);
 
-        p1Dist = p1Path.length - 1;
-        p2Dist = p2Path.length - 1;
+        p1Dist = p1Path ? p1Path.length - 1 : 40;
+        p2Dist = p2Path ? p2Path.length - 1 : 40;
     } else {
-        const p1Len = findShortestPathLengthFast(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, p2Pos.x, p2Pos.y);
-        const p2Len = findShortestPathLengthFast(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, p1Pos.x, p1Pos.y);
+        let p1Len = findShortestPathLengthFast(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, p2Pos.x, p2Pos.y);
+        let p2Len = findShortestPathLengthFast(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, p1Pos.x, p1Pos.y);
 
-        if (p1Len < 0) return -Infinity;
-        if (p2Len < 0) return Infinity;
+        if (p1Len < 0) p1Len = findShortestPathLengthFast(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, -1, -1);
+        if (p2Len < 0) p2Len = findShortestPathLengthFast(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, -1, -1);
 
-        p1Dist = p1Len - 1;
-        p2Dist = p2Len - 1;
+        p1Dist = p1Len > 0 ? p1Len - 1 : 40;
+        p2Dist = p2Len > 0 ? p2Len - 1 : 40;
     }
 
     if (p1Dist === 0) return Infinity;

@@ -1,5 +1,5 @@
-import { runMCTS, resetMCTSTree, areStatesEqual, mirrorPolicy, getTTSize } from './js/ai-mcts.js';
-import { getCanonicalStateHash, mirrorBitboardHorizontal, getWallBitboards } from './js/engine.js';
+import { runMCTS, resetMCTSTree, areStatesEqual, mirrorPolicy, getTTSize } from '../js/ai-mcts.js';
+import { getCanonicalStateHash, mirrorBitboardHorizontal, getWallBitboards } from '../js/engine.js';
 
 // Mock browser global 'ort' for ONNX runtime tensor creation in Node.js environment
 globalThis.ort = {

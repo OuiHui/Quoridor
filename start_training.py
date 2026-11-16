@@ -93,7 +93,7 @@ def handle_fresh_start():
             pass
 
 
-def launch_windows_mode(num_actors, simulations, fast_simulations, batch_size, epochs, reset_lr=False):
+def launch_windows_mode(num_actors, simulations, fast_simulations, batch_size, epochs, reset_lr=False, lr=5e-5):
     print("Launching training pipeline in separate terminal windows...")
     work_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -116,14 +116,14 @@ def launch_windows_mode(num_actors, simulations, fast_simulations, batch_size, e
     trainer_cmd = (
         f'start "Quoridor AlphaZero Learner" /D "{work_dir}" cmd /k '
         f'"{sys.executable} train_alphazero.py --no_spawn --epochs {epochs} '
-        f'--simulations {simulations} --fast_simulations {fast_simulations}{reset_flag}"'
+        f'--simulations {simulations} --fast_simulations {fast_simulations} --lr {lr}{reset_flag}"'
     )
     subprocess.Popen(trainer_cmd, shell=True)
 
     print("All processes launched in dedicated windows. Monitor each window for live logs.")
 
 
-def launch_managed_mode(num_actors, simulations, fast_simulations, batch_size, epochs, reset_lr=False):
+def launch_managed_mode(num_actors, simulations, fast_simulations, batch_size, epochs, reset_lr=False, lr=5e-5):
     print(f"Starting AlphaZero orchestrator ({num_actors} parallel actors, deep sims: {simulations}, fast sims: {fast_simulations})...")
 
     cmd = [
@@ -131,7 +131,8 @@ def launch_managed_mode(num_actors, simulations, fast_simulations, batch_size, e
         "--num_actors", str(num_actors),
         "--simulations", str(simulations),
         "--fast_simulations", str(fast_simulations),
-        "--epochs", str(epochs)
+        "--epochs", str(epochs),
+        "--lr", str(lr)
     ]
     if reset_lr:
         cmd.append("--reset_lr")
@@ -163,6 +164,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=200, help="Total training epochs (default: 200)")
     parser.add_argument("--fresh", action="store_true", help="Start training from scratch with fresh v2 weights (archives old checkpoint)")
     parser.add_argument("--reset_lr", action="store_true", help="Reset learning rate schedule to initial LR before resuming training")
+    parser.add_argument("--lr", type=float, default=5e-5, help="Learning rate when resetting or starting (default: 5e-5)")
     parser.add_argument("--windows", action="store_true", help="Launch server, actors, and learner in separate terminal windows")
     args = parser.parse_args()
 
@@ -172,9 +174,9 @@ def main():
         handle_fresh_start()
 
     if args.windows and sys.platform == "win32":
-        launch_windows_mode(args.actors, args.simulations, args.fast_simulations, args.batch_size, args.epochs, reset_lr=args.reset_lr)
+        launch_windows_mode(args.actors, args.simulations, args.fast_simulations, args.batch_size, args.epochs, reset_lr=args.reset_lr, lr=args.lr)
     else:
-        launch_managed_mode(args.actors, args.simulations, args.fast_simulations, args.batch_size, args.epochs, reset_lr=args.reset_lr)
+        launch_managed_mode(args.actors, args.simulations, args.fast_simulations, args.batch_size, args.epochs, reset_lr=args.reset_lr, lr=args.lr)
 
 
 if __name__ == "__main__":

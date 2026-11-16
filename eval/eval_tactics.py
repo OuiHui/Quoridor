@@ -3,6 +3,8 @@ import sys
 import numpy as np
 import torch
 
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import quoridor_cpp
@@ -11,6 +13,16 @@ from onnx_inference import ONNXModelEvaluator
 
 
 def _create_model_evaluator(model_path):
+    if not os.path.isabs(model_path):
+        if not os.path.exists(model_path):
+            candidate = os.path.join(REPO_ROOT, model_path)
+            if os.path.exists(candidate):
+                model_path = candidate
+            elif model_path in ("quoridor_model.onnx", os.path.join(REPO_ROOT, "quoridor_model.onnx")):
+                public_onnx = os.path.join(REPO_ROOT, "public", "quoridor_model.onnx")
+                if os.path.exists(public_onnx):
+                    model_path = public_onnx
+
     if model_path.endswith('.onnx') and os.path.exists(model_path):
         onnx_evaluator = ONNXModelEvaluator(model_path)
         def onnx_eval_cb(input_array):

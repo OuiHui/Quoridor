@@ -1,3 +1,4 @@
+import * as ort from 'onnxruntime-web';
 import { findShortestPath, getValidPawnMoves, validateWallPlacement, getGuaranteedWinner, isMoveBlockedFast, getCanonicalStateHash } from './engine.js';
 import { evaluateBoard, generateSmartMoves } from './ai-eval.js';
 
@@ -625,13 +626,9 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         turn
     };
 
-    // Subtree reuse: check if we can reuse node from previous search
-    let root = findMatchingNodeInTree(activeMCTSRoot, rootState);
-    if (!root) {
-        root = new MCTSNode(rootState);
-    } else {
-        root.parent = null;
-    }
+    // Fresh root node allocation matching C++ MCTS (cpp/mcts.cpp)
+    // Transposition table caches neural net evaluations across turns without tree distortion
+    const root = new MCTSNode(rootState);
 
     const cPuct = 1.4;
     const cFpu = 0.20;
@@ -646,6 +643,15 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         const validActions = getValidMCTSActions(root.state);
         if (validActions.length === 0) return null;
         if (validActions.length === 1) return validActions[0];
+
+        // Immediate 1-step goal win short-circuit
+        for (const act of validActions) {
+            if (act.type === 'move') {
+                if ((root.state.turn === 1 && act.to.y === 8) || (root.state.turn === 2 && act.to.y === 0)) {
+                    return act;
+                }
+            }
+        }
 
         const { hash: rootHash, isMirrored: rootMirr } = getCanonicalStateHash(
             root.state.p1Pos, root.state.p2Pos,
@@ -685,6 +691,47 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             if (idx >= 4 && idx <= 11) p = Math.max(p, 0.10);
             return { action, idx, priorProb: p };
         });
+
+        // Plies 0-3 opening pawn prior floor (moveCount < 4)
+        const wallCount = (root.state.hWalls ? root.state.hWalls.length : 0) + (root.state.vWalls ? root.state.vWalls.length : 0);
+        const moveCount = (root.state.moveCount !== undefined) ? root.state.moveCount : wallCount;
+        if (moveCount < 4) {
+            let pawnMass = 0;
+            const legalPawns = [];
+            const legalWalls = [];
+            for (const item of validPairs) {
+                if (item.idx < 12) {
+                    pawnMass += item.priorProb;
+                    legalPawns.push(item);
+                } else {
+                    legalWalls.push(item);
+                }
+            }
+            const targetFloor = 0.50;
+            if (pawnMass < targetFloor && legalPawns.length > 0) {
+                const remainingWall = 1.0 - targetFloor;
+                const wallMass = Math.max(1e-6, 1.0 - pawnMass);
+                if (pawnMass > 1e-6) {
+                    for (const item of legalPawns) item.priorProb *= (targetFloor / pawnMass);
+                } else {
+                    const perPawn = targetFloor / legalPawns.length;
+                    for (const item of legalPawns) item.priorProb = perPawn;
+                }
+                const act0 = legalPawns.find(item => item.idx === 0);
+                if (act0 && act0.priorProb < 0.35) {
+                    const deficit = 0.35 - act0.priorProb;
+                    act0.priorProb = 0.35;
+                    let otherPawnSum = 0;
+                    for (const item of legalPawns) if (item.idx !== 0) otherPawnSum += item.priorProb;
+                    if (otherPawnSum > deficit) {
+                        for (const item of legalPawns) if (item.idx !== 0) item.priorProb -= deficit * (item.priorProb / otherPawnSum);
+                    }
+                }
+                if (wallMass > 1e-6 && legalWalls.length > 0) {
+                    for (const item of legalWalls) item.priorProb *= (remainingWall / wallMass);
+                }
+            }
+        }
         let filteredPairs = validPairs.filter(p => p.action.type === 'move' || p.priorProb >= PRUNING_THRESHOLD);
         if (filteredPairs.length < 4) filteredPairs = validPairs;
         let pSum = filteredPairs.reduce((s, p) => s + p.priorProb, 0);
@@ -979,14 +1026,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         return actions[0] || null;
     }
 
-    // Preserve chosen branch as root for next turn
-    const chosenChild = root.children.get(bestActionIdx);
-    if (chosenChild) {
-        chosenChild.parent = null;
-        activeMCTSRoot = chosenChild;
-    } else {
-        activeMCTSRoot = null;
-    }
+    activeMCTSRoot = null;
 
     return mapIndexToActionPerspective(bestActionIdx, turn, p1Pos, p2Pos);
 }

@@ -2,8 +2,8 @@
 // Automated verification: confirms that when an opponent is guaranteed to win,
 // the evaluation engine detects it and the eval bar renders #2 with 0% fill height.
 
-import { getGuaranteedWinner, findShortestPath } from './js/engine.js';
-import { evaluateBoard } from './js/ai-eval.js';
+import { getGuaranteedWinner, findShortestPath } from '../js/engine.js';
+import { evaluateBoard } from '../js/ai-eval.js';
 
 // Mock DOM elements to inspect updateEvalBarUI behavior directly
 const mockElements = {
@@ -21,7 +21,7 @@ global.document = {
 };
 
 // Import updateEvalBarUI after mocking DOM
-const { updateEvalBarUI, evaluatePositionWithNN } = await import('./js/ui-eval-bar.js');
+const { updateEvalBarUI, evaluatePositionWithNN } = await import('../js/ui-eval-bar.js');
 
 let passedTests = 0;
 let totalTests = 0;

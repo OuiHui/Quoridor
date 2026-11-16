@@ -9,7 +9,9 @@ __pycache__/
 /quoridor_checkpoint.pth.tmp
 *.pth.tmp
 *.tmp
+*.onnx.data
 /quoridor_model_epoch_*
+models/
 
 dist/
 

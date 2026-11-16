@@ -3,10 +3,13 @@ import sys
 import shutil
 import torch
 
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, REPO_ROOT)
+
 from quoridor_model import QuoridorNet, export_to_onnx
 
-CHECKPOINT_PATH = "quoridor_checkpoint.pth"
-OUTPUT_PATH = os.path.join("public", "quoridor_model.onnx")
+CHECKPOINT_PATH = os.path.join(REPO_ROOT, "quoridor_checkpoint.pth")
+OUTPUT_PATH = os.path.join(REPO_ROOT, "public", "quoridor_model.onnx")
 
 
 def _detect_arch(state_dict):

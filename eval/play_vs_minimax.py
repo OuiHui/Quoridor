@@ -1,7 +1,13 @@
 import os
+import sys
 import argparse
 import numpy as np
 import torch
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from quoridor_model import QuoridorNet, map_action_to_index_perspective
 from onnx_inference import ONNXModelEvaluator
 import quoridor_cpp
@@ -168,6 +174,21 @@ def _sample_action_with_temp(adjusted_visits, valid_actions, game, move_count):
 
 def _load_evaluator(checkpoint_path, onnx_path):
     """Load ONNX evaluator if available, otherwise fall back to PyTorch."""
+    if onnx_path and not os.path.isabs(onnx_path):
+        if not os.path.exists(onnx_path):
+            candidate = os.path.join(REPO_ROOT, onnx_path)
+            if os.path.exists(candidate):
+                onnx_path = candidate
+            elif onnx_path in ("quoridor_model.onnx", os.path.join(REPO_ROOT, "quoridor_model.onnx")):
+                public_onnx = os.path.join(REPO_ROOT, "public", "quoridor_model.onnx")
+                if os.path.exists(public_onnx):
+                    onnx_path = public_onnx
+
+    if checkpoint_path and not os.path.isabs(checkpoint_path) and not os.path.exists(checkpoint_path):
+        candidate = os.path.join(REPO_ROOT, checkpoint_path)
+        if os.path.exists(candidate):
+            checkpoint_path = candidate
+
     if onnx_path and os.path.exists(onnx_path):
         print(f"Loading ONNX model from {onnx_path}")
         evaluator = ONNXModelEvaluator(onnx_path)

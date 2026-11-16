@@ -3,6 +3,8 @@ import { findShortestPath, getValidPawnMoves } from './engine.js';
 import { evaluateBoard, generateSmartMoves } from './ai-eval.js';
 import { runMCTS } from './ai-mcts.js';
 import { calculateAIMoveInWorker } from './worker-manager.js';
+import { formatMoveNotation } from './notation.js';
+import { logAction } from './ui-diagnostics.js';
 
 // Alpha-Beta Minimax Search
 export function minimax(depth, alpha, beta, maximizingPlayer, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls) {
@@ -117,41 +119,38 @@ export function makeAIMove(executePawnMove, executeWallPlacement) {
 
     const hudTurnEl = document.getElementById('hud-turn');
     if (hudTurnEl) {
-        hudTurnEl.textContent = `Thinking... (AI)`;
+        hudTurnEl.textContent = `Thinking... (AlphaZero MCTS)`;
     }
 
     const currentTurn = state.turn;
 
     calculateAIMoveInWorker(state, state.aiSettings)
         .then((res) => {
-            // Check if game turn changed while thinking
             if (state.turn !== currentTurn) return;
 
+            if (res && res.error) {
+                console.error('AI Move Error:', res.error);
+                logAction(`AI Error: ${res.error}`, 'system');
+                if (hudTurnEl) hudTurnEl.textContent = `Error: ${res.error}`;
+                return;
+            }
+
             const bestMove = res ? res.bestMove : null;
+            const engine = res ? (res.engine || 'AlphaZero MCTS') : 'AlphaZero MCTS';
             if (bestMove) {
+                logAction(`AI [${engine}]: played ${formatMoveNotation(bestMove)}`, 'system');
                 if (bestMove.type === 'move') {
                     executePawnMove(bestMove.to.x, bestMove.to.y);
                 } else {
                     executeWallPlacement(bestMove.x, bestMove.y, bestMove.wallType);
                 }
             } else {
-                const oppPos = isP1 ? state.p2Pos : state.p1Pos;
-                const myPos = isP1 ? state.p1Pos : state.p2Pos;
-                const moves = getValidPawnMoves(myPos.x, myPos.y, oppPos.x, oppPos.y, state.hWalls, state.vWalls);
-                if (moves.length > 0) {
-                    executePawnMove(moves[0].x, moves[0].y);
-                }
+                logAction(`AI [${engine}]: No legal moves generated`, 'system');
             }
         })
         .catch((err) => {
             console.error('Error during AI move calculation in worker:', err);
-            // Fallback to basic valid move
-            const oppPos = isP1 ? state.p2Pos : state.p1Pos;
-            const myPos = isP1 ? state.p1Pos : state.p2Pos;
-            const moves = getValidPawnMoves(myPos.x, myPos.y, oppPos.x, oppPos.y, state.hWalls, state.vWalls);
-            if (moves.length > 0) {
-                executePawnMove(moves[0].x, moves[0].y);
-            }
+            logAction(`AI Worker Error: ${err.message}`, 'system');
         });
 }
 

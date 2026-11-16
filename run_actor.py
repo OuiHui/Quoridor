@@ -435,8 +435,9 @@ def main():
     
     while True:
         epoch = get_current_epoch()
-        expected_model_path = f"quoridor_model_epoch_{epoch+1:03d}.onnx"
-        
+        expected_model_path = os.path.join("models", f"quoridor_model_epoch_{epoch+1:03d}.onnx")
+        if not os.path.exists(expected_model_path):
+            expected_model_path = f"quoridor_model_epoch_{epoch+1:03d}.onnx"
         if not os.path.exists(expected_model_path):
             expected_model_path = "quoridor_model.onnx"
             

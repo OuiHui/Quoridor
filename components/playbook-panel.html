@@ -23,12 +23,10 @@
             <h3>AI Settings</h3>
             <div class="ai-controls">
                 <div class="difficulty-selector">
-                    <label for="ai-difficulty">Difficulty:</label>
-                    <select id="ai-difficulty">
-                        <option value="easy">Easy (Pawn Focus)</option>
-                        <option value="medium">Medium (Heuristic Defense)</option>
-                        <option value="hard">Hard (Lookahead search)</option>
-                        <option value="alphazero">AlphaZero MCTS (Policy + Value)</option>
+                    <label>AI Engine:</label>
+                    <div id="ai-engine-status" class="engine-status-badge">AlphaZero MCTS (800-Epoch ONNX)</div>
+                    <select id="ai-difficulty" style="display: none;">
+                        <option value="alphazero" selected>AlphaZero MCTS (Policy + Value)</option>
                     </select>
                 </div>
                 <div class="ai-role-selector">
