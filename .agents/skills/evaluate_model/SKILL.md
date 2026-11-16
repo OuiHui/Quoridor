@@ -111,7 +111,7 @@ When evaluation reveals substandard metrics, consult the mapping below for codeb
 
 ### Symptom A: Policy Prior Dominated by Wall Placements (>60% Wall Mass in Opening)
 - **Cause**: Dirichlet exploration noise spreading uniformly across 128 wall actions during self-play.
-- **Fix**: Reduce `dirichlet_alpha` from `0.30` to `0.07` in [cpp/mcts.h](file:///c:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/cpp/mcts.h) and ensure `TEMP_THRESHOLD` in [run_actor.py](file:///c:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/run_actor.py) is `<= 6`.
+- **Fix**: Reduce `dirichlet_alpha` from `0.30` to `0.07` in [cpp/mcts.h](../../../cpp/mcts.h) and ensure `TEMP_THRESHOLD` in [run_actor.py](../../../run_actor.py) is `<= 6`.
 
 ### Symptom B: High Draw Rate (>15% 3-Fold Repetition Draws)
 - **Cause**: MCTS cycling between two equivalent states without committing to forward pawn advances.
@@ -123,4 +123,4 @@ When evaluation reveals substandard metrics, consult the mapping below for codeb
 
 ### Symptom D: Blundering Immediate Opponent Win
 - **Cause**: Insufficient simulation count to resolve urgent defensive moves in branch trees.
-- **Fix**: Increase search simulations in self-play (`--simulations 800` or `1200`) in [train_alphazero.py](file:///c:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/train_alphazero.py).
+- **Fix**: Increase search simulations in self-play (`--simulations 800` or `1200`) in [train_alphazero.py](../../../train_alphazero.py).

@@ -41,12 +41,12 @@ This document details the performance diagnostics, architectural bottlenecks, an
   * Set Windows Process Priority to `IDLE_PRIORITY_CLASS` (`0x00000040`) using `ctypes.windll.kernel32.SetPriorityClass`.
 
 ### D. OneDrive 20GB Binary File Sync Lock
-* **Diagnostic**: The repository was located inside `OneDrive - Georgia Tech\Quoridor\`. The `data/` folder accumulated 20.3 GB of binary `.pt` files.
-* **Symptom**: `OneDrive.exe` ran at 33,000+ CPU ticks, calculating SHA-256 hashes for 20 GB of binary data even after Python exited.
+* **Diagnostic**: The repository was located inside a cloud synchronization folder. The `data/` folder accumulated 20.3 GB of binary `.pt` files.
+* **Symptom**: Cloud sync services ran at 33,000+ CPU ticks, calculating SHA-256 hashes for 20 GB of binary data even after Python exited.
 * **Fix**:
   * Moved dataset directory to `C:\quoridor_data` on the fast local drive.
   * Safely copied all 53 epoch dataset folders to `C:\quoridor_data`.
-  * Deleted the 20 GB `data/` folder inside OneDrive.
+  * Deleted the 20 GB `data/` folder inside the sync directory.
 
 ---
 

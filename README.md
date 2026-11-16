@@ -2,7 +2,7 @@
 
 An implementation of an AlphaZero-style reinforcement learning agent for the board game Quoridor. The system pairs a C++ game simulator and Monte Carlo Tree Search (MCTS) engine (exposed to Python through `pybind11`) with PyTorch for training deep residual networks. Trained models export to the Open Neural Network Exchange (ONNX) format for client-side inference inside web browsers using ONNX Runtime Web.
 
-Detailed technical design notes are maintained in [docs/architecture.md](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/docs/architecture.md). Historical audit reports and post-mortems can be found in the [docs](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/docs) directory.
+Detailed technical design notes are maintained in [docs/architecture.md](docs/architecture.md). Historical audit reports and post-mortems can be found in the [docs](docs) directory.
 
 ---
 
@@ -30,7 +30,7 @@ The engine was overhauled from the baseline architecture (QuoridorNet v1) to the
 
 ### 1. State Representation (11 Channels on $9 \times 9$)
 
-Defined in [quoridor_model.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/quoridor_model.py#L163-L230) and [cpp/quoridor_simulator.cpp](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/cpp/quoridor_simulator.cpp#L300-L400):
+Defined in [quoridor_model.py](quoridor_model.py#L163-L230) and [cpp/quoridor_simulator.cpp](cpp/quoridor_simulator.cpp#L300-L400):
 
 * **Channels 0 & 1 (Pawn Locations)**: One-hot binary indicator matrices for the active player pawn and opponent pawn respectively.
 * **Channels 2 & 3 (Wall Placements)**: Horizontal and vertical wall placement indicators on the $8 \times 8$ intersection subgrid, mapped into indices `0..7` of the $9 \times 9$ tensor with row and column 8 padded with `0.0`.
@@ -45,7 +45,7 @@ Defined in [quoridor_model.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Geor
 
 ### 2. Trunk & KataGo Global Pooling Attention
 
-Defined in [quoridor_model.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/quoridor_model.py#L5-L42):
+Defined in [quoridor_model.py](quoridor_model.py#L5-L42):
 
 * Standard Squeeze-and-Excitation (SE) computes channel recalibration weights using only the spatial average:
   $$y_{\text{mean}} = \frac{1}{81} \sum_{i=1}^{9} \sum_{j=1}^{9} x_{c, i, j}$$
@@ -56,7 +56,7 @@ Defined in [quoridor_model.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Geor
 
 ### 3. Spatially Decoupled Policy Head
 
-Defined in [quoridor_model.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/quoridor_model.py#L70-L80):
+Defined in [quoridor_model.py](quoridor_model.py#L70-L80):
 
 * The Quoridor action space consists of 140 discrete choices: 12 pawn movements (orthogonal steps, straight jumps, diagonal jumps) and 128 wall placements (64 horizontal, 64 vertical).
 * In v1, the feature map was flattened into a single vector and passed through a monolithic linear layer. This destroyed spatial translation equivariance for wall coordinates and required $192 \times 81 \times 140 \approx 2.18\text{M}$ parameters.
@@ -66,7 +66,7 @@ Defined in [quoridor_model.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Geor
 
 ### 4. Auxiliary Multi-Task Targets
 
-Defined in [quoridor_model.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/quoridor_model.py#L81-L96):
+Defined in [quoridor_model.py](quoridor_model.py#L81-L96):
 
 * During self-play training, the network optimizes a composite loss function:
   $$\mathcal{L} = \mathcal{L}_{\text{policy}} + \mathcal{L}_{\text{value}} + 0.1 \cdot \mathcal{L}_{\text{aux\_path}} + 0.1 \cdot \mathcal{L}_{\text{aux\_wall}} + 0.1 \cdot \mathcal{L}_{\text{aux\_opp}}$$
@@ -102,7 +102,7 @@ python setup_cpp.py build_ext --inplace
 This produces `quoridor_cpp.pyd` on Windows or `quoridor_cpp.so` on Linux/macOS.
 
 ### 2. Initialize a Fresh Training Run
-Run [start_training.py](file:///C:/Users/Huy%20Nguyen/OneDrive%20-%20Georgia%20Institute%20of%20Technology/Quoridor/start_training.py) with the `--fresh` flag:
+Run [start_training.py](start_training.py) with the `--fresh` flag:
 ```powershell
 python start_training.py --fresh --actors 4 --epochs 200
 ```

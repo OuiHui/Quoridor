@@ -2,7 +2,7 @@
 
 **Date**: August 2026  
 **Status**: Completed Pre-Restart Investigation & Diagnosis  
-**Artifact Directory**: `c:\Users\Huy Nguyen\OneDrive - Georgia Institute of Technology\Quoridor`
+**Artifact Directory**: `Quoridor` repository root
 
 ---
 
