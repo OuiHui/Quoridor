@@ -10,6 +10,7 @@ export function initCustomDropdowns(rootElement = document) {
 
 export function enhanceSelectElement(selectEl) {
     if (!selectEl || selectEl.dataset.customInitialized) return;
+    if (selectEl.style.display === 'none' || selectEl.hidden || selectEl.hasAttribute('hidden') || selectEl.classList.contains('hidden-select')) return;
     selectEl.dataset.customInitialized = 'true';
 
     const wrapper = document.createElement('div');

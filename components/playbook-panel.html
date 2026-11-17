@@ -22,10 +22,19 @@
         <div class="control-group hidden" id="ai-settings">
             <h3>AI Settings</h3>
             <div class="ai-controls">
-                <div class="difficulty-selector">
+                <div class="ai-engine-selector">
                     <label>AI Engine:</label>
-                    <div id="ai-engine-status" class="engine-status-badge">AlphaZero MCTS (800-Epoch ONNX)</div>
-                    <select id="ai-difficulty" style="display: none;">
+                    <div class="ai-engine-card">
+                        <div class="ai-engine-details">
+                            <span class="ai-engine-name">AlphaZero MCTS</span>
+                            <span class="ai-engine-meta">QuoridorNet v2 • 20 ResBlocks</span>
+                        </div>
+                        <div id="ai-engine-status" class="engine-status-pill ready">
+                            <span class="engine-status-dot"></span>
+                            <span class="engine-status-text">Active</span>
+                        </div>
+                    </div>
+                    <select id="ai-difficulty" class="hidden-select" style="display: none;" tabindex="-1">
                         <option value="alphazero" selected>AlphaZero MCTS (Policy + Value)</option>
                     </select>
                 </div>

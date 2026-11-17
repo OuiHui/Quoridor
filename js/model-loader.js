@@ -5,12 +5,17 @@ import { state } from './state.js';
 export function updateEngineStatusUI(statusClass, label) {
     const el = document.getElementById('ai-engine-status');
     if (!el) return;
-    el.className = `engine-status-badge ${statusClass}`;
-    el.textContent = label;
+    el.className = `engine-status-pill ${statusClass}`;
+    const textEl = el.querySelector('.engine-status-text');
+    if (textEl) {
+        textEl.textContent = label;
+    } else {
+        el.textContent = label;
+    }
 }
 
 export async function loadONNXModel() {
-    updateEngineStatusUI('loading', 'Loading AlphaZero ONNX...');
+    updateEngineStatusUI('loading', 'Loading...');
     try {
         const timestamp = Date.now();
         const modelRes = await fetch(`./quoridor_model.onnx?t=${timestamp}`);
@@ -34,7 +39,7 @@ export async function loadONNXModel() {
 
         if (workerOk) {
             state.isAlphaZeroReady = true;
-            updateEngineStatusUI('ready', 'AlphaZero MCTS (Active)');
+            updateEngineStatusUI('ready', 'Active');
             console.log("AlphaZero MCTS engine verified and active in worker.");
             return true;
         } else {
@@ -42,7 +47,7 @@ export async function loadONNXModel() {
         }
     } catch (e) {
         state.isAlphaZeroReady = false;
-        updateEngineStatusUI('error', 'AlphaZero Model Unavailable');
+        updateEngineStatusUI('error', 'Offline');
         console.error("AlphaZero ONNX model could not be loaded:", e);
         return false;
     }
