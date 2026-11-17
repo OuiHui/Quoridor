@@ -3,6 +3,8 @@ import { playSound } from './sfx.js';
 import { updatePawnPositions, renderPlacedWalls } from './ui-board.js';
 import { updateUI, hideWallAnalyzer, renderMatchHistoryUI } from './ui-diagnostics.js';
 import { clearHints } from './ui-hints.js';
+import { resetMCTSTree } from './ai.js';
+import { resetWorkerMCTS } from './worker-manager.js';
 
 import { updatePlaybookUI } from './playbook.js';
 
@@ -16,6 +18,8 @@ export function jumpToHistoryState(targetIndex) {
 
     clearHints();
     hideWallAnalyzer();
+    resetMCTSTree();
+    resetWorkerMCTS();
 
     if (targetIndex === 0) {
         state.p1Pos = { x: 4, y: 0 };

@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { findShortestPath, getValidPawnMoves, validateWallPlacement, findShortestPathLengthFast } from './engine.js';
+import { findShortestPath, getValidPawnMoves, validateWallPlacement, findShortestPathLengthFast, getGuaranteedWinner } from './engine.js';
 import { minimax } from './ai-search.js';
 
 // Evaluate board position for Minimax AI
@@ -29,16 +29,10 @@ export function evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, is
     if (p1Dist === 0) return Infinity;
     if (p2Dist === 0) return -Infinity;
 
-    // --- GUARANTEED WIN / COMPLETE DOMINANCE CHECK ---
-    // Pure race dominance when a player has 0 walls remaining:
-    if (p2Walls === 0) {
-        if (isP1Turn && p1Dist <= p2Dist) return 500;
-        if (!isP1Turn && p1Dist <= p2Dist - 2) return 500;
-    }
-    if (p1Walls === 0) {
-        if (!isP1Turn && p2Dist <= p1Dist) return -500;
-        if (isP1Turn && p2Dist <= p1Dist - 2) return -500;
-    }
+    // --- GUARANTEED WIN / PROVEN RACE DOMINANCE CHECK ---
+    const gw = getGuaranteedWinner(p1Pos, p2Pos, p1Walls, p2Walls, isP1Turn, hWalls, vWalls);
+    if (gw === 1) return Infinity;
+    if (gw === -1) return -Infinity;
 
     // Primary: path distance advantage (each step = 12 pts)
     let score = (p2Dist - p1Dist) * 12;

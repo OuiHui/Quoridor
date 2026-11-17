@@ -237,7 +237,7 @@ self.onmessage = async function (e) {
             p1Walls,
             p2Walls,
             turn,
-            40,
+            300,
             modelSession
         );
 
@@ -247,7 +247,7 @@ self.onmessage = async function (e) {
             data: {
                 bestMove,
                 engine: 'AlphaZero MCTS',
-                simulations: 40
+                simulations: 300
             }
         });
         return;

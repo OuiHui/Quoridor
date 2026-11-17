@@ -568,6 +568,10 @@ export function resetMCTSTree() {
     transpositionTable.clear();
 }
 
+export function getActiveMCTSRoot() {
+    return activeMCTSRoot;
+}
+
 /**
  * Checks deep equality of two Quoridor game states.
  */
@@ -615,7 +619,7 @@ function findMatchingNodeInTree(oldRoot, targetState) {
 }
 
 // MONTE CARLO TREE SEARCH GUIDED BY NEURAL NETWORK OR HEURISTIC FALLBACK
-export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn, numSimulations = 60, modelSession = null) {
+export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn, numSimulations = 300, modelSession = null) {
     const rootState = {
         p1Pos: { ...p1Pos },
         p2Pos: { ...p2Pos },
@@ -626,9 +630,13 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         turn
     };
 
-    // Fresh root node allocation matching C++ MCTS (cpp/mcts.cpp)
-    // Transposition table caches neural net evaluations across turns without tree distortion
-    const root = new MCTSNode(rootState);
+    // Subtree reuse: search existing tree for a node matching the target rootState
+    let root = findMatchingNodeInTree(activeMCTSRoot, rootState);
+    if (!root) {
+        root = new MCTSNode(rootState);
+    } else {
+        root.parent = null;
+    }
 
     const cPuct = 1.4;
     const cFpu = 0.20;
@@ -1026,7 +1034,8 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         return actions[0] || null;
     }
 
-    activeMCTSRoot = null;
+    const chosenChild = root.children.get(bestActionIdx);
+    activeMCTSRoot = chosenChild || null;
 
     return mapIndexToActionPerspective(bestActionIdx, turn, p1Pos, p2Pos);
 }

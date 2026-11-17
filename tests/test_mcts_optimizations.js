@@ -1,4 +1,4 @@
-import { runMCTS, resetMCTSTree, areStatesEqual, mirrorPolicy, getTTSize } from '../js/ai-mcts.js';
+import { runMCTS, resetMCTSTree, areStatesEqual, mirrorPolicy, getTTSize, getActiveMCTSRoot } from '../js/ai-mcts.js';
 import { getCanonicalStateHash, mirrorBitboardHorizontal, getWallBitboards } from '../js/engine.js';
 
 // Mock browser global 'ort' for ONNX runtime tensor creation in Node.js environment
@@ -98,6 +98,7 @@ async function testMCTSExecution() {
     console.log(`Turn 1 move selected: ${JSON.stringify(move1)} in ${duration1.toFixed(2)}ms, inferences: ${inferenceCount}`);
     console.assert(move1 !== null, "Turn 1 move should not be null");
     console.assert(getTTSize() > 0, "Transposition table should cache evaluated states");
+    console.assert(getActiveMCTSRoot() !== null, "Active MCTS root should be retained for subtree reuse");
 
     // Turn 2: Apply move1 (e.g. p1 to {x: 4, y: 1}), turn becomes 2
     console.log("Testing turn 2 MCTS with Subtree Reuse & TT Cache...");
@@ -114,6 +115,7 @@ async function testMCTSExecution() {
     // Test tree reset
     resetMCTSTree();
     console.assert(getTTSize() === 0, "resetMCTSTree should clear TT cache");
+    console.assert(getActiveMCTSRoot() === null, "resetMCTSTree should clear activeMCTSRoot");
     console.log("✔ Subtree Reuse, TT Cache, and Gumbel MCTS Execution tests passed!");
 }
 
