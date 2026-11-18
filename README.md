@@ -2,7 +2,7 @@
 
 An implementation of an AlphaZero-style reinforcement learning agent for the board game Quoridor. The system pairs a C++ game simulator and Monte Carlo Tree Search (MCTS) engine (exposed to Python through `pybind11`) with PyTorch for training deep residual networks. Trained models export to the Open Neural Network Exchange (ONNX) format for client-side inference inside web browsers using ONNX Runtime Web.
 
-Detailed technical design notes are maintained in [docs/architecture.md](docs/architecture.md). Historical audit reports and post-mortems can be found in the [docs](docs) directory.
+Detailed technical design notes are maintained in [docs/architecture.md](docs/architecture.md), [docs/mcts_move_making_optimizations.md](docs/mcts_move_making_optimizations.md), and [docs/evaluator_discrepancy_and_vulnerability_analysis.md](docs/evaluator_discrepancy_and_vulnerability_analysis.md). Historical audit reports and post-mortems can be found in the [docs](docs) directory.
 
 ---
 
@@ -22,7 +22,7 @@ The engine was overhauled from the baseline architecture (QuoridorNet v1) to the
 | **Policy Head Architecture** | Flattened dense layer: `Linear(channels * 81 -> 140)` (~2.18M parameters) | Spatially decoupled head: 12-pawn FC branch + unpadded $2 \times 2$ spatial convolution for 128 wall actions | Flattening destroys 2D translation equivariance for wall coordinates. Slicing the $9 \times 9$ grid into an $8 \times 8$ intersection subgrid via $2 \times 2$ conv cuts wall parameters by $>85\%$ and preserves spatial geometry. |
 | **Auxiliary Supervision** | Current-turn path prediction (redundant with inputs) | End-of-game path lengths (2), final wall ownership grid ($2 \times 8 \times 8$), opponent policy (140) | Current-turn paths are already known to the network via inputs. Supervising terminal outcomes and opponent counter-responses shapes intermediate features without deployment overhead. |
 | **Inference Footprint** | Monolithic ONNX file with training heads included | Stripped ONNX graph containing only primary Policy and Value heads | Auxiliary heads are used solely for backpropagation gradients during self-play optimization. Stripping them during ONNX export minimizes client memory and WebAssembly execution latency. |
-| **MCTS Tree Search** | Subtree reuse across turns in browser JavaScript engine | Fresh root allocation per turn with persistent Transposition Table caching | Subtree reuse under Gumbel AlphaZero sequential halving penalized unvisited winning moves with default negative values ($Q = -1.0$). Allocating a fresh root per turn resolves search blindness. |
+| **MCTS Tree Search** | Unchecked subtree reuse under sequential halving penalizing unvisited branches ($Q = -1.0$) | State-verified subtree preservation (300 simulations) with canonical hash repetition discounting and persistent TT caching | Preserves accumulated visit counts across consecutive plies while eliminating 2-tempo dithering. Falls back cleanly to fresh roots on undo or history jumps to avoid candidate pruning bias. |
 
 ---
 

@@ -1,3 +1,5 @@
+import { getCanonicalStateHash } from './engine.js';
+
 let worker = null;
 let nextRequestId = 1;
 const pendingRequests = new Map();
@@ -64,6 +66,22 @@ export function analyzeMoveInWorker(chosenMove, player, stateBefore, depth = 4) 
 }
 
 export function calculateAIMoveInWorker(stateObj, aiSettings) {
+    const historyHashes = [];
+    if (stateObj.history && stateObj.history.length > 0) {
+        const start = Math.max(0, stateObj.history.length - 8);
+        for (let i = start; i < stateObj.history.length; i++) {
+            const item = stateObj.history[i];
+            if (item && item.stateAfter) {
+                const snap = item.stateAfter;
+                const { hash } = getCanonicalStateHash(
+                    snap.p1Pos, snap.p2Pos, snap.hWalls, snap.vWalls,
+                    snap.p1Walls, snap.p2Walls, snap.turn === 1
+                );
+                historyHashes.push(hash.toString());
+            }
+        }
+    }
+
     return sendWorkerRequest('calculate_ai_move', {
         p1Pos: stateObj.p1Pos,
         p2Pos: stateObj.p2Pos,
@@ -72,6 +90,7 @@ export function calculateAIMoveInWorker(stateObj, aiSettings) {
         p1Walls: stateObj.p1Walls,
         p2Walls: stateObj.p2Walls,
         turn: stateObj.turn,
+        historyHashes,
         aiSettings
     });
 }

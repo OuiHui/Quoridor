@@ -1,41 +1,126 @@
 import { state } from './state.js';
-import { findShortestPath, getValidPawnMoves, validateWallPlacement, findShortestPathLengthFast, getGuaranteedWinner } from './engine.js';
+import { findShortestPath, getValidPawnMoves, validateWallPlacement, validateWallPlacementFast, findShortestPathLengthFast, getGuaranteedWinner } from './engine.js';
 import { minimax } from './ai-search.js';
+
+function computeMaxNetWallGain(attackerPlayer, p1Pos, p2Pos, hWallsArray, vWallsArray, p1Dist, p2Dist) {
+    const isAttackerP1 = attackerPlayer === 1;
+    const targetGoalY = isAttackerP1 ? 0 : 8;
+    const attackerGoalY = isAttackerP1 ? 8 : 0;
+    const targetPos = isAttackerP1 ? p2Pos : p1Pos;
+    const attackerPos = isAttackerP1 ? p1Pos : p2Pos;
+    const targetBaseDist = isAttackerP1 ? p2Dist : p1Dist;
+    const attackerBaseDist = isAttackerP1 ? p1Dist : p2Dist;
+
+    const targetPath = findShortestPath(targetPos.x, targetPos.y, targetGoalY, hWallsArray, vWallsArray, attackerPos);
+    if (!targetPath || targetPath.length < 2) return 0;
+    const attackerPath = findShortestPath(attackerPos.x, attackerPos.y, attackerGoalY, hWallsArray, vWallsArray, targetPos);
+
+    const seenMask = new Uint8Array(128);
+    let bestNetGain = 0;
+
+    for (let i = 0; i < targetPath.length - 1; i++) {
+        const c1 = targetPath[i];
+        const c2 = targetPath[i + 1];
+        const candidateWalls = [];
+
+        if (c1.x === c2.x) {
+            const yMin = Math.min(c1.y, c2.y);
+            if (c1.x < 8) candidateWalls.push({ x: c1.x, y: yMin, type: 'h' });
+            if (c1.x > 0) candidateWalls.push({ x: c1.x - 1, y: yMin, type: 'h' });
+        } else if (c1.y === c2.y) {
+            const xMin = Math.min(c1.x, c2.x);
+            if (c1.y < 8) candidateWalls.push({ x: xMin, y: c1.y, type: 'v' });
+            if (c1.y > 0) candidateWalls.push({ x: xMin, y: c1.y - 1, type: 'v' });
+        }
+
+        for (const w of candidateWalls) {
+            const seenIdx = (w.type === 'h' ? 0 : 64) + w.y * 8 + w.x;
+            if (seenMask[seenIdx]) continue;
+            seenMask[seenIdx] = 1;
+
+            const p1P = isAttackerP1 ? attackerPath : targetPath;
+            const p2P = isAttackerP1 ? targetPath : attackerPath;
+
+            if (validateWallPlacementFast(w.x, w.y, w.type, p1Pos, p2Pos, hWallsArray, vWallsArray, p1P, p2P)) {
+                const wallIdx = w.y * 8 + w.x;
+                if (w.type === 'h') hWallsArray[wallIdx] = 1; else vWallsArray[wallIdx] = 1;
+
+                const newTargetLen = findShortestPathLengthFast(targetPos.x, targetPos.y, targetGoalY, hWallsArray, vWallsArray, attackerPos.x, attackerPos.y);
+                const newAttackerLen = findShortestPathLengthFast(attackerPos.x, attackerPos.y, attackerGoalY, hWallsArray, vWallsArray, targetPos.x, targetPos.y);
+
+                if (w.type === 'h') hWallsArray[wallIdx] = 0; else vWallsArray[wallIdx] = 0;
+
+                if (newTargetLen > 0 && newAttackerLen > 0) {
+                    const newTargetDist = newTargetLen - 1;
+                    const newAttackerDist = newAttackerLen - 1;
+                    const deltaTarget = newTargetDist - targetBaseDist;
+                    const deltaAttacker = newAttackerDist - attackerBaseDist;
+                    const netGain = (deltaTarget - deltaAttacker) - 1;
+                    if (netGain > bestNetGain) {
+                        bestNetGain = netGain;
+                    }
+                }
+            }
+        }
+    }
+    return bestNetGain;
+}
 
 // Evaluate board position for Minimax AI
 // Positive = P1 advantage, Negative = P2 advantage
-export function evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, isP1Turn) {
+export function evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, isP1Turn, includeVulnerability = false) {
     let p1Dist, p2Dist;
+    let hWallsArray, vWallsArray;
+
     if (hWalls instanceof Map) {
-        let p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, p2Pos);
-        let p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, p1Pos);
-
-        if (!p1Path) p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, null);
-        if (!p2Path) p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, null);
-
-        p1Dist = p1Path ? p1Path.length - 1 : 40;
-        p2Dist = p2Path ? p2Path.length - 1 : 40;
+        hWallsArray = new Uint8Array(64);
+        vWallsArray = new Uint8Array(64);
+        for (const key of hWalls.keys()) {
+            const [x, y] = key.split(',').map(Number);
+            hWallsArray[y * 8 + x] = 1;
+        }
+        for (const key of vWalls.keys()) {
+            const [x, y] = key.split(',').map(Number);
+            vWallsArray[y * 8 + x] = 1;
+        }
     } else {
-        let p1Len = findShortestPathLengthFast(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, p2Pos.x, p2Pos.y);
-        let p2Len = findShortestPathLengthFast(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, p1Pos.x, p1Pos.y);
-
-        if (p1Len < 0) p1Len = findShortestPathLengthFast(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, -1, -1);
-        if (p2Len < 0) p2Len = findShortestPathLengthFast(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, -1, -1);
-
-        p1Dist = p1Len > 0 ? p1Len - 1 : 40;
-        p2Dist = p2Len > 0 ? p2Len - 1 : 40;
+        hWallsArray = hWalls;
+        vWallsArray = vWalls;
     }
+
+    let p1Len = findShortestPathLengthFast(p1Pos.x, p1Pos.y, 8, hWallsArray, vWallsArray, p2Pos.x, p2Pos.y);
+    let p2Len = findShortestPathLengthFast(p2Pos.x, p2Pos.y, 0, hWallsArray, vWallsArray, p1Pos.x, p1Pos.y);
+
+    if (p1Len < 0) p1Len = findShortestPathLengthFast(p1Pos.x, p1Pos.y, 8, hWallsArray, vWallsArray, -1, -1);
+    if (p2Len < 0) p2Len = findShortestPathLengthFast(p2Pos.x, p2Pos.y, 0, hWallsArray, vWallsArray, -1, -1);
+
+    p1Dist = p1Len > 0 ? p1Len - 1 : 40;
+    p2Dist = p2Len > 0 ? p2Len - 1 : 40;
 
     if (p1Dist === 0) return Infinity;
     if (p2Dist === 0) return -Infinity;
 
     // --- GUARANTEED WIN / PROVEN RACE DOMINANCE CHECK ---
-    const gw = getGuaranteedWinner(p1Pos, p2Pos, p1Walls, p2Walls, isP1Turn, hWalls, vWalls);
+    const gw = getGuaranteedWinner(p1Pos, p2Pos, p1Walls, p2Walls, isP1Turn, hWallsArray, vWallsArray);
     if (gw === 1) return Infinity;
     if (gw === -1) return -Infinity;
 
-    // Primary: path distance advantage (each step = 12 pts)
-    let score = (p2Dist - p1Dist) * 12;
+    // Net Tempo Vulnerability (only if player has walls remaining and requested)
+    let p1Vulnerability = 0;
+    let p2Vulnerability = 0;
+    if (includeVulnerability) {
+        if (p1Walls > 0 && p2Dist > 0) {
+            p1Vulnerability = computeMaxNetWallGain(1, p1Pos, p2Pos, hWallsArray, vWallsArray, p1Dist, p2Dist);
+        }
+        if (p2Walls > 0 && p1Dist > 0) {
+            p2Vulnerability = computeMaxNetWallGain(2, p1Pos, p2Pos, hWallsArray, vWallsArray, p1Dist, p2Dist);
+        }
+    }
+
+    // Robust path difference incorporates pending net tempo threats
+    const robustP1Dist = p1Dist + p2Vulnerability;
+    const robustP2Dist = p2Dist + p1Vulnerability;
+    let score = (robustP2Dist - robustP1Dist) * 12;
 
     // Urgency bonus: when a player is within 3 steps of winning, amplify the threat.
     if (p1Dist <= 3) score += (4 - p1Dist) * 6;

@@ -777,29 +777,22 @@ export function getGuaranteedWinner(p1Pos, p2Pos, p1Walls, p2Walls, isP1Turn, hW
     const { disjoint, l1, l2 } = areShortestPathDAGsDisjoint(p1Pos, p2Pos, hWalls, vWalls);
     if (l1 >= 999 || l2 >= 999) return 0;
 
-    // Both players have 0 walls left: deterministic pawn race
-    if (p1Walls === 0 && p2Walls === 0) {
-        // High margin: 2 full plies guarantees win regardless of jump parity
-        if (l1 <= l2 - 2) return 1;
-        if (l2 <= l1 - 2) return -1;
-
-        // Tight margin (|l1 - l2| <= 1): require disjoint DAGs to preclude jump flips
-        if (disjoint) {
-            if (l1 < l2) return 1;
-            if (l2 < l1) return -1;
-            return isP1Turn ? 1 : -1;
-        }
-        return 0;
-    }
-
-    // One player has 0 walls left: conservative bounds with jump parity guard
+    // P1 guaranteed win check (only if P2 has 0 walls left to block P1)
     if (p2Walls === 0) {
-        if (l1 <= l2 - 2) return 1;
-        if (isP1Turn && l1 <= l2 - 1 && disjoint) return 1;
+        if (disjoint) {
+            if (l1 < l2 || (l1 === l2 && isP1Turn)) return 1;
+        } else {
+            if (l1 <= l2 - 3 || (l1 === l2 - 2 && isP1Turn)) return 1;
+        }
     }
+
+    // P2 guaranteed win check (only if P1 has 0 walls left to block P2)
     if (p1Walls === 0) {
-        if (l2 <= l1 - 2) return -1;
-        if (!isP1Turn && l2 <= l1 - 1 && disjoint) return -1;
+        if (disjoint) {
+            if (l2 < l1 || (l2 === l1 && !isP1Turn)) return -1;
+        } else {
+            if (l2 <= l1 - 3 || (l2 === l1 - 2 && !isP1Turn)) return -1;
+        }
     }
 
     return 0;
@@ -843,6 +836,26 @@ export function mirrorBitboardHorizontal(b) {
     b = ((b & 0x3333333333333333n) << 2n) | ((b >> 2n) & 0x3333333333333333n);
     b = ((b & 0x0F0F0F0F0F0F0F0Fn) << 4n) | ((b >> 4n) & 0x0F0F0F0F0F0F0F0Fn);
     return b;
+}
+
+export function mirrorBoardState(p1Pos, p2Pos, hWalls, vWalls) {
+    const mirrP1 = { x: 8 - p1Pos.x, y: p1Pos.y };
+    const mirrP2 = { x: 8 - p2Pos.x, y: p2Pos.y };
+    const mirrHWalls = new Map();
+    const mirrVWalls = new Map();
+    if (hWalls instanceof Map) {
+        for (const [k, v] of hWalls.entries()) {
+            const [wx, wy] = k.split(',').map(Number);
+            mirrHWalls.set(`${7 - wx},${wy}`, v);
+        }
+    }
+    if (vWalls instanceof Map) {
+        for (const [k, v] of vWalls.entries()) {
+            const [wx, wy] = k.split(',').map(Number);
+            mirrVWalls.set(`${7 - wx},${wy}`, v);
+        }
+    }
+    return { mirrP1, mirrP2, mirrHWalls, mirrVWalls };
 }
 
 function splitmix64(x) {

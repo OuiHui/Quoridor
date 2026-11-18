@@ -282,7 +282,7 @@ export function tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wal
         data[c * 81 + x * 9 + y] = val;
     }
 
-    0   // Find shortest paths for path cells & length channels (opponent-aware, matching C++ tensorize)
+    // Find shortest paths for path cells & length channels (opponent-aware, matching C++ tensorize)
     const p1Path = findShortestPath(p1Pos.x, p1Pos.y, 8, hWalls, vWalls, p2Pos) || [];
     const p2Path = findShortestPath(p2Pos.x, p2Pos.y, 0, hWalls, vWalls, p1Pos) || [];
 
@@ -619,7 +619,7 @@ function findMatchingNodeInTree(oldRoot, targetState) {
 }
 
 // MONTE CARLO TREE SEARCH GUIDED BY NEURAL NETWORK OR HEURISTIC FALLBACK
-export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn, numSimulations = 300, modelSession = null) {
+export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn, numSimulations = 300, modelSession = null, historyHashes = null) {
     const rootState = {
         p1Pos: { ...p1Pos },
         p2Pos: { ...p2Pos },
@@ -700,10 +700,13 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             return { action, idx, priorProb: p };
         });
 
-        // Plies 0-3 opening pawn prior floor (moveCount < 4)
-        const wallCount = (root.state.hWalls ? root.state.hWalls.length : 0) + (root.state.vWalls ? root.state.vWalls.length : 0);
-        const moveCount = (root.state.moveCount !== undefined) ? root.state.moveCount : wallCount;
-        if (moveCount < 4) {
+        // Plies 0-3 opening pawn prior floor (moveCount < 4 and 0 walls on board)
+        const hCount = root.state.hWalls instanceof Map ? root.state.hWalls.size : (root.state.hWalls ? root.state.hWalls.length : 0);
+        const vCount = root.state.vWalls instanceof Map ? root.state.vWalls.size : (root.state.vWalls ? root.state.vWalls.length : 0);
+        const wallCount = hCount + vCount;
+        const estimatedPlies = (20 - root.state.p1Walls - root.state.p2Walls) + root.state.p1Pos.y + (8 - root.state.p2Pos.y);
+        const moveCount = (root.state.moveCount !== undefined) ? root.state.moveCount : (wallCount > 0 ? 10 : estimatedPlies);
+        if (moveCount < 4 && wallCount === 0) {
             let pawnMass = 0;
             const legalPawns = [];
             const legalWalls = [];
@@ -751,13 +754,24 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         backpropagate(root, rootValue);
     }
 
+    const historySet = (historyHashes && historyHashes.length > 0) ? new Set(historyHashes) : null;
+
     // Initialize Gumbel AlphaZero candidates (Top-16 sampling)
     if (isGumbel && root.children.size > 0) {
         const scores = [];
         for (const [idx, child] of root.children.entries()) {
             const u = Math.max(1e-7, Math.min(1 - 1e-7, Math.random()));
             const g = -Math.log(-Math.log(u));
-            const score = Math.log(Math.max(1e-8, child.prior)) + g;
+            let score = Math.log(Math.max(1e-8, child.prior)) + g;
+            if (historySet && child.state) {
+                const { hash: childHash } = getCanonicalStateHash(
+                    child.state.p1Pos, child.state.p2Pos, child.state.hWalls, child.state.vWalls,
+                    child.state.p1Walls, child.state.p2Walls, child.state.turn === 1
+                );
+                if (historySet.has(childHash)) {
+                    score -= 20.0;
+                }
+            }
             scores.push({ idx, gumbel: g, prior: child.prior, score });
         }
         scores.sort((a, b) => b.score - a.score);
@@ -792,8 +806,24 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
                         const childB = root.children.get(b.idx);
                         const qA = (childA && childA.N > 0) ? -childA.Q : -1.0;
                         const qB = (childB && childB.N > 0) ? -childB.Q : -1.0;
-                        const scoreA = Math.log(Math.max(1e-8, a.prior)) + a.gumbel + sigmaScale * qA;
-                        const scoreB = Math.log(Math.max(1e-8, b.prior)) + b.gumbel + sigmaScale * qB;
+                        let scoreA = Math.log(Math.max(1e-8, a.prior)) + a.gumbel + sigmaScale * qA;
+                        let scoreB = Math.log(Math.max(1e-8, b.prior)) + b.gumbel + sigmaScale * qB;
+                        if (historySet) {
+                            if (childA && childA.state) {
+                                const { hash: hashA } = getCanonicalStateHash(
+                                    childA.state.p1Pos, childA.state.p2Pos, childA.state.hWalls, childA.state.vWalls,
+                                    childA.state.p1Walls, childA.state.p2Walls, childA.state.turn === 1
+                                );
+                                if (historySet.has(hashA)) scoreA -= 20.0;
+                            }
+                            if (childB && childB.state) {
+                                const { hash: hashB } = getCanonicalStateHash(
+                                    childB.state.p1Pos, childB.state.p2Pos, childB.state.hWalls, childB.state.vWalls,
+                                    childB.state.p1Walls, childB.state.p2Walls, childB.state.turn === 1
+                                );
+                                if (historySet.has(hashB)) scoreB -= 20.0;
+                            }
+                        }
                         return scoreB - scoreA;
                     });
                     const keepCount = Math.max(1, Math.floor(active.length / 2));
@@ -1008,10 +1038,22 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         for (const cand of active) {
             const child = root.children.get(cand.idx);
             if (child) {
-                const qVal = child.N > 0 ? -child.Q : -1.0;
-                const score = Math.log(Math.max(1e-8, cand.prior)) + cand.gumbel + sigmaScale * qVal;
-                if (child.N > maxVisits || (child.N === maxVisits && score > bestScore)) {
-                    maxVisits = child.N;
+                let qVal = child.N > 0 ? -child.Q : -1.0;
+                let score = Math.log(Math.max(1e-8, cand.prior)) + cand.gumbel + sigmaScale * qVal;
+                let effVisits = child.N;
+                if (historySet && child.state) {
+                    const { hash: childHash } = getCanonicalStateHash(
+                        child.state.p1Pos, child.state.p2Pos, child.state.hWalls, child.state.vWalls,
+                        child.state.p1Walls, child.state.p2Walls, child.state.turn === 1
+                    );
+                    if (historySet.has(childHash)) {
+                        score -= 20.0;
+                        qVal -= 0.35;
+                        effVisits *= 0.65;
+                    }
+                }
+                if (effVisits > maxVisits || (effVisits === maxVisits && score > bestScore)) {
+                    maxVisits = effVisits;
                     bestScore = score;
                     bestActionIdx = cand.idx;
                 }
@@ -1019,10 +1061,20 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         }
     }
     if (bestActionIdx === -1) {
-        let maxVisits = -1;
+        let maxEffectiveVisits = -1;
         for (const [idx, child] of root.children.entries()) {
-            if (child.N > maxVisits) {
-                maxVisits = child.N;
+            let effVisits = child.N;
+            if (historySet && child.state) {
+                const { hash: childHash } = getCanonicalStateHash(
+                    child.state.p1Pos, child.state.p2Pos, child.state.hWalls, child.state.vWalls,
+                    child.state.p1Walls, child.state.p2Walls, child.state.turn === 1
+                );
+                if (historySet.has(childHash)) {
+                    effVisits *= 0.65; // Repetition discount for states already visited in recent history
+                }
+            }
+            if (effVisits > maxEffectiveVisits) {
+                maxEffectiveVisits = effVisits;
                 bestActionIdx = idx;
             }
         }

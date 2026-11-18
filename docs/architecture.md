@@ -25,22 +25,22 @@ graph TD
 
 ## 2. Component Breakdown
 
-### A. C++ Core Engine & MCTS ([cpp/quoridor_simulator.cpp](../cpp/quoridor_simulator.cpp) & [cpp/mcts.cpp](../cpp/mcts.cpp))
-- **`QuoridorGame`**: High-performance game state representation, bit-packed wall tracking, jump action validator, and BFS pathfinder. Exposed to Python via `pybind11` in [cpp/bindings.cpp](../cpp/bindings.cpp).
+### A. C++ Core Engine & MCTS ([cpp/quoridor_simulator.cpp](cpp/quoridor_simulator.cpp) & [cpp/mcts.cpp](cpp/mcts.cpp))
+- **`QuoridorGame`**: High-performance game state representation, bit-packed wall tracking, jump action validator, and BFS pathfinder. Exposed to Python via `pybind11` in [cpp/bindings.cpp](cpp/bindings.cpp).
 - **`encode_state_cpp`**: Generates the 11-channel input tensor directly in C++, computing multi-source 2D Reverse-BFS distance maps and All-Shortest-Paths DAG Criticality masks without Python interpreter overhead.
-- **`MCTS` Engine**: Implements Monte Carlo Tree Search with Gumbel AlphaZero sequential halving and PUCT selection. Allocates a fresh root node per turn to avoid candidate pruning bias. Supports virtual loss parallel batching to aggregate evaluation requests across multiple tree traversals.
+- **`MCTS` Engine**: Implements Monte Carlo Tree Search with Gumbel AlphaZero sequential halving and PUCT selection. Allocates a fresh root node per turn in batch self-play to avoid candidate pruning bias. Supports virtual loss parallel batching to aggregate evaluation requests across multiple tree traversals.
 
-### B. Centralized GPU Inference Server ([gpu_inference_server.py](../gpu_inference_server.py))
+### B. Centralized GPU Inference Server ([gpu_inference_server.py](gpu_inference_server.py))
 - **Single GPU Context**: Dedicated process hosting PyTorch TorchScript JIT execution with CUDA AMP on Tensor Cores.
 - **Dynamic Micro-Batching**: Receives `(M, 11, 9, 9)` evaluation requests from all connected actors over TCP socket IPC with `TCP_NODELAY`, batches requests up to size 256–512, and runs single unified GPU forward passes.
 - **Auto Model Reloading**: Polls for updated model checkpoints (`quoridor_checkpoint.pth`) per epoch and hot-reloads model weights seamlessly into the JIT execution context.
 
-### C. Self-Play Actor Workers ([run_actor.py](../run_actor.py))
+### C. Self-Play Actor Workers ([run_actor.py](run_actor.py))
 - **Parallel Workers**: Multiple independent actor processes run in parallel.
-- **Remote Model Evaluator ([onnx_inference.py](../onnx_inference.py))**: Transmits state tensors over low-latency TCP sockets to `gpu_inference_server.py`, receiving sliced policy and value arrays. Standalone mode provides fallback to local ONNX execution.
+- **Remote Model Evaluator ([onnx_inference.py](onnx_inference.py))**: Transmits state tensors over low-latency TCP sockets to `gpu_inference_server.py`, receiving sliced policy and value arrays. Standalone mode provides fallback to local ONNX execution.
 - **Consolidated Batch File Saving**: Self-play trajectories are saved into consolidated files containing full game batches (`games_32_<timestamp>_<uuid>.pt`), avoiding filesystem metadata thrashing.
 
-### D. Neural Network & Learner ([train_alphazero.py](../train_alphazero.py) & [quoridor_model.py](../quoridor_model.py))
+### D. Neural Network & Learner ([train_alphazero.py](train_alphazero.py) & [quoridor_model.py](quoridor_model.py))
 - **Trunk**: 20 Residual Blocks with 192 channels, incorporating KataGo Global Pooling (spatial mean + spatial max concatenated) channel attention.
 - **Decoupled Spatial Policy Head**: 12-pawn linear projection sub-head and 128-wall unpadded $2 \times 2$ spatial convolution sub-head.
 - **Value Head**: Outputs scalar $V \in [-1.0, 1.0]$.
@@ -51,9 +51,11 @@ graph TD
   - Automatic Mixed Precision (`torch.amp.autocast('cuda')`) with gradient scaling.
   - cuDNN autotuning (`torch.backends.cudnn.benchmark = True`).
 
-### E. Web Frontend & Client Worker ([js/worker.js](../js/worker.js) & [js/ai-mcts.js](../js/ai-mcts.js))
+### E. Web Frontend & Client Worker ([js/worker.js](js/worker.js) & [js/ai-mcts.js](js/ai-mcts.js))
 - **Web Worker Offloading**: All heavy computations (AlphaZero MCTS lookahead, Minimax move generation, depth-4 move quality analysis) run off the main UI thread in a background ES module Web Worker.
-- **Fresh Root Allocation**: A fresh root node is allocated on each turn, matching the C++ engine to prevent search blindness under sequential halving, while preserving $O(1)$ Transposition Table evaluation caching.
+- **Subtree Reuse & 300 Simulation Budget**: The search engine preserves matching subtrees across consecutive plies, carrying forward visit counts and action values. Trees are automatically flushed on undo or history jumps.
+- **Canonical State Hash Repetition Discounting**: Collects 64-bit state hashes across the last 8 plies and applies a $0.65\times$ visit discount to cycling actions during final move selection, preventing 2-tempo loops without distorting search exploration.
+- **Reflection-Symmetrized Eval Bar**: Evaluates board states and their horizontal mirrors simultaneously: $V_{\text{symmetrized}}(s) = \frac{V(s) + V(\text{mirror}(s))}{2}$, eliminating lateral convolution noise.
 - **WASM Multi-Threading**: Configures ONNX Runtime Web with WebAssembly multi-threading (`ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4`) inside the worker thread context.
 
 ---
@@ -157,7 +159,7 @@ python start_training.py --fresh --actors 4 --epochs 200
 ```
 
 The `--fresh` routine:
-1. Moves any existing `quoridor_checkpoint.pth` to [checkpoint_backup/](../checkpoint_backup) with a timestamp.
+1. Moves any existing `quoridor_checkpoint.pth` to [checkpoint_backup/](checkpoint_backup) with a timestamp.
 2. Clears previous self-play batches in `C:\quoridor_data` to ensure the replay buffer contains only games generated by the v2 architecture.
 3. Resets `public/training_state.json` to Epoch 0 initial state for the browser live dashboard.
 4. Initializes QuoridorNet v2 weights and begins parallel self-play data generation.

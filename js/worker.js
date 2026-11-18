@@ -1,5 +1,5 @@
 import * as ort from 'onnxruntime-web';
-import { findShortestPath, getValidPawnMoves, getGuaranteedWinner } from './engine.js';
+import { findShortestPath, getValidPawnMoves, getGuaranteedWinner, mirrorBoardState } from './engine.js';
 import { evaluateBoard } from './ai-eval.js';
 import { minimax } from './ai-search.js';
 import { runMCTS, resetMCTSTree, tensorizeBoardState } from './ai-mcts.js';
@@ -85,7 +85,15 @@ self.onmessage = async function (e) {
                 const tensorData = tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn);
                 const inputTensor = new self.ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
                 const results = await modelSession.run({ input: inputTensor });
-                const rawValue = results.value.data[0];
+                let rawValue = results.value.data[0];
+
+                // Symmetrized evaluation: average with horizontal reflection to eliminate lateral noise
+                const { mirrP1, mirrP2, mirrHWalls, mirrVWalls } = mirrorBoardState(p1Pos, p2Pos, hWalls, vWalls);
+                const mirrTensorData = tensorizeBoardState(mirrP1, mirrP2, mirrHWalls, mirrVWalls, p1Walls, p2Walls, turn);
+                const mirrInputTensor = new self.ort.Tensor('float32', mirrTensorData, [1, 11, 9, 9]);
+                const mirrResults = await modelSession.run({ input: mirrInputTensor });
+                rawValue = (rawValue + mirrResults.value.data[0]) / 2;
+
                 const p1Value = turn === 1 ? rawValue : -rawValue;
                 evalScore = p1Value * 100;
                 isNN = true;
@@ -109,7 +117,7 @@ self.onmessage = async function (e) {
             );
             evalScore = result.score;
             if (evalScore === undefined || evalScore === null) {
-                evalScore = evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn === 1);
+                evalScore = evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn === 1, true);
             }
         }
 
@@ -128,6 +136,18 @@ self.onmessage = async function (e) {
         const baseHWalls = deserializeMap(stateBefore.hWalls);
         const baseVWalls = deserializeMap(stateBefore.vWalls);
 
+        // Convert once to unified fast Uint8Array for all minimax evaluations
+        const baseHWallsArray = new Uint8Array(64);
+        const baseVWallsArray = new Uint8Array(64);
+        for (const k of baseHWalls.keys()) {
+            const [x, y] = k.split(',').map(Number);
+            baseHWallsArray[y * 8 + x] = 1;
+        }
+        for (const k of baseVWalls.keys()) {
+            const [x, y] = k.split(',').map(Number);
+            baseVWallsArray[y * 8 + x] = 1;
+        }
+
         const d = depth || 4;
 
         const result = minimax(
@@ -137,8 +157,8 @@ self.onmessage = async function (e) {
             isP1,
             baseP1Pos,
             baseP2Pos,
-            baseHWalls,
-            baseVWalls,
+            baseHWallsArray,
+            baseVWallsArray,
             baseP1Walls,
             baseP2Walls
         );
@@ -147,23 +167,15 @@ self.onmessage = async function (e) {
         let bestCandidate = result.move;
 
         if (bestScore === undefined || bestScore === null) {
-            bestScore = evaluateBoard(baseP1Pos, baseP2Pos, baseHWalls, baseVWalls, baseP1Walls, baseP2Walls, isP1);
+            bestScore = evaluateBoard(baseP1Pos, baseP2Pos, baseHWallsArray, baseVWallsArray, baseP1Walls, baseP2Walls, isP1, true);
         }
 
         let chosenScore;
         if (isSameMove(chosenMove, bestCandidate)) {
             chosenScore = bestScore;
         } else {
-            const hWallsArray = new Uint8Array(64);
-            const vWallsArray = new Uint8Array(64);
-            for (const k of baseHWalls.keys()) {
-                const [x, y] = k.split(',').map(Number);
-                hWallsArray[y * 8 + x] = 1;
-            }
-            for (const k of baseVWalls.keys()) {
-                const [x, y] = k.split(',').map(Number);
-                vWallsArray[y * 8 + x] = 1;
-            }
+            const chosenHWallsArray = new Uint8Array(baseHWallsArray);
+            const chosenVWallsArray = new Uint8Array(baseVWallsArray);
 
             let nextP1Pos = { ...baseP1Pos };
             let nextP2Pos = { ...baseP2Pos };
@@ -175,8 +187,8 @@ self.onmessage = async function (e) {
                 else nextP2Pos = chosenMove.to;
             } else {
                 const idx = chosenMove.y * 8 + chosenMove.x;
-                if (chosenMove.wallType === 'h') hWallsArray[idx] = 1;
-                else vWallsArray[idx] = 1;
+                if (chosenMove.wallType === 'h') chosenHWallsArray[idx] = 1;
+                else chosenVWallsArray[idx] = 1;
                 
                 if (isP1) nextP1Walls--;
                 else nextP2Walls--;
@@ -189,8 +201,8 @@ self.onmessage = async function (e) {
                 !isP1,
                 nextP1Pos,
                 nextP2Pos,
-                hWallsArray,
-                vWallsArray,
+                chosenHWallsArray,
+                chosenVWallsArray,
                 nextP1Walls,
                 nextP2Walls
             );
@@ -211,7 +223,7 @@ self.onmessage = async function (e) {
     }
 
     if (type === 'calculate_ai_move') {
-        const { p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn } = data;
+        const { p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn, historyHashes } = data;
         const hWallsMap = deserializeMap(hWalls);
         const vWallsMap = deserializeMap(vWalls);
 
@@ -238,7 +250,8 @@ self.onmessage = async function (e) {
             p2Walls,
             turn,
             300,
-            modelSession
+            modelSession,
+            historyHashes
         );
 
         self.postMessage({

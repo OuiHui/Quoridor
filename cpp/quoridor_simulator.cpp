@@ -749,29 +749,22 @@ int QuoridorGame::get_guaranteed_winner() const {
     bool disjoint = are_shortest_path_dags_disjoint(l1, l2);
     if (l1 >= 999 || l2 >= 999) return 0;
 
-    // Both players have 0 walls left: deterministic pawn race
-    if (p1_walls_left == 0 && p2_walls_left == 0) {
-        // High margin: 2 full plies guarantees win regardless of jump parity
-        if (l1 <= l2 - 2) return 1;
-        if (l2 <= l1 - 2) return -1;
-
-        // Tight margin (|l1 - l2| <= 1): require disjoint DAGs to preclude jump flips
-        if (disjoint) {
-            if (l1 < l2) return 1;
-            if (l2 < l1) return -1;
-            return is_p1_turn ? 1 : -1;
-        }
-        return 0;
-    }
-
-    // One player has 0 walls left: conservative bounds with jump parity guard
+    // P1 guaranteed win check (only if P2 has 0 walls left to block P1)
     if (p2_walls_left == 0) {
-        if (l1 <= l2 - 2) return 1;
-        if (is_p1_turn && l1 <= l2 - 1 && disjoint) return 1;
+        if (disjoint) {
+            if (l1 < l2 || (l1 == l2 && is_p1_turn)) return 1;
+        } else {
+            if (l1 <= l2 - 3 || (l1 == l2 - 2 && is_p1_turn)) return 1;
+        }
     }
+
+    // P2 guaranteed win check (only if P1 has 0 walls left to block P2)
     if (p1_walls_left == 0) {
-        if (l2 <= l1 - 2) return -1;
-        if (!is_p1_turn && l2 <= l1 - 1 && disjoint) return -1;
+        if (disjoint) {
+            if (l2 < l1 || (l2 == l1 && !is_p1_turn)) return -1;
+        } else {
+            if (l2 <= l1 - 3 || (l2 == l1 - 2 && !is_p1_turn)) return -1;
+        }
     }
 
     return 0;

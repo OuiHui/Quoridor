@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { minimax, evaluateBoard, generateSmartMoves } from './ai.js';
-import { findShortestPathLengthFast, getGuaranteedWinner } from './engine.js';
+import { findShortestPathLengthFast, getGuaranteedWinner, mirrorBoardState } from './engine.js';
 import { tensorizeBoardState } from './ai-mcts.js';
 import { evaluatePositionInWorker } from './worker-manager.js';
 
@@ -14,7 +14,15 @@ export async function evaluatePositionWithNN(p1Pos, p2Pos, hWalls, vWalls, p1Wal
             const tensorData = tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn);
             const inputTensor = new window.ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
             const results = await window.quoridorONNXSession.run({ input: inputTensor });
-            const rawValue = results.value.data[0];
+            let rawValue = results.value.data[0];
+
+            // Symmetrized evaluation: average with horizontal reflection
+            const { mirrP1, mirrP2, mirrHWalls, mirrVWalls } = mirrorBoardState(p1Pos, p2Pos, hWalls, vWalls);
+            const mirrTensorData = tensorizeBoardState(mirrP1, mirrP2, mirrHWalls, mirrVWalls, p1Walls, p2Walls, turn);
+            const mirrInputTensor = new window.ort.Tensor('float32', mirrTensorData, [1, 11, 9, 9]);
+            const mirrResults = await window.quoridorONNXSession.run({ input: mirrInputTensor });
+            rawValue = (rawValue + mirrResults.value.data[0]) / 2;
+
             const p1Value = turn === 1 ? rawValue : -rawValue;
             return p1Value * 100;
         } catch (e) {
