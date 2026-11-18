@@ -1,5 +1,5 @@
 import * as ort from 'onnxruntime-web';
-import { findShortestPath, getValidPawnMoves, validateWallPlacement, getGuaranteedWinner, isMoveBlockedFast, getCanonicalStateHash } from './engine.js';
+import { findShortestPath, getValidPawnMoves, validateWallPlacement, validateWallPlacementFast, getGuaranteedWinner, isMoveBlockedFast, getCanonicalStateHash } from './engine.js';
 import { evaluateBoard, generateSmartMoves } from './ai-eval.js';
 
 // ACTION SPACE CONSTANTS
@@ -473,15 +473,38 @@ class MCTSNode {
     }
 }
 
-// Generate valid actions for MCTS expansion
+// Convert Map or Array wall representations to flat Uint8Array(64)
+export function toUint8Array(walls) {
+    if (walls instanceof Uint8Array) return walls.slice();
+    const arr = new Uint8Array(64);
+    if (walls instanceof Map) {
+        for (const k of walls.keys()) {
+            const [x, y] = k.split(',').map(Number);
+            arr[y * 8 + x] = 1;
+        }
+    } else if (Array.isArray(walls)) {
+        for (const item of walls) {
+            const k = Array.isArray(item) ? item[0] : item;
+            if (typeof k === 'string') {
+                const [x, y] = k.split(',').map(Number);
+                arr[y * 8 + x] = 1;
+            }
+        }
+    }
+    return arr;
+}
+
+// Generate valid actions for MCTS expansion (used as fallback)
 function getValidMCTSActions(state) {
     const actions = [];
     const isP1 = state.turn === 1;
     const myPos = isP1 ? state.p1Pos : state.p2Pos;
     const oppPos = isP1 ? state.p2Pos : state.p1Pos;
+    const hArr = state.hWalls instanceof Uint8Array ? state.hWalls : toUint8Array(state.hWalls);
+    const vArr = state.vWalls instanceof Uint8Array ? state.vWalls : toUint8Array(state.vWalls);
 
     // 1. Pawn moves
-    const pawnMoves = getValidPawnMoves(myPos.x, myPos.y, oppPos.x, oppPos.y, state.hWalls, state.vWalls);
+    const pawnMoves = getValidPawnMoves(myPos.x, myPos.y, oppPos.x, oppPos.y, hArr, vArr);
     for (const m of pawnMoves) {
         actions.push({ type: 'move', to: m });
     }
@@ -489,14 +512,14 @@ function getValidMCTSActions(state) {
     // 2. Wall moves
     const wallsLeft = isP1 ? state.p1Walls : state.p2Walls;
     if (wallsLeft > 0) {
-        const p1Path = findShortestPath(state.p1Pos.x, state.p1Pos.y, 8, state.hWalls, state.vWalls, state.p2Pos) || [];
-        const p2Path = findShortestPath(state.p2Pos.x, state.p2Pos.y, 0, state.hWalls, state.vWalls, state.p1Pos) || [];
+        const p1Path = findShortestPath(state.p1Pos.x, state.p1Pos.y, 8, hArr, vArr, state.p2Pos) || [];
+        const p2Path = findShortestPath(state.p2Pos.x, state.p2Pos.y, 0, hArr, vArr, state.p1Pos) || [];
         for (let wx = 0; wx < 8; wx++) {
             for (let wy = 0; wy < 8; wy++) {
-                if (validateWallPlacement(wx, wy, 'h', state.p1Pos, state.p2Pos, state.hWalls, state.vWalls, p1Path, p2Path)) {
+                if (validateWallPlacementFast(wx, wy, 'h', state.p1Pos, state.p2Pos, hArr, vArr, p1Path, p2Path)) {
                     actions.push({ type: 'wall', wallType: 'h', x: wx, y: wy });
                 }
-                if (validateWallPlacement(wx, wy, 'v', state.p1Pos, state.p2Pos, state.hWalls, state.vWalls, p1Path, p2Path)) {
+                if (validateWallPlacementFast(wx, wy, 'v', state.p1Pos, state.p2Pos, hArr, vArr, p1Path, p2Path)) {
                     actions.push({ type: 'wall', wallType: 'v', x: wx, y: wy });
                 }
             }
@@ -506,13 +529,13 @@ function getValidMCTSActions(state) {
     return actions;
 }
 
-// Helper to transition state based on action
+// Helper to transition state based on action using fast Uint8Array copies
 function transitionState(state, action) {
     const nextState = {
         p1Pos: { ...state.p1Pos },
         p2Pos: { ...state.p2Pos },
-        hWalls: new Map(state.hWalls),
-        vWalls: new Map(state.vWalls),
+        hWalls: state.hWalls.slice(),
+        vWalls: state.vWalls.slice(),
         p1Walls: state.p1Walls,
         p2Walls: state.p2Walls,
         turn: state.turn === 1 ? 2 : 1
@@ -522,9 +545,9 @@ function transitionState(state, action) {
     if (action.type === 'move') {
         if (isP1) nextState.p1Pos = action.to; else nextState.p2Pos = action.to;
     } else {
-        const key = `${action.x},${action.y}`;
-        if (action.wallType === 'h') nextState.hWalls.set(key, true);
-        else nextState.vWalls.set(key, true);
+        const idx = action.y * 8 + action.x;
+        if (action.wallType === 'h') nextState.hWalls[idx] = 1;
+        else nextState.vWalls[idx] = 1;
         if (isP1) nextState.p1Walls--; else nextState.p2Walls--;
     }
 
@@ -581,13 +604,20 @@ export function areStatesEqual(s1, s2) {
     if (s1.p2Pos.x !== s2.p2Pos.x || s1.p2Pos.y !== s2.p2Pos.y) return false;
     if (s1.turn !== s2.turn) return false;
     if (s1.p1Walls !== s2.p1Walls || s1.p2Walls !== s2.p2Walls) return false;
-    if (s1.hWalls.size !== s2.hWalls.size || s1.vWalls.size !== s2.vWalls.size) return false;
 
-    for (const key of s1.hWalls.keys()) {
-        if (!s2.hWalls.has(key)) return false;
+    if (s1.hWalls instanceof Uint8Array && s2.hWalls instanceof Uint8Array) {
+        for (let i = 0; i < 64; i++) {
+            if (s1.hWalls[i] !== s2.hWalls[i] || s1.vWalls[i] !== s2.vWalls[i]) return false;
+        }
+        return true;
     }
-    for (const key of s1.vWalls.keys()) {
-        if (!s2.vWalls.has(key)) return false;
+
+    const h1Arr = s1.hWalls instanceof Uint8Array ? s1.hWalls : toUint8Array(s1.hWalls);
+    const h2Arr = s2.hWalls instanceof Uint8Array ? s2.hWalls : toUint8Array(s2.hWalls);
+    const v1Arr = s1.vWalls instanceof Uint8Array ? s1.vWalls : toUint8Array(s1.vWalls);
+    const v2Arr = s2.vWalls instanceof Uint8Array ? s2.vWalls : toUint8Array(s2.vWalls);
+    for (let i = 0; i < 64; i++) {
+        if (h1Arr[i] !== h2Arr[i] || v1Arr[i] !== v2Arr[i]) return false;
     }
 
     return true;
@@ -618,99 +648,65 @@ function findMatchingNodeInTree(oldRoot, targetState) {
     return null;
 }
 
-// MONTE CARLO TREE SEARCH GUIDED BY NEURAL NETWORK OR HEURISTIC FALLBACK
-export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn, numSimulations = 300, modelSession = null, historyHashes = null) {
-    const rootState = {
-        p1Pos: { ...p1Pos },
-        p2Pos: { ...p2Pos },
-        hWalls: new Map(hWalls),
-        vWalls: new Map(vWalls),
-        p1Walls,
-        p2Walls,
-        turn
-    };
+// Expand an MCTS node using neural network policy with prior-first wall candidate filtering
+function expandNodeWithPolicy(node, policy, isOpeningCheck = false) {
+    if (node.children.size > 0) return;
 
-    // Subtree reuse: search existing tree for a node matching the target rootState
-    let root = findMatchingNodeInTree(activeMCTSRoot, rootState);
-    if (!root) {
-        root = new MCTSNode(rootState);
-    } else {
-        root.parent = null;
+    const actionPairs = [];
+    const isP1 = node.state.turn === 1;
+    const myPos = isP1 ? node.state.p1Pos : node.state.p2Pos;
+    const oppPos = isP1 ? node.state.p2Pos : node.state.p1Pos;
+
+    // 1. Pawn moves (fast orthogonal + jump checks, no reachability BFS needed)
+    const pawnMoves = getValidPawnMoves(myPos.x, myPos.y, oppPos.x, oppPos.y, node.state.hWalls, node.state.vWalls);
+    for (const m of pawnMoves) {
+        const action = { type: 'move', to: m };
+        const idx = mapActionToIndexPerspective(action, node.state.turn, node.state.p1Pos, node.state.p2Pos);
+        let p = policy[idx] || 0.0;
+        if (idx >= 4 && idx <= 11) p = Math.max(p, 0.10);
+        actionPairs.push({ action, idx, priorProb: p });
     }
 
-    const cPuct = 1.4;
-    const cFpu = 0.20;
-    const PRUNING_THRESHOLD = 0.005;
-    const isGumbel = numSimulations <= 128;
-    const gumbelCandidates = [];
+    // 2. Wall moves (validated lazily in order of descending policy prior)
+    const wallsLeft = isP1 ? node.state.p1Walls : node.state.p2Walls;
+    if (wallsLeft > 0) {
+        const candidateWalls = [];
+        for (let idx = 12; idx < 140; idx++) {
+            const p = policy[idx] || 0.0;
+            if (p >= 0.005) {
+                candidateWalls.push({ idx, p });
+            }
+        }
+        candidateWalls.sort((a, b) => b.p - a.p);
+        const topWalls = candidateWalls.slice(0, 32);
 
-    // Ensure root is expanded
-    if (root.isLeaf()) {
-        const rootGameOver = checkGameOver(root.state);
-        if (rootGameOver !== 0) return null;
-        const validActions = getValidMCTSActions(root.state);
-        if (validActions.length === 0) return null;
-        if (validActions.length === 1) return validActions[0];
+        const p1Path = findShortestPath(node.state.p1Pos.x, node.state.p1Pos.y, 8, node.state.hWalls, node.state.vWalls, node.state.p2Pos) || [];
+        const p2Path = findShortestPath(node.state.p2Pos.x, node.state.p2Pos.y, 0, node.state.hWalls, node.state.vWalls, node.state.p1Pos) || [];
 
-        // Immediate 1-step goal win short-circuit
-        for (const act of validActions) {
-            if (act.type === 'move') {
-                if ((root.state.turn === 1 && act.to.y === 8) || (root.state.turn === 2 && act.to.y === 0)) {
-                    return act;
+        for (const { idx, p } of topWalls) {
+            const action = mapIndexToActionPerspective(idx, node.state.turn, node.state.p1Pos, node.state.p2Pos);
+            if (action && action.type === 'wall') {
+                if (validateWallPlacementFast(action.x, action.y, action.wallType, node.state.p1Pos, node.state.p2Pos, node.state.hWalls, node.state.vWalls, p1Path, p2Path)) {
+                    actionPairs.push({ action, idx, priorProb: p });
                 }
             }
         }
+    }
 
-        const { hash: rootHash, isMirrored: rootMirr } = getCanonicalStateHash(
-            root.state.p1Pos, root.state.p2Pos,
-            root.state.hWalls, root.state.vWalls,
-            root.state.p1Walls, root.state.p2Walls,
-            root.state.turn === 1
-        );
-        let rootPolicy, rootValue;
-        const ttEntry = transpositionTable.get(rootHash);
-        if (ttEntry && ttEntry.policy) {
-            rootValue = ttEntry.value;
-            rootPolicy = rootMirr ? mirrorPolicy(ttEntry.policy) : ttEntry.policy;
-        } else {
-            if (!modelSession) {
-                throw new Error("AlphaZero ONNX model is not loaded. Cannot run AlphaZero MCTS without the model session.");
-            }
-            const tensorData = tensorizeBoardState(
-                root.state.p1Pos, root.state.p2Pos,
-                root.state.hWalls, root.state.vWalls,
-                root.state.p1Walls, root.state.p2Walls,
-                root.state.turn
-            );
-            const inputTensor = new ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
-            const results = await modelSession.run({ input: inputTensor });
-            const expPolicy = results.policy.data.map(Math.exp);
-            const sumExp = expPolicy.reduce((a, b) => a + b, 0);
-            rootPolicy = expPolicy.map(v => v / sumExp);
-            rootValue = results.value.data[0];
-
-            const canonPolicy = rootMirr ? mirrorPolicy(rootPolicy) : rootPolicy;
-            storeTT(rootHash, canonPolicy, rootValue, 0);
+    // Opening pawn prior floor check (plies 0-3 and 0 walls placed)
+    if (isOpeningCheck) {
+        let wallCount = 0;
+        for (let i = 0; i < 64; i++) {
+            if (node.state.hWalls[i]) wallCount++;
+            if (node.state.vWalls[i]) wallCount++;
         }
-
-        const validPairs = validActions.map(action => {
-            const idx = mapActionToIndexPerspective(action, root.state.turn, root.state.p1Pos, root.state.p2Pos);
-            let p = rootPolicy[idx] || 0.0;
-            if (idx >= 4 && idx <= 11) p = Math.max(p, 0.10);
-            return { action, idx, priorProb: p };
-        });
-
-        // Plies 0-3 opening pawn prior floor (moveCount < 4 and 0 walls on board)
-        const hCount = root.state.hWalls instanceof Map ? root.state.hWalls.size : (root.state.hWalls ? root.state.hWalls.length : 0);
-        const vCount = root.state.vWalls instanceof Map ? root.state.vWalls.size : (root.state.vWalls ? root.state.vWalls.length : 0);
-        const wallCount = hCount + vCount;
-        const estimatedPlies = (20 - root.state.p1Walls - root.state.p2Walls) + root.state.p1Pos.y + (8 - root.state.p2Pos.y);
-        const moveCount = (root.state.moveCount !== undefined) ? root.state.moveCount : (wallCount > 0 ? 10 : estimatedPlies);
+        const estimatedPlies = (20 - node.state.p1Walls - node.state.p2Walls) + node.state.p1Pos.y + (8 - node.state.p2Pos.y);
+        const moveCount = (node.state.moveCount !== undefined) ? node.state.moveCount : (wallCount > 0 ? 10 : estimatedPlies);
         if (moveCount < 4 && wallCount === 0) {
             let pawnMass = 0;
             const legalPawns = [];
             const legalWalls = [];
-            for (const item of validPairs) {
+            for (const item of actionPairs) {
                 if (item.idx < 12) {
                     pawnMass += item.priorProb;
                     legalPawns.push(item);
@@ -743,14 +739,126 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
                 }
             }
         }
-        let filteredPairs = validPairs.filter(p => p.action.type === 'move' || p.priorProb >= PRUNING_THRESHOLD);
-        if (filteredPairs.length < 4) filteredPairs = validPairs;
-        let pSum = filteredPairs.reduce((s, p) => s + p.priorProb, 0);
-        for (const { action, idx, priorProb } of filteredPairs) {
-            const nextState = transitionState(root.state, action);
-            const normP = pSum > 1e-8 ? priorProb / pSum : 1.0 / filteredPairs.length;
-            root.children.set(idx, new MCTSNode(nextState, root, idx, normP));
+    }
+
+    if (actionPairs.length === 0) return;
+
+    let policySum = 0.0;
+    for (const pair of actionPairs) policySum += pair.priorProb;
+
+    for (const { action, idx, priorProb } of actionPairs) {
+        const nextState = transitionState(node.state, action);
+        const normP = policySum > 1e-8 ? priorProb / policySum : 1.0 / actionPairs.length;
+        node.children.set(idx, new MCTSNode(nextState, node, idx, normP));
+    }
+}
+
+// Revert virtual loss and backpropagate actual leaf value
+function revertVirtualLossAndBackprop(path, leafValue) {
+    let tempValue = leafValue;
+    for (let i = path.length - 1; i >= 0; i--) {
+        const curr = path[i];
+        curr.W += (1.0 + tempValue);
+        tempValue = -tempValue;
+    }
+}
+
+// MONTE CARLO TREE SEARCH GUIDED BY NEURAL NETWORK OR HEURISTIC FALLBACK
+export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn, numSimulations = 128, modelSession = null, historyHashes = null) {
+    const rootState = {
+        p1Pos: { ...p1Pos },
+        p2Pos: { ...p2Pos },
+        hWalls: toUint8Array(hWalls),
+        vWalls: toUint8Array(vWalls),
+        p1Walls,
+        p2Walls,
+        turn
+    };
+
+    // Subtree reuse: search existing tree for a node matching the target rootState
+    let root = findMatchingNodeInTree(activeMCTSRoot, rootState);
+    if (!root) {
+        root = new MCTSNode(rootState);
+    } else {
+        root.parent = null;
+    }
+
+    const cPuct = 1.4;
+    const cFpu = 0.20;
+    const PRUNING_THRESHOLD = 0.005;
+    const isGumbel = numSimulations <= 128;
+    const gumbelCandidates = [];
+
+    // Ensure root is expanded
+    if (root.isLeaf()) {
+        const rootGameOver = checkGameOver(root.state);
+        if (rootGameOver !== 0) return null;
+
+        // Immediate 1-step goal win short-circuit
+        const isP1 = root.state.turn === 1;
+        const myPos = isP1 ? root.state.p1Pos : root.state.p2Pos;
+        const oppPos = isP1 ? root.state.p2Pos : root.state.p1Pos;
+        const pawnMoves = getValidPawnMoves(myPos.x, myPos.y, oppPos.x, oppPos.y, root.state.hWalls, root.state.vWalls);
+        for (const m of pawnMoves) {
+            if ((isP1 && m.y === 8) || (!isP1 && m.y === 0)) {
+                return { type: 'move', to: m };
+            }
         }
+
+        const { hash: rootHash, isMirrored: rootMirr } = getCanonicalStateHash(
+            root.state.p1Pos, root.state.p2Pos,
+            root.state.hWalls, root.state.vWalls,
+            root.state.p1Walls, root.state.p2Walls,
+            root.state.turn === 1
+        );
+        let rootPolicy, rootValue;
+        const ttEntry = transpositionTable.get(rootHash);
+        if (ttEntry && ttEntry.policy) {
+            rootValue = ttEntry.value;
+            rootPolicy = rootMirr ? mirrorPolicy(ttEntry.policy) : ttEntry.policy;
+        } else {
+            if (!modelSession) {
+                throw new Error("AlphaZero ONNX model is not loaded. Cannot run AlphaZero MCTS without the model session.");
+            }
+            const tensorData = tensorizeBoardState(
+                root.state.p1Pos, root.state.p2Pos,
+                root.state.hWalls, root.state.vWalls,
+                root.state.p1Walls, root.state.p2Walls,
+                root.state.turn
+            );
+
+            let results = null;
+            try {
+                const inputTensor = new ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
+                results = await modelSession.run({ input: inputTensor });
+            } catch (err) {
+                console.warn('MCTS root inference error:', err);
+            }
+
+            if (results && results.policy && results.value) {
+                const rawPolicy = results.policy.data;
+                let maxL = -Infinity;
+                for (let k = 0; k < 140; k++) if (rawPolicy[k] > maxL) maxL = rawPolicy[k];
+                const expPolicy = new Float32Array(140);
+                let sumExp = 0.0;
+                for (let k = 0; k < 140; k++) {
+                    const e = Math.exp(rawPolicy[k] - maxL);
+                    expPolicy[k] = e;
+                    sumExp += e;
+                }
+                rootPolicy = new Float32Array(140);
+                for (let k = 0; k < 140; k++) rootPolicy[k] = expPolicy[k] / sumExp;
+                rootValue = results.value.data[0];
+            } else {
+                rootPolicy = new Float32Array(140).fill(1.0 / 140);
+                rootValue = 0.0;
+            }
+
+            const canonPolicy = rootMirr ? mirrorPolicy(rootPolicy) : rootPolicy;
+            storeTT(rootHash, canonPolicy, rootValue, 0);
+        }
+
+        expandNodeWithPolicy(root, rootPolicy, true);
         backpropagate(root, rootValue);
     }
 
@@ -786,13 +894,22 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
         }
     }
 
-    for (let sim = 0; sim < numSimulations; sim++) {
+    const BATCH_SIZE = 8;
+    const q1 = Math.floor(numSimulations / 4);
+    const q2 = Math.floor(numSimulations / 2);
+    const q3 = Math.floor((3 * numSimulations) / 4);
+    let halvedQ1 = false, halvedQ2 = false, halvedQ3 = false;
+
+    let sim = 0;
+    while (sim < numSimulations) {
         // Sequential Halving Checkpoints at 25%, 50%, 75% of simulation budget
         if (isGumbel && gumbelCandidates.length > 0 && sim > 0) {
-            const q1 = Math.floor(numSimulations / 4);
-            const q2 = Math.floor(numSimulations / 2);
-            const q3 = Math.floor((3 * numSimulations) / 4);
-            if (sim === q1 || sim === q2 || sim === q3) {
+            let shouldHalve = false;
+            if (sim >= q1 && !halvedQ1) { shouldHalve = true; halvedQ1 = true; }
+            else if (sim >= q2 && !halvedQ2) { shouldHalve = true; halvedQ2 = true; }
+            else if (sim >= q3 && !halvedQ3) { shouldHalve = true; halvedQ3 = true; }
+
+            if (shouldHalve) {
                 const active = gumbelCandidates.filter(c => c.active);
                 if (active.length > 1) {
                     let maxChildN = 0;
@@ -834,177 +951,189 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
             }
         }
 
-        let node = root;
+        // Clamp batch size to next halving checkpoint or end of simulations
+        let nextTarget = numSimulations;
+        if (isGumbel) {
+            if (sim < q1) nextTarget = q1;
+            else if (sim < q2) nextTarget = q2;
+            else if (sim < q3) nextTarget = q3;
+        }
+        const currentBatchSize = Math.max(1, Math.min(BATCH_SIZE, nextTarget - sim));
+        const batchLeaves = [];
 
-        // 1. SELECTION
-        while (!node.isLeaf()) {
-            let bestChild = null;
-            let bestScore = -Infinity;
+        for (let b = 0; b < currentBatchSize; b++) {
+            let node = root;
+            const path = [root];
+            root.N += 1;
+            root.W -= 1.0;
 
-            if (node === root) {
-                if (isGumbel && gumbelCandidates.length > 0) {
-                    let minVisits = Infinity;
-                    let bestPerturbed = -Infinity;
-                    for (const cand of gumbelCandidates) {
-                        if (!cand.active) continue;
-                        const child = root.children.get(cand.idx);
-                        if (child) {
-                            const perturbed = Math.log(Math.max(1e-8, cand.prior)) + cand.gumbel;
-                            if (child.N < minVisits || (child.N === minVisits && perturbed > bestPerturbed)) {
-                                minVisits = child.N;
-                                bestPerturbed = perturbed;
-                                bestChild = child;
+            // 1. SELECTION
+            while (!node.isLeaf()) {
+                let bestChild = null;
+                let bestScore = -Infinity;
+
+                if (node === root) {
+                    if (isGumbel && gumbelCandidates.length > 0) {
+                        let minVisits = Infinity;
+                        let bestPerturbed = -Infinity;
+                        for (const cand of gumbelCandidates) {
+                            if (!cand.active) continue;
+                            const child = root.children.get(cand.idx);
+                            if (child) {
+                                const perturbed = Math.log(Math.max(1e-8, cand.prior)) + cand.gumbel;
+                                if (child.N < minVisits || (child.N === minVisits && perturbed > bestPerturbed)) {
+                                    minVisits = child.N;
+                                    bestPerturbed = perturbed;
+                                    bestChild = child;
+                                }
+                            }
+                        }
+                    } else {
+                        // KataGo Forced Playouts at root node
+                        const kForced = 2.0;
+                        const sqrtRootN = Math.sqrt(Math.max(1, root.N));
+                        let maxDeficit = 0;
+                        for (const child of root.children.values()) {
+                            let nForced = Math.floor(kForced * child.prior * sqrtRootN);
+                            if (child.actionIdx >= 4 && child.actionIdx <= 11) {
+                                nForced = Math.max(nForced, 2);
+                            }
+                            if (child.N < nForced) {
+                                const deficit = nForced - child.N;
+                                if (deficit > maxDeficit) {
+                                    maxDeficit = deficit;
+                                    bestChild = child;
+                                }
                             }
                         }
                     }
-                } else {
-                    // KataGo Forced Playouts at root node
-                    const kForced = 2.0;
-                    const sqrtRootN = Math.sqrt(Math.max(1, root.N));
-                    let maxDeficit = 0;
-                    for (const child of root.children.values()) {
-                        let nForced = Math.floor(kForced * child.prior * sqrtRootN);
-                        if (child.actionIdx >= 4 && child.actionIdx <= 11) {
-                            nForced = Math.max(nForced, 2);
+                }
+
+                if (!bestChild) {
+                    if (isGumbel) {
+                        const totalN = node.N;
+                        for (const child of node.children.values()) {
+                            const score = child.prior - (child.N / (1 + totalN));
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestChild = child;
+                            }
                         }
-                        if (child.N < nForced) {
-                            const deficit = nForced - child.N;
-                            if (deficit > maxDeficit) {
-                                maxDeficit = deficit;
+                    } else {
+                        for (const child of node.children.values()) {
+                            const qScore = child.N > 0 ? -child.Q : (node.Q - cFpu);
+                            const uScore = qScore + cPuct * child.prior * (Math.sqrt(node.N) / (1 + child.N));
+                            if (uScore > bestScore) {
+                                bestScore = uScore;
                                 bestChild = child;
                             }
                         }
                     }
                 }
+
+                if (!bestChild) break;
+                node = bestChild;
+                path.push(node);
+                node.N += 1;
+                node.W -= 1.0;
             }
 
-            if (!bestChild) {
-                if (isGumbel) {
-                    const totalN = node.N;
-                    for (const child of node.children.values()) {
-                        const score = child.prior - (child.N / (1 + totalN));
-                        if (score > bestScore) {
-                            bestScore = score;
-                            bestChild = child;
-                        }
-                    }
-                } else {
-                    for (const child of node.children.values()) {
-                        // KataGo FPU Reduction: unvisited child receives parent Q minus cFpu
-                        const qScore = child.N > 0 ? -child.Q : (node.Q - cFpu);
-                        const uScore = qScore + cPuct * child.prior * (Math.sqrt(node.N) / (1 + child.N));
-                        if (uScore > bestScore) {
-                            bestScore = uScore;
-                            bestChild = child;
-                        }
-                    }
-                }
-            }
-            if (!bestChild) break;
-            node = bestChild;
-        }
-
-        // Check terminal state
-        const outcome = checkGameOver(node.state);
-        if (outcome !== 0) {
-            const winnerVal = (outcome === 1 && node.state.turn === 1) || (outcome === -1 && node.state.turn === 2) ? 1.0 : -1.0;
-            backpropagate(node, winnerVal);
-            continue;
-        }
-
-        // Zero-Wall Race Solver check: instantly evaluate without calling NN
-        const raceWinner = getGuaranteedWinner(
-            node.state.p1Pos, node.state.p2Pos,
-            node.state.p1Walls, node.state.p2Walls,
-            node.state.turn === 1, node.state.hWalls, node.state.vWalls
-        );
-        if (raceWinner !== 0) {
-            const raceVal = (raceWinner === 1 && node.state.turn === 1) || (raceWinner === -1 && node.state.turn === 2) ? 1.0 : -1.0;
-            backpropagate(node, raceVal);
-            continue;
-        }
-
-        // 2. EXPANSION & EVALUATION
-        let policy, value;
-        const validActions = getValidMCTSActions(node.state);
-
-        if (validActions.length === 0) {
-            backpropagate(node, 0);
-            continue;
-        }
-
-        const { hash: stateHash, isMirrored } = getCanonicalStateHash(
-            node.state.p1Pos, node.state.p2Pos,
-            node.state.hWalls, node.state.vWalls,
-            node.state.p1Walls, node.state.p2Walls,
-            node.state.turn === 1
-        );
-
-        const ttEntry = transpositionTable.get(stateHash);
-        if (ttEntry && ttEntry.policy) {
-            value = ttEntry.value;
-            policy = isMirrored ? mirrorPolicy(ttEntry.policy) : ttEntry.policy;
-        } else {
-            if (!modelSession) {
-                throw new Error("AlphaZero ONNX model is not loaded. Cannot run AlphaZero MCTS without the model session.");
+            // Check terminal state
+            const outcome = checkGameOver(node.state);
+            if (outcome !== 0) {
+                const winnerVal = (outcome === 1 && node.state.turn === 1) || (outcome === -1 && node.state.turn === 2) ? 1.0 : -1.0;
+                revertVirtualLossAndBackprop(path, winnerVal);
+                continue;
             }
 
-            // --- ONNX MODEL INFERENCE ---
+            // Zero-Wall Race Solver check
+            const raceWinner = getGuaranteedWinner(
+                node.state.p1Pos, node.state.p2Pos,
+                node.state.p1Walls, node.state.p2Walls,
+                node.state.turn === 1, node.state.hWalls, node.state.vWalls
+            );
+            if (raceWinner !== 0) {
+                const raceVal = (raceWinner === 1 && node.state.turn === 1) || (raceWinner === -1 && node.state.turn === 2) ? 1.0 : -1.0;
+                revertVirtualLossAndBackprop(path, raceVal);
+                continue;
+            }
+
+            const { hash: stateHash, isMirrored } = getCanonicalStateHash(
+                node.state.p1Pos, node.state.p2Pos,
+                node.state.hWalls, node.state.vWalls,
+                node.state.p1Walls, node.state.p2Walls,
+                node.state.turn === 1
+            );
+
+            const ttEntry = transpositionTable.get(stateHash);
+            if (ttEntry && ttEntry.policy) {
+                const policy = isMirrored ? mirrorPolicy(ttEntry.policy) : ttEntry.policy;
+                expandNodeWithPolicy(node, policy, false);
+                revertVirtualLossAndBackprop(path, ttEntry.value);
+                continue;
+            }
+
+            batchLeaves.push({ node, path, stateHash, isMirrored });
+        }
+
+        // Run batched NN inference across all pending leaves in this batch
+        if (batchLeaves.length > 0) {
+            const B = batchLeaves.length;
+            const batchedData = new Float32Array(B * 891);
+            for (let i = 0; i < B; i++) {
+                const s = batchLeaves[i].node.state;
+                const d = tensorizeBoardState(s.p1Pos, s.p2Pos, s.hWalls, s.vWalls, s.p1Walls, s.p2Walls, s.turn);
+                batchedData.set(d, i * 891);
+            }
+
+            let results = null;
             try {
-                const tensorData = tensorizeBoardState(
-                    node.state.p1Pos, node.state.p2Pos,
-                    node.state.hWalls, node.state.vWalls,
-                    node.state.p1Walls, node.state.p2Walls,
-                    node.state.turn
-                );
-                const inputTensor = new ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
-                const results = await modelSession.run({ input: inputTensor });
+                const inputTensor = new ort.Tensor('float32', batchedData, [B, 11, 9, 9]);
+                results = await modelSession.run({ input: inputTensor });
+            } catch (inferErr) {
+                console.warn('MCTS batched inference error:', inferErr);
+            }
 
+            if (!results || !results.policy || !results.value) {
+                for (let i = 0; i < B; i++) {
+                    const { node, path } = batchLeaves[i];
+                    const dummyPolicy = new Float32Array(140).fill(1.0 / 140);
+                    expandNodeWithPolicy(node, dummyPolicy, false);
+                    revertVirtualLossAndBackprop(path, 0.0);
+                }
+            } else {
                 const policyData = results.policy.data;
-                const rawValue = results.value.data[0];
+                const valueData = results.value.data;
 
-                // Softmax on policy output
-                const expPolicy = policyData.map(Math.exp);
-                const sumExp = expPolicy.reduce((a, b) => a + b, 0);
-                policy = expPolicy.map(v => v / sumExp);
-                value = rawValue;
+                for (let i = 0; i < B; i++) {
+                    const { node, path, stateHash, isMirrored } = batchLeaves[i];
+                    const rawPolicy = policyData.subarray ? policyData.subarray(i * 140, (i + 1) * 140) : policyData.slice(i * 140, (i + 1) * 140);
+                    const rawValue = valueData[i];
 
-                // Cache in Transposition Table (canonical orientation)
-                const canonPolicy = isMirrored ? mirrorPolicy(policy) : policy;
-                storeTT(stateHash, canonPolicy, value, 0);
-            } catch (e) {
-                console.error("ONNX evaluation error during MCTS:", e);
-                throw e;
+                    let maxLogit = -Infinity;
+                    for (let k = 0; k < 140; k++) if (rawPolicy[k] > maxLogit) maxLogit = rawPolicy[k];
+                    const expP = new Float32Array(140);
+                    let sumExp = 0.0;
+                    for (let k = 0; k < 140; k++) {
+                        const e = Math.exp(rawPolicy[k] - maxLogit);
+                        expP[k] = e;
+                        sumExp += e;
+                    }
+                    const policy = new Float32Array(140);
+                    for (let k = 0; k < 140; k++) policy[k] = expP[k] / sumExp;
+
+                    const canonPolicy = isMirrored ? mirrorPolicy(policy) : policy;
+                    storeTT(stateHash, canonPolicy, rawValue, 0);
+
+                    expandNodeWithPolicy(node, policy, false);
+                    revertVirtualLossAndBackprop(path, rawValue);
+                }
             }
         }
 
-        // Extract valid action indices & apply Policy Prior Pruning
-        const validActionPairs = validActions.map(action => {
-            const idx = mapActionToIndexPerspective(action, node.state.turn, node.state.p1Pos, node.state.p2Pos);
-            const p = policy[idx] || 0.0;
-            return { action, idx, priorProb: p };
-        });
+        sim += currentBatchSize;
 
-        let filteredPairs = validActionPairs.filter(pair => pair.action.type === 'move' || pair.priorProb >= PRUNING_THRESHOLD);
-        if (filteredPairs.length < 4) {
-            filteredPairs = validActionPairs;
-        }
-
-        let policySum = 0.0;
-        for (const pair of filteredPairs) {
-            policySum += pair.priorProb;
-        }
-
-        for (const { action, idx, priorProb } of filteredPairs) {
-            const nextState = transitionState(node.state, action);
-            const normalizedPrior = policySum > 1e-8 ? priorProb / policySum : 1.0 / filteredPairs.length;
-            node.children.set(idx, new MCTSNode(nextState, node, idx, normalizedPrior));
-        }
-
-        // 3. BACKPROPAGATION
-        backpropagate(node, value);
-
-        // 4. DYNAMIC EARLY STOPPING
+        // Dynamic early stopping for non-Gumbel
         if (!isGumbel && sim >= 15 && root.children.size > 1) {
             let maxVisits = -1;
             let secondMaxVisits = -1;
@@ -1016,7 +1145,7 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
                     secondMaxVisits = child.N;
                 }
             }
-            const remainingSims = numSimulations - (sim + 1);
+            const remainingSims = numSimulations - sim;
             if (maxVisits - secondMaxVisits > remainingSims) {
                 break;
             }

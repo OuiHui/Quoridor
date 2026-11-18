@@ -76,12 +76,15 @@ let inferenceCount = 0;
 const mockModelSession = {
     run: async ({ input }) => {
         inferenceCount++;
-        const policy = new Float32Array(140);
-        policy[0] = 3.0;
-        policy[1] = 1.0;
+        const B = (input.dims && input.dims[0]) ? input.dims[0] : 1;
+        const policy = new Float32Array(B * 140);
+        for (let b = 0; b < B; b++) {
+            policy[b * 140 + 0] = 3.0;
+            policy[b * 140 + 1] = 1.0;
+        }
         return {
             policy: { data: policy },
-            value: { data: new Float32Array([0.25]) }
+            value: { data: new Float32Array(B).fill(0.25) }
         };
     }
 };

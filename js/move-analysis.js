@@ -263,23 +263,26 @@ export function analyzeMoveQuality(chosenMove, player, historyItem = null, state
         const targetHistoryItem = historyItem;
         const currentSnapshot = stateBefore || captureStateSnapshot();
         
-        analyzeMoveInWorker(chosenMove, player, currentSnapshot, depth).then((res) => {
-            if (targetHistoryItem && !state.history.includes(targetHistoryItem)) return;
-            if (res) {
-                updateMoveQualityUI(
-                    res.chosenScore,
-                    res.bestScore,
-                    player,
-                    badgeEl,
-                    badgeTextEl,
-                    historyItem,
-                    res.bestCandidate
-                );
-            }
-        }).catch((err) => {
-            console.error('Error during worker move quality analysis:', err);
-            if (targetHistoryItem && !state.history.includes(targetHistoryItem)) return;
-            performAnalysis();
-        });
+        // Defer worker analysis slightly so impending AI move calculations are prioritized in worker queue
+        setTimeout(() => {
+            analyzeMoveInWorker(chosenMove, player, currentSnapshot, depth).then((res) => {
+                if (targetHistoryItem && !state.history.includes(targetHistoryItem)) return;
+                if (res) {
+                    updateMoveQualityUI(
+                        res.chosenScore,
+                        res.bestScore,
+                        player,
+                        badgeEl,
+                        badgeTextEl,
+                        historyItem,
+                        res.bestCandidate
+                    );
+                }
+            }).catch((err) => {
+                console.error('Error during worker move quality analysis:', err);
+                if (targetHistoryItem && !state.history.includes(targetHistoryItem)) return;
+                performAnalysis();
+            });
+        }, 50);
     }
 }

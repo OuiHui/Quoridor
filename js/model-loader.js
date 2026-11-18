@@ -22,7 +22,12 @@ export async function loadONNXModel() {
         if (!modelRes.ok) throw new Error(`HTTP error status: ${modelRes.status}`);
         const modelBuffer = await modelRes.arrayBuffer();
 
+        const isCrossOriginIsolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
         if (ort.env && ort.env.wasm) {
+            ort.env.wasm.numThreads = isCrossOriginIsolated && navigator.hardwareConcurrency 
+                ? Math.min(4, navigator.hardwareConcurrency) 
+                : 1;
+            ort.env.wasm.simd = true;
             ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
         }
 
@@ -31,7 +36,10 @@ export async function loadONNXModel() {
 
         // Initialize main thread session for eval bar / diagnostics
         try {
-            window.quoridorONNXSession = await ort.InferenceSession.create(new Uint8Array(modelBuffer.slice(0)));
+            window.quoridorONNXSession = await ort.InferenceSession.create(new Uint8Array(modelBuffer.slice(0)), {
+                executionProviders: ['wasm'],
+                graphOptimizationLevel: 'all'
+            });
             console.log("AlphaZero ONNX model loaded successfully on main thread!");
         } catch (mainErr) {
             console.warn("Main thread session init non-critical error:", mainErr);

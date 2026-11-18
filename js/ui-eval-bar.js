@@ -4,27 +4,47 @@ import { findShortestPathLengthFast, getGuaranteedWinner, mirrorBoardState } fro
 import { tensorizeBoardState } from './ai-mcts.js';
 import { evaluatePositionInWorker } from './worker-manager.js';
 
+let mainThreadEvalQueue = Promise.resolve();
+
+async function evaluateWithMainThreadONNX(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn) {
+    if (typeof window === 'undefined' || !window.quoridorONNXSession || !window.ort) {
+        return null;
+    }
+
+    const runPromise = mainThreadEvalQueue.then(async () => {
+        const tensorData = tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn);
+        const inputTensor = new window.ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
+        const results = await window.quoridorONNXSession.run({ input: inputTensor });
+        let rawValue = results.value.data[0];
+
+        // Symmetrized evaluation: average with horizontal reflection
+        const { mirrP1, mirrP2, mirrHWalls, mirrVWalls } = mirrorBoardState(p1Pos, p2Pos, hWalls, vWalls);
+        const mirrTensorData = tensorizeBoardState(mirrP1, mirrP2, mirrHWalls, mirrVWalls, p1Walls, p2Walls, turn);
+        const mirrInputTensor = new window.ort.Tensor('float32', mirrTensorData, [1, 11, 9, 9]);
+        const mirrResults = await window.quoridorONNXSession.run({ input: mirrInputTensor });
+        rawValue = (rawValue + mirrResults.value.data[0]) / 2;
+
+        const p1Value = turn === 1 ? rawValue : -rawValue;
+        return p1Value * 100;
+    });
+
+    mainThreadEvalQueue = runPromise.catch(err => {
+        console.warn('Main thread ONNX eval error:', err);
+        return null;
+    });
+
+    return runPromise;
+}
+
 export async function evaluatePositionWithNN(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn) {
     const gw = getGuaranteedWinner(p1Pos, p2Pos, p1Walls, p2Walls, turn === 1, hWalls, vWalls);
     if (gw === 1) return Infinity;
     if (gw === -1) return -Infinity;
 
-    if (window.quoridorONNXSession && window.ort) {
+    if (typeof window !== 'undefined' && window.quoridorONNXSession && window.ort) {
         try {
-            const tensorData = tensorizeBoardState(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn);
-            const inputTensor = new window.ort.Tensor('float32', tensorData, [1, 11, 9, 9]);
-            const results = await window.quoridorONNXSession.run({ input: inputTensor });
-            let rawValue = results.value.data[0];
-
-            // Symmetrized evaluation: average with horizontal reflection
-            const { mirrP1, mirrP2, mirrHWalls, mirrVWalls } = mirrorBoardState(p1Pos, p2Pos, hWalls, vWalls);
-            const mirrTensorData = tensorizeBoardState(mirrP1, mirrP2, mirrHWalls, mirrVWalls, p1Walls, p2Walls, turn);
-            const mirrInputTensor = new window.ort.Tensor('float32', mirrTensorData, [1, 11, 9, 9]);
-            const mirrResults = await window.quoridorONNXSession.run({ input: mirrInputTensor });
-            rawValue = (rawValue + mirrResults.value.data[0]) / 2;
-
-            const p1Value = turn === 1 ? rawValue : -rawValue;
-            return p1Value * 100;
+            const score = await evaluateWithMainThreadONNX(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn);
+            if (score !== null && score !== undefined) return score;
         } catch (e) {
             console.warn('Main thread ONNX eval error:', e);
         }

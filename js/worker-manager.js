@@ -47,7 +47,7 @@ export function resetWorkerMCTS() {
     return sendWorkerRequest('reset_mcts');
 }
 
-export function analyzeMoveInWorker(chosenMove, player, stateBefore, depth = 4) {
+export function analyzeMoveInWorker(chosenMove, player, stateBefore, depth = 3) {
     const serializedStateBefore = {
         p1Pos: stateBefore.p1Pos,
         p2Pos: stateBefore.p2Pos,

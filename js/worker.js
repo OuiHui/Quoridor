@@ -10,11 +10,18 @@ self.ort = ort;
 // Initialize ONNX runtime in Web Worker
 async function initONNX(modelArrayBuffer) {
     try {
+        const isCrossOriginIsolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
         if (ort.env && ort.env.wasm) {
-            ort.env.wasm.numThreads = self.navigator ? (self.navigator.hardwareConcurrency || 4) : 4;
+            ort.env.wasm.numThreads = isCrossOriginIsolated && self.navigator && self.navigator.hardwareConcurrency 
+                ? Math.min(4, self.navigator.hardwareConcurrency) 
+                : 1;
+            ort.env.wasm.simd = true;
             ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
         }
-        modelSession = await ort.InferenceSession.create(new Uint8Array(modelArrayBuffer));
+        modelSession = await ort.InferenceSession.create(new Uint8Array(modelArrayBuffer), {
+            executionProviders: ['webgpu', 'wasm'],
+            graphOptimizationLevel: 'all'
+        });
         console.log('AlphaZero ONNX model loaded successfully in Web Worker!');
         return true;
     } catch (err) {
@@ -42,8 +49,28 @@ function deserializeMap(entries) {
     return new Map(entries || []);
 }
 
-self.onmessage = async function (e) {
-    const { type, requestId, data } = e.data;
+let workerMessageQueue = Promise.resolve();
+
+self.onmessage = function (e) {
+    workerMessageQueue = workerMessageQueue.then(async () => {
+        try {
+            await handleWorkerMessage(e.data);
+        } catch (fatalErr) {
+            console.error('Worker message execution error:', fatalErr);
+            const { type, requestId } = e.data || {};
+            if (requestId && type) {
+                self.postMessage({
+                    type: `${type}_result`,
+                    requestId,
+                    data: { error: fatalErr.message || String(fatalErr) }
+                });
+            }
+        }
+    });
+};
+
+async function handleWorkerMessage(dataPayload) {
+    const { type, requestId, data } = dataPayload;
 
     if (type === 'init_onnx') {
         const success = await initONNX(data.modelBuffer);
@@ -241,18 +268,61 @@ self.onmessage = async function (e) {
             return;
         }
 
-        const bestMove = await runMCTS(
-            p1Pos,
-            p2Pos,
-            hWallsMap,
-            vWallsMap,
-            p1Walls,
-            p2Walls,
-            turn,
-            300,
-            modelSession,
-            historyHashes
-        );
+        const sims = (data.aiSettings && data.aiSettings.simulations) || 128;
+        let bestMove = null;
+
+        try {
+            bestMove = await runMCTS(
+                p1Pos,
+                p2Pos,
+                hWallsMap,
+                vWallsMap,
+                p1Walls,
+                p2Walls,
+                turn,
+                sims,
+                modelSession,
+                historyHashes
+            );
+        } catch (err) {
+            console.error('Worker runMCTS error:', err);
+        }
+
+        // Resilient fallback: ensure AI never stalls the game
+        if (!bestMove) {
+            console.warn('MCTS returned null or errored, executing Minimax fallback');
+            try {
+                const fbResult = minimax(
+                    2,
+                    -Infinity,
+                    Infinity,
+                    turn === 1,
+                    p1Pos,
+                    p2Pos,
+                    hWallsMap,
+                    vWallsMap,
+                    p1Walls,
+                    p2Walls
+                );
+                bestMove = fbResult.move;
+            } catch (fbErr) {
+                console.error('Minimax fallback error:', fbErr);
+            }
+
+            if (!bestMove) {
+                const pawnMoves = getValidPawnMoves(
+                    turn === 1 ? p1Pos.x : p2Pos.x,
+                    turn === 1 ? p1Pos.y : p2Pos.y,
+                    turn === 1 ? p2Pos.x : p1Pos.x,
+                    turn === 1 ? p2Pos.y : p1Pos.y,
+                    hWallsMap,
+                    vWallsMap
+                );
+                if (pawnMoves.length > 0) {
+                    bestMove = { type: 'move', to: pawnMoves[0] };
+                }
+            }
+        }
 
         self.postMessage({
             type: 'calculate_ai_move_result',
@@ -260,9 +330,9 @@ self.onmessage = async function (e) {
             data: {
                 bestMove,
                 engine: 'AlphaZero MCTS',
-                simulations: 300
+                simulations: sims
             }
         });
         return;
     }
-};
+}
