@@ -6,6 +6,8 @@ import { calculateAIMoveInWorker } from './worker-manager.js';
 import { formatMoveNotation } from './notation.js';
 import { logAction } from './ui-diagnostics.js';
 
+export const ANALYSIS_DEPTH = 4;
+
 // Alpha-Beta Minimax Search
 export function minimax(depth, alpha, beta, maximizingPlayer, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls) {
     let hWallsArray, vWallsArray;

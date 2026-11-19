@@ -35,17 +35,6 @@ export function executePawnMove(x, y) {
     const stateAfter = captureStateSnapshot();
     const notation = formatMoveNotation({ type: 'move', to: { x, y } });
 
-    let initialPawnEval = null;
-    if (state.previousPrecomputedEvaluations) {
-        const moveKey = `move:${x},${y}`;
-        const chosen = state.previousPrecomputedEvaluations.scores.get(moveKey);
-        if (chosen !== undefined) {
-            initialPawnEval = chosen;
-        } else if (state.previousPrecomputedEvaluations.currentEval !== null) {
-            initialPawnEval = state.previousPrecomputedEvaluations.currentEval;
-        }
-    }
-
     const historyItem = {
         id: state.history.length + 1,
         type: 'move',
@@ -56,7 +45,8 @@ export function executePawnMove(x, y) {
         stateBefore,
         stateAfter,
         moveQuality: null,
-        evalScore: initialPawnEval !== undefined ? initialPawnEval : null
+        nnEval: null,
+        evalScore: null
     };
 
     state.history.push(historyItem);
@@ -101,17 +91,6 @@ export function executeWallPlacement(x, y, wallType) {
     const stateAfter = captureStateSnapshot();
     const notation = formatMoveNotation({ type: 'wall', x, y, wallType });
 
-    let initialWallEval = null;
-    if (state.previousPrecomputedEvaluations) {
-        const moveKey = `wall:${x},${y},${wallType}`;
-        const chosen = state.previousPrecomputedEvaluations.scores.get(moveKey);
-        if (chosen !== undefined) {
-            initialWallEval = chosen;
-        } else if (state.previousPrecomputedEvaluations.currentEval !== null) {
-            initialWallEval = state.previousPrecomputedEvaluations.currentEval;
-        }
-    }
-
     const historyItem = {
         id: state.history.length + 1,
         type: 'wall',
@@ -123,7 +102,8 @@ export function executeWallPlacement(x, y, wallType) {
         stateBefore,
         stateAfter,
         moveQuality: null,
-        evalScore: initialWallEval !== undefined ? initialWallEval : null
+        nnEval: null,
+        evalScore: null
     };
 
     state.history.push(historyItem);
@@ -350,6 +330,7 @@ export function importGameFromJSON(parsedData) {
                 stateBefore,
                 stateAfter,
                 moveQuality: null,
+                nnEval: null,
                 evalScore: null
             };
 
@@ -408,6 +389,7 @@ export function importGameFromJSON(parsedData) {
                 stateBefore,
                 stateAfter,
                 moveQuality: null,
+                nnEval: null,
                 evalScore: null
             };
 

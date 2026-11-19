@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { formatMoveNotation } from './notation.js';
-import { evaluateBoard, minimax } from './ai.js';
+import { evaluateBoard, minimax, ANALYSIS_DEPTH } from './ai.js';
 import { renderMatchHistoryUI, getBoardStateKey } from './ui-diagnostics.js';
 import { updateEvalBarUI } from './ui-eval-bar.js';
 import { analyzeMoveInWorker } from './worker-manager.js';
@@ -135,7 +135,9 @@ function updateMoveQualityUI(chosenScore, bestScore, player, badgeEl, badgeTextE
         historyItem.moveQuality = qualityObj;
         historyItem.evalScore = resultingEvalScore;
         if (state.historyIndex === historyItem.id) {
-            updateEvalBarUI(resultingEvalScore);
+            if (historyItem.nnEval !== null && historyItem.nnEval !== undefined) {
+                updateEvalBarUI(historyItem.nnEval);
+            }
         }
         renderMatchHistoryUI();
     }
@@ -177,7 +179,7 @@ export function analyzeMoveQuality(chosenMove, player, historyItem = null, state
         }
     }
 
-    const depth = options.depth || 4;
+    const depth = options.depth || ANALYSIS_DEPTH;
 
     const performAnalysis = () => {
         let bestScore = null;

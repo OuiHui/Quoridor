@@ -48,6 +48,7 @@ export function getGameStateExportJSON() {
         player: item.player,
         type: item.type,
         notation: item.notation,
+        nnEval: item.nnEval !== undefined ? item.nnEval : null,
         evalScore: item.evalScore,
         moveQuality: item.moveQuality ? item.moveQuality.classification : null
     }));
@@ -88,10 +89,11 @@ export function getGameStateExportText() {
         const turnNum = Math.ceil(moveNum / 2);
         const prefix = m.player === 1 ? `${turnNum}.` : `${turnNum}...`;
         let evalStr = '0.0';
-        if (m.evalScore === Infinity) evalStr = '#1';
-        else if (m.evalScore === -Infinity) evalStr = '#2';
-        else if (m.evalScore !== null && m.evalScore !== undefined) {
-            const v = m.evalScore / 10;
+        const displayScore = (m.nnEval !== null && m.nnEval !== undefined) ? m.nnEval : m.evalScore;
+        if (displayScore === Infinity) evalStr = '#1';
+        else if (displayScore === -Infinity) evalStr = '#2';
+        else if (displayScore !== null && displayScore !== undefined) {
+            const v = displayScore / 10;
             evalStr = v > 0 ? `+${v.toFixed(1)}` : v.toFixed(1);
         }
         const qualityStr = m.moveQuality ? ` [${m.moveQuality}]` : '';

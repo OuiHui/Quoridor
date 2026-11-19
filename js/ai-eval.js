@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { findShortestPath, getValidPawnMoves, validateWallPlacement, validateWallPlacementFast, findShortestPathLengthFast, getGuaranteedWinner } from './engine.js';
-import { minimax } from './ai-search.js';
+import { minimax, ANALYSIS_DEPTH } from './ai-search.js';
 
 function computeMaxNetWallGain(attackerPlayer, p1Pos, p2Pos, hWallsArray, vWallsArray, p1Dist, p2Dist) {
     const isAttackerP1 = attackerPlayer === 1;
@@ -239,7 +239,7 @@ export function generateSmartMoves(playerNum, p1Pos, p2Pos, hWalls, vWalls, p1Wa
 
 // Get best moves for hint display.
 // Always runs at depth 5 to match game move quality analysis.
-export function getBestMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls) {
+export function getBestMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, depth = ANALYSIS_DEPTH) {
     const hWallsArray = new Uint8Array(64);
     const vWallsArray = new Uint8Array(64);
     for (const key of hWalls.keys()) {
@@ -253,7 +253,7 @@ export function getBestMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wa
 
     const isP1 = player === 1;
     const result = minimax(
-        5,
+        depth,
         -Infinity,
         Infinity,
         isP1,
@@ -272,10 +272,10 @@ export function getBestMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Wa
 }
 
 // Get both best moves for current player and threat moves for opponent
-export function getBestMovesAndThreats(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls) {
+export function getBestMovesAndThreats(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, depth = ANALYSIS_DEPTH) {
     const oppPlayer = player === 1 ? 2 : 1;
-    const bestMoves = getBestMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls);
-    const threatMoves = getBestMoves(oppPlayer, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls);
+    const bestMoves = getBestMoves(player, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, depth);
+    const threatMoves = getBestMoves(oppPlayer, p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, depth);
     return { bestMoves, threatMoves };
 }
 

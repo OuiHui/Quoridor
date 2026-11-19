@@ -764,7 +764,7 @@ function revertVirtualLossAndBackprop(path, leafValue) {
 }
 
 // MONTE CARLO TREE SEARCH GUIDED BY NEURAL NETWORK OR HEURISTIC FALLBACK
-export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn, numSimulations = 128, modelSession = null, historyHashes = null) {
+export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn, numSimulations = 128, modelSession = null, historyHashes = null, advanceTree = true) {
     const rootState = {
         p1Pos: { ...p1Pos },
         p2Pos: { ...p2Pos },
@@ -1210,13 +1210,17 @@ export async function runMCTS(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, tu
     }
 
     if (bestActionIdx === -1) {
-        activeMCTSRoot = null;
+        if (advanceTree) {
+            activeMCTSRoot = null;
+        }
         const actions = getValidMCTSActions(rootState);
         return actions[0] || null;
     }
 
     const chosenChild = root.children.get(bestActionIdx);
-    activeMCTSRoot = chosenChild || null;
+    if (advanceTree) {
+        activeMCTSRoot = chosenChild || null;
+    }
 
     return mapIndexToActionPerspective(bestActionIdx, turn, p1Pos, p2Pos);
 }

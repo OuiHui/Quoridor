@@ -1,7 +1,7 @@
 import * as ort from 'onnxruntime-web';
 import { findShortestPath, getValidPawnMoves, getGuaranteedWinner, mirrorBoardState } from './engine.js';
 import { evaluateBoard } from './ai-eval.js';
-import { minimax } from './ai-search.js';
+import { minimax, ANALYSIS_DEPTH } from './ai-search.js';
 import { runMCTS, resetMCTSTree, tensorizeBoardState } from './ai-mcts.js';
 
 let modelSession = null;
@@ -129,25 +129,6 @@ async function handleWorkerMessage(dataPayload) {
             }
         }
 
-        if (evalScore === null) {
-            const result = minimax(
-                4,
-                -Infinity,
-                Infinity,
-                turn === 1,
-                p1Pos,
-                p2Pos,
-                hWalls,
-                vWalls,
-                p1Walls,
-                p2Walls
-            );
-            evalScore = result.score;
-            if (evalScore === undefined || evalScore === null) {
-                evalScore = evaluateBoard(p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn === 1, true);
-            }
-        }
-
         self.postMessage({ type: 'evaluate_state_result', requestId, data: { score: evalScore, isNN } });
         return;
     }
@@ -175,7 +156,7 @@ async function handleWorkerMessage(dataPayload) {
             baseVWallsArray[y * 8 + x] = 1;
         }
 
-        const d = depth || 4;
+        const d = depth || ANALYSIS_DEPTH;
 
         const result = minimax(
             d,
@@ -288,40 +269,18 @@ async function handleWorkerMessage(dataPayload) {
             console.error('Worker runMCTS error:', err);
         }
 
-        // Resilient fallback: ensure AI never stalls the game
         if (!bestMove) {
-            console.warn('MCTS returned null or errored, executing Minimax fallback');
-            try {
-                const fbResult = minimax(
-                    2,
-                    -Infinity,
-                    Infinity,
-                    turn === 1,
-                    p1Pos,
-                    p2Pos,
-                    hWallsMap,
-                    vWallsMap,
-                    p1Walls,
-                    p2Walls
-                );
-                bestMove = fbResult.move;
-            } catch (fbErr) {
-                console.error('Minimax fallback error:', fbErr);
-            }
-
-            if (!bestMove) {
-                const pawnMoves = getValidPawnMoves(
-                    turn === 1 ? p1Pos.x : p2Pos.x,
-                    turn === 1 ? p1Pos.y : p2Pos.y,
-                    turn === 1 ? p2Pos.x : p1Pos.x,
-                    turn === 1 ? p2Pos.y : p1Pos.y,
-                    hWallsMap,
-                    vWallsMap
-                );
-                if (pawnMoves.length > 0) {
-                    bestMove = { type: 'move', to: pawnMoves[0] };
+            console.error('AlphaZero MCTS failed to calculate a move.');
+            self.postMessage({
+                type: 'calculate_ai_move_result',
+                requestId,
+                data: {
+                    bestMove: null,
+                    error: 'AlphaZero MCTS failed to calculate a move.',
+                    engine: 'AlphaZero MCTS'
                 }
-            }
+            });
+            return;
         }
 
         self.postMessage({
@@ -332,6 +291,46 @@ async function handleWorkerMessage(dataPayload) {
                 engine: 'AlphaZero MCTS',
                 simulations: sims
             }
+        });
+        return;
+    }
+
+    if (type === 'get_hints') {
+        const { p1Pos, p2Pos, hWalls, vWalls, p1Walls, p2Walls, turn, historyHashes, simulations } = data;
+        const hWallsMap = deserializeMap(hWalls);
+        const vWallsMap = deserializeMap(vWalls);
+        const oppTurn = turn === 1 ? 2 : 1;
+
+        let bestMoves = [];
+        let threatMoves = [];
+
+        if (modelSession) {
+            const sims = simulations || 96;
+            try {
+                const bestMove = await runMCTS(
+                    p1Pos, p2Pos, hWallsMap, vWallsMap, p1Walls, p2Walls,
+                    turn, sims, modelSession, historyHashes, false
+                );
+                if (bestMove) bestMoves.push(bestMove);
+            } catch (err) {
+                console.warn('Worker hint runMCTS error:', err);
+            }
+
+            try {
+                const threatMove = await runMCTS(
+                    p1Pos, p2Pos, hWallsMap, vWallsMap, p1Walls, p2Walls,
+                    oppTurn, sims, modelSession, historyHashes, false
+                );
+                if (threatMove) threatMoves.push(threatMove);
+            } catch (err) {
+                console.warn('Worker threat hint runMCTS error:', err);
+            }
+        }
+
+        self.postMessage({
+            type: 'get_hints_result',
+            requestId,
+            data: { bestMoves, threatMoves }
         });
         return;
     }

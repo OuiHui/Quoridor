@@ -1,5 +1,4 @@
 import { state } from './state.js';
-import { minimax, evaluateBoard, generateSmartMoves } from './ai.js';
 import { findShortestPathLengthFast, getGuaranteedWinner, mirrorBoardState } from './engine.js';
 import { tensorizeBoardState } from './ai-mcts.js';
 import { evaluatePositionInWorker } from './worker-manager.js';
@@ -163,184 +162,14 @@ export function precomputeNextMoves() {
     evaluatePositionWithNN(p1PosSnapshot, p2PosSnapshot, hWallsSnapshot, vWallsSnapshot, p1WallsSnapshot, p2WallsSnapshot, turnSnapshot).then(nnScore => {
         if (nnScore !== null && getBoardStateKey(state) === key) {
             state.precomputedEvaluations.currentEval = nnScore;
+            state.precomputedEvaluations.status = 'done';
             const currentItem = state.historyIndex > 0 ? state.history[state.historyIndex - 1] : null;
-            if (!currentItem || currentItem.evalScore === null || currentItem.evalScore === undefined) {
-                updateEvalBarUI(nnScore);
+            if (currentItem && state.historyIndex === currentItem.id) {
+                currentItem.nnEval = nnScore;
             }
+            updateEvalBarUI(nnScore);
         }
     });
-
-    const depth = 5;
-
-    setTimeout(() => {
-        if (getBoardStateKey(state) !== key) return;
-
-        let score = state.precomputedEvaluations.currentEval;
-        if (score === null || score === undefined) {
-            if (state.previousPrecomputedEvaluations) {
-                const lastMove = state.history[state.history.length - 1];
-                if (lastMove) {
-                    const moveKey = lastMove.type === 'move' ? `move:${lastMove.to.x},${lastMove.to.y}` : `wall:${lastMove.x},${lastMove.y},${lastMove.wallType}`;
-                    score = state.previousPrecomputedEvaluations.scores.get(moveKey);
-                }
-            }
-        }
-
-        if (score === undefined || score === null) {
-            const result = minimax(
-                depth,
-                -Infinity,
-                Infinity,
-                turnSnapshot === 1,
-                p1PosSnapshot,
-                p2PosSnapshot,
-                hWallsSnapshot,
-                vWallsSnapshot,
-                p1WallsSnapshot,
-                p2WallsSnapshot
-            );
-            score = result.score;
-            if (score === undefined || score === null) {
-                score = evaluateBoard(p1PosSnapshot, p2PosSnapshot, hWallsSnapshot, vWallsSnapshot, p1WallsSnapshot, p2WallsSnapshot, turnSnapshot === 1);
-            }
-        }
-
-        state.precomputedEvaluations.currentEval = score;
-        const currentItem = state.historyIndex > 0 ? state.history[state.historyIndex - 1] : null;
-        if (!currentItem || currentItem.evalScore === null || currentItem.evalScore === undefined) {
-            updateEvalBarUI(score);
-        }
-
-        const hWallsArray = new Uint8Array(64);
-        const vWallsArray = new Uint8Array(64);
-        for (const k of hWallsSnapshot.keys()) {
-            const [wx, wy] = k.split(',').map(Number);
-            hWallsArray[wy * 8 + wx] = 1;
-        }
-        for (const k of vWallsSnapshot.keys()) {
-            const [wx, wy] = k.split(',').map(Number);
-            vWallsArray[wy * 8 + wx] = 1;
-        }
-
-        const candidates = generateSmartMoves(
-            turnSnapshot,
-            p1PosSnapshot,
-            p2PosSnapshot,
-            hWallsArray,
-            vWallsArray,
-            p1WallsSnapshot,
-            p2WallsSnapshot
-        );
-
-        if (candidates.length === 0) {
-            state.precomputedEvaluations.status = 'done';
-            return;
-        }
-
-        const isP1 = turnSnapshot === 1;
-
-        const candDistances = candidates.map(move => {
-            let nextP1Pos = { ...p1PosSnapshot };
-            let nextP2Pos = { ...p2PosSnapshot };
-
-            const idx = move.y * 8 + move.x;
-            if (move.type === 'move') {
-                if (isP1) nextP1Pos = move.to;
-                else nextP2Pos = move.to;
-            } else {
-                if (move.wallType === 'h') hWallsArray[idx] = 1;
-                else vWallsArray[idx] = 1;
-            }
-
-            const p1Len = findShortestPathLengthFast(nextP1Pos.x, nextP1Pos.y, 8, hWallsArray, vWallsArray, nextP2Pos.x, nextP2Pos.y);
-            const p2Len = findShortestPathLengthFast(nextP2Pos.x, nextP2Pos.y, 0, hWallsArray, vWallsArray, nextP1Pos.x, nextP1Pos.y);
-
-            if (move.type === 'wall') {
-                if (move.wallType === 'h') hWallsArray[idx] = 0;
-                else vWallsArray[idx] = 0;
-            }
-
-            const activeLen = isP1 ? p1Len : p2Len;
-            const oppLen = isP1 ? p2Len : p1Len;
-
-            return {
-                move: move,
-                activeLen: activeLen < 0 ? Infinity : activeLen,
-                oppLen: oppLen < 0 ? -Infinity : oppLen
-            };
-        });
-
-        candDistances.sort((a, b) => {
-            if (a.activeLen !== b.activeLen) {
-                return a.activeLen - b.activeLen;
-            }
-            return b.oppLen - a.oppLen;
-        });
-
-        const sortedCandidates = candDistances.map(cd => cd.move);
-
-        let candIdx = 0;
-        let bestScore = isP1 ? -Infinity : Infinity;
-
-        function processNextCandidate() {
-            if (getBoardStateKey(state) !== key) return;
-
-            const move = sortedCandidates[candIdx];
-            let nextP1Pos = { ...p1PosSnapshot };
-            let nextP2Pos = { ...p2PosSnapshot };
-            let nextP1Walls = p1WallsSnapshot;
-            let nextP2Walls = p2WallsSnapshot;
-
-            const idx = move.y * 8 + move.x;
-            if (move.type === 'move') {
-                if (isP1) nextP1Pos = move.to;
-                else nextP2Pos = move.to;
-            } else {
-                if (move.wallType === 'h') hWallsArray[idx] = 1;
-                else vWallsArray[idx] = 1;
-
-                if (isP1) nextP1Walls--;
-                else nextP2Walls--;
-            }
-
-            const result = minimax(
-                depth - 1,
-                -Infinity,
-                Infinity,
-                !isP1,
-                nextP1Pos,
-                nextP2Pos,
-                hWallsArray,
-                vWallsArray,
-                nextP1Walls,
-                nextP2Walls
-            );
-
-            if (move.type === 'wall') {
-                if (move.wallType === 'h') hWallsArray[idx] = 0;
-                else vWallsArray[idx] = 0;
-            }
-
-            const moveKey = move.type === 'move' ? `move:${move.to.x},${move.to.y}` : `wall:${move.x},${move.y},${move.wallType}`;
-            state.precomputedEvaluations.scores.set(moveKey, result.score);
-
-            if (isP1) {
-                if (result.score > bestScore) bestScore = result.score;
-            } else {
-                if (result.score < bestScore) bestScore = result.score;
-            }
-
-            candIdx++;
-            if (candIdx < candidates.length) {
-                setTimeout(processNextCandidate, 0);
-            } else {
-                state.precomputedEvaluations.bestScore = bestScore;
-                state.precomputedEvaluations.status = 'done';
-            }
-        }
-
-        processNextCandidate();
-    }, 0);
 }
 
 export function updateEvalBar() {
@@ -362,24 +191,9 @@ export function updateEvalBar() {
 
     if (state.historyIndex > 0 && state.historyIndex <= state.history.length) {
         const currentMoveItem = state.history[state.historyIndex - 1];
-        if (currentMoveItem && currentMoveItem.evalScore !== undefined && currentMoveItem.evalScore !== null) {
-            updateEvalBarUI(currentMoveItem.evalScore);
+        if (currentMoveItem && currentMoveItem.nnEval !== undefined && currentMoveItem.nnEval !== null) {
+            updateEvalBarUI(currentMoveItem.nnEval);
             scoreUpdated = true;
-        }
-    }
-
-    if (!scoreUpdated && state.previousPrecomputedEvaluations) {
-        const lastMove = state.history[state.history.length - 1];
-        if (lastMove) {
-            const moveKey = lastMove.type === 'move' ? `move:${lastMove.to.x},${lastMove.to.y}` : `wall:${lastMove.x},${lastMove.y},${lastMove.wallType}`;
-            const cachedScore = state.previousPrecomputedEvaluations.scores.get(moveKey);
-            if (cachedScore !== undefined) {
-                updateEvalBarUI(cachedScore);
-                scoreUpdated = true;
-            } else if (state.previousPrecomputedEvaluations.currentEval !== null) {
-                updateEvalBarUI(state.previousPrecomputedEvaluations.currentEval);
-                scoreUpdated = true;
-            }
         }
     }
 

@@ -6,6 +6,7 @@ import { getWallNotation } from './notation.js';
 import { updateEvalBar } from './ui-eval-bar.js';
 import { checkGameVictory } from './ui-modal.js';
 import { setShortestPathArrows } from './board-arrows.js';
+import { getHintsInWorker } from './worker-manager.js';
 
 export {
     getBoardStateKey,
@@ -150,6 +151,7 @@ export function updateUI() {
 
     if (state.hintOn && !isAITurn && !isPlaybookViewing) {
         const turnSnapshot = state.turn;
+        const historyIndexSnapshot = state.historyIndex;
         const p1PosSnapshot = { ...state.p1Pos };
         const p2PosSnapshot = { ...state.p2Pos };
         const p1WallsSnapshot = state.p1Walls;
@@ -157,21 +159,18 @@ export function updateUI() {
         const hWallsSnapshot = new Map(state.hWalls);
         const vWallsSnapshot = new Map(state.vWalls);
 
-        setTimeout(() => {
-            if (state.turn !== turnSnapshot) return;
-            const { bestMoves, threatMoves } = getBestMovesAndThreats(
-                turnSnapshot,
-                p1PosSnapshot,
-                p2PosSnapshot,
-                hWallsSnapshot,
-                vWallsSnapshot,
-                p1WallsSnapshot,
-                p2WallsSnapshot
-            );
-            if (state.hintOn && state.turn === turnSnapshot) {
-                renderHints(bestMoves, threatMoves);
-            }
-        }, 50);
+        getHintsInWorker(state)
+            .then(res => {
+                if (state.hintOn && state.turn === turnSnapshot && state.historyIndex === historyIndexSnapshot) {
+                    renderHints(res.bestMoves || [], res.threatMoves || []);
+                }
+            })
+            .catch(err => {
+                console.warn('AlphaZero hints unavailable:', err);
+                if (state.hintOn && state.turn === turnSnapshot && state.historyIndex === historyIndexSnapshot) {
+                    clearHints();
+                }
+            });
     } else {
         clearHints();
     }

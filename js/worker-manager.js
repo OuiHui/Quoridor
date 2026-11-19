@@ -65,7 +65,7 @@ export function analyzeMoveInWorker(chosenMove, player, stateBefore, depth = 3) 
     });
 }
 
-export function calculateAIMoveInWorker(stateObj, aiSettings) {
+function extractRecentHistoryHashes(stateObj) {
     const historyHashes = [];
     if (stateObj.history && stateObj.history.length > 0) {
         const start = Math.max(0, stateObj.history.length - 8);
@@ -81,6 +81,11 @@ export function calculateAIMoveInWorker(stateObj, aiSettings) {
             }
         }
     }
+    return historyHashes;
+}
+
+export function calculateAIMoveInWorker(stateObj, aiSettings) {
+    const historyHashes = extractRecentHistoryHashes(stateObj);
 
     return sendWorkerRequest('calculate_ai_move', {
         p1Pos: stateObj.p1Pos,
@@ -92,6 +97,22 @@ export function calculateAIMoveInWorker(stateObj, aiSettings) {
         turn: stateObj.turn,
         historyHashes,
         aiSettings
+    });
+}
+
+export function getHintsInWorker(stateObj, simulations = 96) {
+    const historyHashes = extractRecentHistoryHashes(stateObj);
+
+    return sendWorkerRequest('get_hints', {
+        p1Pos: stateObj.p1Pos,
+        p2Pos: stateObj.p2Pos,
+        hWalls: Array.from(stateObj.hWalls.entries()),
+        vWalls: Array.from(stateObj.vWalls.entries()),
+        p1Walls: stateObj.p1Walls,
+        p2Walls: stateObj.p2Walls,
+        turn: stateObj.turn,
+        historyHashes,
+        simulations
     });
 }
 

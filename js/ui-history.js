@@ -41,17 +41,18 @@ export function renderMatchHistoryUI() {
         const isActive = state.historyIndex === moveNum;
 
         let evalTagHtml = '';
-        if (item.evalScore !== undefined && item.evalScore !== null) {
+        const tagScore = (item.nnEval !== undefined && item.nnEval !== null) ? item.nnEval : item.evalScore;
+        if (tagScore !== undefined && tagScore !== null) {
             let scoreStr = '';
             let favorClass = 'neutral';
-            if (item.evalScore === Infinity) {
+            if (tagScore === Infinity) {
                 scoreStr = '#1';
                 favorClass = 'p1-win';
-            } else if (item.evalScore === -Infinity) {
+            } else if (tagScore === -Infinity) {
                 scoreStr = '#2';
                 favorClass = 'p2-win';
             } else {
-                const displayVal = item.evalScore / 10;
+                const displayVal = tagScore / 10;
                 if (displayVal > 0) {
                     scoreStr = `+${displayVal.toFixed(1)}`;
                     favorClass = 'p1-fav';
